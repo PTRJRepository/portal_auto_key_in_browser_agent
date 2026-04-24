@@ -1,0 +1,332 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+:root {
+  --bg-start: #f4fef5;
+  --bg-end: #d9efff;
+  --panel: rgba(255, 255, 255, 0.86);
+  --border: #b3d4dd;
+  --text-main: #0e2530;
+  --text-muted: #55707c;
+  --accent: #0d899f;
+  --accent-strong: #036578;
+  --danger: #b23939;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text-main);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  background: radial-gradient(circle at 10% 10%, #f6ffe8, transparent 45%),
+    radial-gradient(circle at 90% 0%, #d7f0ff, transparent 40%),
+    linear-gradient(145deg, var(--bg-start), var(--bg-end));
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+  color: white;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+}
+
+button.secondary {
+  background: #f4f8fb;
+  color: var(--text-main);
+  border-color: var(--border);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+input,
+select {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  width: 100%;
+}
+
+.layout {
+  max-width: 1560px;
+  padding: 1.25rem;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.page-header p {
+  margin: 0.3rem 0 0;
+  color: var(--text-muted);
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 250px 1fr 360px;
+  grid-template-areas:
+    "templates flow steps"
+    "templates variables events";
+  gap: 0.95rem;
+}
+
+.panel {
+  background: var(--panel);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 0.9rem;
+  box-shadow: 0 8px 24px rgba(31, 70, 87, 0.09);
+  animation: riseIn 0.35s ease both;
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.panel-templates {
+  grid-area: templates;
+}
+
+.panel-flow {
+  grid-area: flow;
+}
+
+.panel-steps {
+  grid-area: steps;
+  max-height: 620px;
+  overflow: auto;
+}
+
+.panel-variables {
+  grid-area: variables;
+}
+
+.panel-events {
+  grid-area: events;
+}
+
+.panel-templates ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.guide-card {
+  margin-top: 0.8rem;
+  padding: 0.7rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #f6fbfe;
+}
+
+.guide-card h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.9rem;
+}
+
+.guide-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.83rem;
+}
+
+.panel-templates li button {
+  width: 100%;
+  text-align: left;
+  background: #f5fbff;
+  color: var(--text-main);
+  border: 1px solid var(--border);
+  display: grid;
+  gap: 0.1rem;
+}
+
+.panel-templates li button.selected {
+  border-color: var(--accent);
+  background: linear-gradient(120deg, #e6f7ff, #e8fff4);
+}
+
+.panel-templates small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.flow-canvas {
+  height: 410px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: linear-gradient(180deg, #f8fdff, #f6faf8);
+}
+
+.step-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.7rem;
+  margin-bottom: 0.7rem;
+  background: white;
+}
+
+.step-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.45rem;
+}
+
+.step-card label,
+.variable-list label {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.live-step-readonly {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.live-step-readonly p {
+  margin: 0;
+  word-break: break-word;
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.run-result {
+  margin-top: 0.75rem;
+  background: #f5fafa;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem;
+}
+
+.status {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+}
+
+.event-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 250px;
+  overflow: auto;
+}
+
+.event-list code {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f4f9fd;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.45rem;
+  color: #184254;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.empty-text {
+  color: var(--text-muted);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 18, 24, 0.4);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.modal {
+  width: min(580px, 100%);
+  background: white;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  padding: 1rem;
+}
+
+.modal p {
+  color: var(--text-muted);
+}
+
+.hint-text {
+  font-size: 0.82rem;
+  margin-top: -0.2rem;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1160px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "templates"
+      "flow"
+      "steps"
+      "variables"
+      "events";
+  }
+}

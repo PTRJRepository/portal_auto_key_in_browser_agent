@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "1.0.0",
+  "template": {
+    "id": "sample-login-template",
+    "name": "Sample Login Template",
+    "description": "Example reusable linear flow template.",
+    "version": "1.0.0",
+    "createdAt": "2026-04-24T00:00:00.000Z"
+  },
+  "entry": {
+    "url": "https://example.com/login"
+  },
+  "variables": [
+    {
+      "name": "username",
+      "label": "Username",
+      "defaultValue": "demo-user"
+    },
+    {
+      "name": "password",
+      "label": "Password",
+      "defaultValue": "secret"
+    }
+  ],
+  "flow": [
+    {
+      "id": "step-open-page",
+      "type": "openPage",
+      "label": "Open Login Page",
+      "value": "https://example.com/login",
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-type-username",
+      "type": "type",
+      "label": "Type username",
+      "selector": "#username",
+      "value": "demo-user",
+      "variableRef": "username",
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-type-password",
+      "type": "type",
+      "label": "Type password",
+      "selector": "#password",
+      "value": "secret",
+      "variableRef": "password",
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-click-submit",
+      "type": "click",
+      "label": "Click submit",
+      "selector": "button[type='submit']",
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-wait-navigation",
+      "type": "waitForNavigation",
+      "label": "Wait for landing page",
+      "value": "https://example.com/dashboard",
+      "timeoutMs": 15000,
+      "continueOnError": false
+    }
+  ],
+  "runtime": {
+    "defaultTimeoutMs": 15000,
+    "sessionMode": "fresh"
+  }
+}
