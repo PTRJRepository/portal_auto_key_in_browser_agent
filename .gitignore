@@ -7,3 +7,10 @@ build/
 *.log
 .DS_Store
 Thumbs.db
+
+# Development and local data (do not commit)
+Auto Key In Refactor/Data/
+Auto Key In Refactor/data/
+Runner/spsi_input/
+template/apps/Runner/
+template/_dev_utils/
