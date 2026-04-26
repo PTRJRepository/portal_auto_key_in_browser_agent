@@ -101,8 +101,13 @@ export class BrowserSession {
       });
       const testPage = await testContext.newPage();
       await testPage.goto(`${PLANTWARE_CONFIG.baseUrl}${PLANTWARE_CONFIG.listPage}`, {
-        timeout: 15000,
+        timeout: 30000,
         waitUntil: "domcontentloaded"
+      }).catch(async () => {
+        await testPage.goto(`${PLANTWARE_CONFIG.baseUrl}${PLANTWARE_CONFIG.listPage}`, {
+          timeout: 45000,
+          waitUntil: "load"
+        });
       });
       const url = testPage.url();
       const authenticated = await this.isAuthenticatedPlantwarePage(testPage);
@@ -142,9 +147,22 @@ export class BrowserSession {
   private async isAuthenticatedPlantwarePage(page: Page): Promise<boolean> {
     const url = page.url();
     if (/login|SessionExpire/i.test(url)) return false;
-    const bodyText = await page.locator("body").textContent({ timeout: 3000 }).catch(() => "");
-    if (/login|session expired/i.test(bodyText ?? "")) return false;
-    return await page.locator("#MainContent_btnNew, input[id*='btnNew'], a[href*='frmPrTrxADDets'], body:has-text('Manual Adjustment')").first().isVisible({ timeout: 5000 }).catch(() => false);
+    await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+    const bodyText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
+    if (/session expired/i.test(bodyText ?? "")) return false;
+    const loginFormVisible = await page.locator("#txtUsername, #txtPassword, #btnLogin").first().isVisible({ timeout: 1000 }).catch(() => false);
+    if (loginFormVisible) return false;
+    const authenticatedMarkers = [
+      "#MainContent_btnNew",
+      "input[id*='btnNew']",
+      "a[href*='frmPrTrxADDets']",
+      "body:has-text('PT. REBINMAS')",
+      "body:has-text('ESTATE')"
+    ];
+    for (const selector of authenticatedMarkers) {
+      if (await page.locator(selector).first().isVisible({ timeout: 3000 }).catch(() => false)) return true;
+    }
+    return false;
   }
 
   private sessionPath(): string {
