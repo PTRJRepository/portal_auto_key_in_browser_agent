@@ -139,9 +139,11 @@ async function waitForAddCompleted(page: Page, record: ManualAdjustmentRecord, c
   await page.waitForTimeout(1000);
   const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span:has-text('required'), span[style*='color: red']").textContent().catch(() => null);
   if (errorMsg) throw new Error(`Validation error after Add: ${errorMsg}`);
-  if (await rowAlreadyExists(page, record, category)) return;
   const amountValue = await page.locator("#MainContent_txtAmount").inputValue().catch(() => "");
-  if (!amountValue || amountValue === "0") return;
+  const amountNum = parseFloat(amountValue || "0");
+  if (amountNum === 0 || !amountValue) return;
+  if (amountNum !== record.amount) return;
+  if (await rowAlreadyExists(page, record, category)) return;
   throw new Error(`Add not confirmed for ${record.emp_code} / ${category.adcode}`);
 }
 
