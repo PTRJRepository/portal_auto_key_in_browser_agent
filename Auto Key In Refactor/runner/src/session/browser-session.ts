@@ -105,8 +105,9 @@ export class BrowserSession {
         waitUntil: "domcontentloaded"
       });
       const url = testPage.url();
+      const authenticated = await this.isAuthenticatedPlantwarePage(testPage);
       await testPage.close().catch(() => {});
-      if (url.includes("login") || url.includes("Login") || url.includes("SessionExpire")) {
+      if (url.includes("login") || url.includes("Login") || url.includes("SessionExpire") || !authenticated) {
         await testContext.close().catch(() => {});
         return false;
       }
@@ -136,6 +137,14 @@ export class BrowserSession {
     await this.browser?.close().catch(() => {});
     this.context = null;
     this.browser = null;
+  }
+
+  private async isAuthenticatedPlantwarePage(page: Page): Promise<boolean> {
+    const url = page.url();
+    if (/login|SessionExpire/i.test(url)) return false;
+    const bodyText = await page.locator("body").textContent({ timeout: 3000 }).catch(() => "");
+    if (/login|session expired/i.test(bodyText ?? "")) return false;
+    return await page.locator("#MainContent_btnNew, input[id*='btnNew'], a[href*='frmPrTrxADDets'], body:has-text('Manual Adjustment')").first().isVisible({ timeout: 5000 }).catch(() => false);
   }
 
   private sessionPath(): string {

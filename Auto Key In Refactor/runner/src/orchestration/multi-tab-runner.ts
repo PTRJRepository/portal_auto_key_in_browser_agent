@@ -11,7 +11,8 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
   const rows = payload.records.slice(0, payload.row_limit || payload.records.length);
   const requestedTabCount = payload.runner_mode.endsWith("_single") ? 1 : payload.max_tabs;
   const tabCount = Math.min(Math.max(1, requestedTabCount), PLANTWARE_CONFIG.maxTabs, Math.max(1, rows.length));
-  const session = new BrowserSession({ headless: payload.headless, freshLoginFirst: payload.runner_mode !== "session_reuse_single" });
+  const freshLoginFirst = payload.runner_mode === "fresh_login_single";
+  const session = new BrowserSession({ headless: payload.headless, freshLoginFirst });
   const rowResults: RowResult[] = [];
 
   emit({ event: "run.started", runner_mode: payload.runner_mode, total_records: rows.length, tabs: tabCount, requested_tabs: payload.max_tabs });
@@ -26,13 +27,26 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
       pages.push(page);
     }
 
+    const assignedRows = pages.map((_, tabIndex) => rows.filter((_, index) => index % tabCount === tabIndex));
+    for (let index = 0; index < assignedRows.length; index++) {
+      emit({ event: "tab.assigned", tab_index: index, assigned_rows: assignedRows[index].length, first_emp_code: assignedRows[index][0]?.emp_code ?? "", last_emp_code: assignedRows[index][assignedRows[index].length - 1]?.emp_code ?? "" });
+    }
+
     await Promise.all(pages.map(async (page, index) => {
-      await openDetailPage(page);
-      emit({ event: "tab.ready", tab_index: index });
+      emit({ event: "tab.open.started", tab_index: index });
+      try {
+        await openDetailPage(page);
+        emit({ event: "tab.form.ready", tab_index: index });
+        emit({ event: "tab.ready", tab_index: index });
+      } catch (error) {
+        emit({ event: "tab.open.failed", tab_index: index, message: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
     }));
 
     await Promise.all(pages.map(async (page, tabIndex) => {
-      const rowsForTab = rows.filter((_, index) => index % tabCount === tabIndex);
+      const rowsForTab = assignedRows[tabIndex];
+      const tabStats = { done: 0, skipped: 0, failed: 0, total: rowsForTab.length };
       for (let rowIndex = 0; rowIndex < rowsForTab.length; rowIndex++) {
         const record = rowsForTab[rowIndex];
         const category = resolveCategory(record, payload.category_key);
@@ -48,7 +62,9 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
               tab_index: tabIndex
             };
             rowResults.push(result);
+            tabStats.skipped += 1;
             emit({ event: "row.skipped", ...result });
+            emit({ event: "tab.progress", tab_index: tabIndex, current_emp_code: record.emp_code, done: tabStats.done, skipped: tabStats.skipped, failed: tabStats.failed, total: tabStats.total });
             continue;
           }
           await fillAdjustmentRow(page, record, category, rowIndex === 0);
@@ -57,11 +73,13 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
             adjustment_name: record.adjustment_name,
             category_key: category.key,
             status: "success",
-            message: "row added",
+            message: "row add confirmed",
             tab_index: tabIndex
           };
           rowResults.push(result);
+          tabStats.done += 1;
           emit({ event: "row.success", ...result });
+          emit({ event: "tab.progress", tab_index: tabIndex, current_emp_code: record.emp_code, done: tabStats.done, skipped: tabStats.skipped, failed: tabStats.failed, total: tabStats.total });
         } catch (error) {
           const result: RowResult = {
             emp_code: record.emp_code,
@@ -72,9 +90,12 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
             tab_index: tabIndex
           };
           rowResults.push(result);
+          tabStats.failed += 1;
           emit({ event: "row.failed", ...result });
+          emit({ event: "tab.progress", tab_index: tabIndex, current_emp_code: record.emp_code, done: tabStats.done, skipped: tabStats.skipped, failed: tabStats.failed, total: tabStats.total });
         }
       }
+      emit({ event: "tab.completed", tab_index: tabIndex, done: tabStats.done, skipped: tabStats.skipped, failed: tabStats.failed, total: tabStats.total });
     }));
 
     for (let index = 0; index < pages.length; index++) {

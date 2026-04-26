@@ -13,7 +13,18 @@ export async function openDetailPage(page: Page): Promise<void> {
       waitUntil: "domcontentloaded"
     });
   });
-  await page.waitForTimeout(1500);
+  await assertDetailFormReady(page);
+}
+
+export async function assertDetailFormReady(page: Page): Promise<void> {
+  const url = page.url();
+  if (/login|SessionExpire/i.test(url)) throw new Error(`Plantware session is not on detail form: ${url}`);
+  await page.waitForSelector("#MainContent_txtAmount", { timeout: 20000 });
+  await page.waitForSelector("#MainContent_btnAdd", { timeout: 20000 });
+  const autocompleteCount = await page.locator("input.ui-autocomplete-input:not([disabled])").count();
+  if (autocompleteCount < 2) {
+    throw new Error(`Plantware detail form is not ready: expected at least 2 autocomplete inputs, found ${autocompleteCount}`);
+  }
 }
 
 export async function rowAlreadyExists(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<boolean> {
@@ -52,8 +63,8 @@ export async function fillAdjustmentRow(
     }
   }
 
-  const empInput = page.locator("input.ui-autocomplete-input:not([disabled])").first();
-  await selectAutocomplete(empInput, page, record.emp_code, 2000);
+  const form = getDetailFormControls(page);
+  await selectAutocomplete(form.empInput, page, record.emp_code, 2000);
 
   if (isFirstRow) {
     const divisionSelect = page.locator("#MainContent_ddlChargeTo");
@@ -63,8 +74,7 @@ export async function fillAdjustmentRow(
     }
   }
 
-  const adcodeInput = page.locator("input.ui-autocomplete-input:not([disabled])").nth(1);
-  await selectAutocomplete(adcodeInput, page, category.adcode, 2500);
+  await selectAutocomplete(form.adcodeInput, page, category.adcode, 2500);
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(3000);
 
@@ -76,11 +86,10 @@ export async function fillAdjustmentRow(
     }
   }
 
-  const amountField = page.locator("#MainContent_txtAmount");
-  await amountField.waitFor({ state: "visible", timeout: 15000 });
-  await amountField.clear();
-  await amountField.fill(String(record.amount || 0));
-  await amountField.press("Tab").catch(() => {});
+  await form.amountField.waitFor({ state: "visible", timeout: 15000 });
+  await form.amountField.clear();
+  await form.amountField.fill(String(record.amount || 0));
+  await form.amountField.press("Tab").catch(() => {});
   await page.waitForTimeout(1000);
 
   const expenseField = page.locator("input.CBOBox.ui-autocomplete-input:not([disabled])").last();
@@ -91,8 +100,9 @@ export async function fillAdjustmentRow(
   const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span[style*='color: red']").textContent().catch(() => null);
   if (errorMsg) throw new Error(`Validation error: ${errorMsg}`);
 
-  await page.waitForSelector("#MainContent_btnAdd", { timeout: 5000 });
-  await page.click("#MainContent_btnAdd", { noWaitAfter: true });
+  await form.addButton.waitFor({ state: "visible", timeout: 5000 });
+  await form.addButton.click({ noWaitAfter: true });
+  await waitForAddCompleted(page, record, category);
 }
 
 export async function submitTab(page: Page): Promise<void> {
@@ -114,13 +124,35 @@ function normalizeText(value: string): string {
   return value.toUpperCase().replace(/\s+/g, " ").trim();
 }
 
+function getDetailFormControls(page: Page) {
+  const autocompleteInputs = page.locator("input.ui-autocomplete-input:not([disabled])");
+  return {
+    empInput: autocompleteInputs.first(),
+    adcodeInput: autocompleteInputs.nth(1),
+    amountField: page.locator("#MainContent_txtAmount"),
+    addButton: page.locator("#MainContent_btnAdd")
+  };
+}
+
+async function waitForAddCompleted(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
+  await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+  await page.waitForTimeout(1000);
+  const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span:has-text('required'), span[style*='color: red']").textContent().catch(() => null);
+  if (errorMsg) throw new Error(`Validation error after Add: ${errorMsg}`);
+  if (await rowAlreadyExists(page, record, category)) return;
+  const amountValue = await page.locator("#MainContent_txtAmount").inputValue().catch(() => "");
+  if (!amountValue || amountValue === "0") return;
+  throw new Error(`Add not confirmed for ${record.emp_code} / ${category.adcode}`);
+}
+
 async function selectAutocomplete(locator: ReturnType<Page["locator"]>, page: Page, value: string, waitMs: number): Promise<void> {
+  await locator.waitFor({ state: "visible", timeout: 15000 });
   await locator.click();
   await locator.clear();
-  await page.waitForTimeout(100);
+  await page.locator(".ui-menu-item").first().waitFor({ state: "hidden", timeout: 1000 }).catch(() => {});
   await locator.pressSequentially(value, { delay: 100 });
   await page.waitForTimeout(waitMs);
-  const menuItems = page.locator(".ui-menu-item");
+  const menuItems = page.locator(".ui-menu-item:visible");
   await menuItems.first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
   if (await menuItems.first().isVisible().catch(() => false)) {
     await menuItems.first().click();
@@ -130,4 +162,6 @@ async function selectAutocomplete(locator: ReturnType<Page["locator"]>, page: Pa
     await locator.press("Enter");
   }
   await page.waitForTimeout(500);
+  const selectedValue = await locator.inputValue().catch(() => "");
+  if (!selectedValue.trim()) throw new Error(`Autocomplete selection failed for ${value}`);
 }

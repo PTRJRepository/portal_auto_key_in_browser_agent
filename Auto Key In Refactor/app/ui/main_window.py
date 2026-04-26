@@ -79,6 +79,7 @@ class MainWindow(QMainWindow):
         self.runner_bridge: RunnerBridge | None = None
         self.artifact_store = RunArtifactStore()
         self.current_artifacts: RunArtifactPaths | None = None
+        self.tab_progress: dict[int, dict[str, object]] = {}
         self.setWindowTitle("Auto Key In Refactor")
         self.resize(1280, 820)
         self._build_ui()
@@ -171,6 +172,11 @@ class MainWindow(QMainWindow):
         self.records_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.records_table, 3)
 
+        self.agent_table = QTableWidget(0, 7)
+        self.agent_table.setHorizontalHeaderLabels(["Tab", "State", "Assigned", "Done", "Skipped", "Failed", "Current Emp"])
+        self.agent_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.agent_table, 1)
+
         self.run_table = QTableWidget(0, 5)
         self.run_table.setHorizontalHeaderLabels(["Status", "Emp", "Category", "Message", "Tab"])
         self.run_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -260,7 +266,15 @@ class MainWindow(QMainWindow):
         if not self.records:
             self.append_log("Run blocked: no records loaded. Click Test Get Data first.")
             return
-        payload = self.build_payload(mode=self.runner_mode.currentText(), records=self.records)
+        mode = self.runner_mode.currentText()
+        if str(self.category.currentData() or "") == "spsi" and mode not in {"dry_run", "mock"}:
+            self.adjustment_type.setCurrentText("AUTO_BUFFER")
+            self.adjustment_name.setText("AUTO SPSI")
+            self.only_missing.setChecked(True)
+            self.runner_mode.setCurrentText("multi_tab_shared_session")
+            mode = "multi_tab_shared_session"
+            self.append_log("SPSI preset enforced: AUTO_BUFFER / AUTO SPSI / only missing rows / multi-tab shared session.")
+        payload = self.build_payload(mode=mode, records=self.records)
         self.start_runner(payload, f"Starting runner for {len(self.records)} records...")
 
     def build_payload(self, mode: str, records: list[ManualAdjustmentRecord]) -> RunPayload:
@@ -288,6 +302,8 @@ class MainWindow(QMainWindow):
         self.test_session_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.run_table.setRowCount(0)
+        self.agent_table.setRowCount(0)
+        self.tab_progress = {}
         self.current_artifacts = self.artifact_store.create(payload)
         self.append_log(f"Payload saved: {self.current_artifacts.payload_path}")
         self.runner_bridge = RunnerBridge(self.config.runner_command)
@@ -326,6 +342,8 @@ class MainWindow(QMainWindow):
             self.artifact_store.append_event(self.current_artifacts, payload)
         message = str(payload.get("message") or event.event)
         self.append_log(message)
+        if event.event.startswith("tab.") or event.event.startswith("row."):
+            self.update_agent_progress(event.event, payload)
         if event.event.startswith("row.") or event.event.startswith("session.") or event.event.startswith("tab."):
             row = self.run_table.rowCount()
             self.run_table.insertRow(row)
@@ -338,6 +356,76 @@ class MainWindow(QMainWindow):
             ]
             for column, value in enumerate(values):
                 self.run_table.setItem(row, column, QTableWidgetItem(value))
+
+    def update_agent_progress(self, event_name: str, payload: dict) -> None:
+        tab_value = payload.get("tab_index")
+        if tab_value in (None, ""):
+            return
+        tab_index = int(tab_value)
+        progress = self.tab_progress.setdefault(tab_index, {
+            "state": "Pending",
+            "assigned": 0,
+            "done": 0,
+            "skipped": 0,
+            "failed": 0,
+            "current_emp": "",
+        })
+        if event_name == "tab.assigned":
+            progress.update({"state": "Assigned", "assigned": int(payload.get("assigned_rows") or 0)})
+        elif event_name == "tab.open.started":
+            progress["state"] = "Opening"
+        elif event_name in {"tab.form.ready", "tab.ready"}:
+            progress["state"] = "Ready"
+        elif event_name == "row.started":
+            progress.update({"state": "Inputting", "current_emp": str(payload.get("emp_code", ""))})
+        elif event_name == "tab.progress":
+            progress.update({
+                "state": "Processing",
+                "done": int(payload.get("done") or 0),
+                "skipped": int(payload.get("skipped") or 0),
+                "failed": int(payload.get("failed") or 0),
+                "assigned": int(payload.get("total") or progress.get("assigned") or 0),
+                "current_emp": str(payload.get("current_emp_code", progress.get("current_emp", ""))),
+            })
+        elif event_name == "tab.completed":
+            progress.update({
+                "state": "Completed",
+                "done": int(payload.get("done") or 0),
+                "skipped": int(payload.get("skipped") or 0),
+                "failed": int(payload.get("failed") or 0),
+                "assigned": int(payload.get("total") or progress.get("assigned") or 0),
+            })
+        elif event_name == "tab.submit.started":
+            progress["state"] = "Submitting"
+        elif event_name == "tab.submit.completed":
+            progress["state"] = "Submitted"
+        elif event_name in {"tab.open.failed", "row.failed"}:
+            progress["state"] = "Failed"
+        self.render_agent_progress()
+
+    def render_agent_progress(self) -> None:
+        self.agent_table.setRowCount(len(self.tab_progress))
+        for row, tab_index in enumerate(sorted(self.tab_progress)):
+            progress = self.tab_progress[tab_index]
+            values = [
+                str(tab_index),
+                str(progress.get("state", "")),
+                str(progress.get("assigned", 0)),
+                str(progress.get("done", 0)),
+                str(progress.get("skipped", 0)),
+                str(progress.get("failed", 0)),
+                str(progress.get("current_emp", "")),
+            ]
+            for column, value in enumerate(values):
+                self.agent_table.setItem(row, column, QTableWidgetItem(value))
+        totals = {"assigned": 0, "done": 0, "skipped": 0, "failed": 0}
+        for progress in self.tab_progress.values():
+            for key in totals:
+                totals[key] += int(progress.get(key) or 0)
+        if totals["assigned"]:
+            self.summary_label.setText(
+                f"Run progress: {totals['done']} done, {totals['skipped']} skipped, {totals['failed']} failed of {totals['assigned']} records across {len(self.tab_progress)} tabs."
+            )
 
     def _handle_run_completed(self, result: object) -> None:
         if self.current_artifacts and isinstance(result, dict):
