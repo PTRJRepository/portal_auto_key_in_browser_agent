@@ -14,6 +14,7 @@ class AdjustmentCategory:
     adjustment_type: str | None
     match_contains: tuple[str, ...]
     adcode: str
+    description: str | None = None
 
 
 class CategoryRegistry:
@@ -52,6 +53,7 @@ def load_category_registry(path: Path | None = None) -> CategoryRegistry:
             adjustment_type=str(item.get("adjustment_type") or "") or None,
             match_contains=tuple(str(token).upper() for token in item.get("match_contains", [])),
             adcode=str(item.get("adcode", "")),
+            description=str(item["description"]) if item.get("description") else None,
         )
         for item in raw_items
     ]

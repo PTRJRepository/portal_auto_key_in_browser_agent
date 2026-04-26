@@ -11,24 +11,35 @@ function cleanDescription(value: string): string {
   return value.toUpperCase().startsWith("AUTO ") ? value.slice(5) : value;
 }
 
+/**
+ * Aturan deskripsi yang diinput ke Plantware (field DocDesc):
+ *
+ * AUTO_BUFFER categories:
+ * - SPSI          → "POTONGAN SPSI" (bukan "SPSI")
+ * - Masa Kerja    → "TUNJANGAN MASA KERJA" (bukan "MASA KERJA")
+ * - Tunjangan Jabatan → "TUNJANGAN JABATAN" (sudah benar dari cleanDescription)
+ *
+ * Non-AUTO_BUFFER categories:
+ * - Ikuti adjustment_name apa adanya (strip prefix "AUTO " jika ada)
+ */
 export const CATEGORY_STRATEGIES: CategoryStrategy[] = [
   {
     key: "spsi",
     adcode: "spsi",
     matches: (record) => record.adjustment_name.toUpperCase().includes("SPSI"),
-    description: (record) => cleanDescription(record.adjustment_name)
+    description: () => "POTONGAN SPSI"
   },
   {
     key: "masa_kerja",
     adcode: "masa kerja",
     matches: (record) => record.adjustment_name.toUpperCase().includes("MASA"),
-    description: (record) => cleanDescription(record.adjustment_name)
+    description: () => "TUNJANGAN MASA KERJA"
   },
   {
     key: "tunjangan_jabatan",
     adcode: "tunjangan jabatan",
     matches: (record) => record.adjustment_name.toUpperCase().includes("JABATAN"),
-    description: (record) => cleanDescription(record.adjustment_name)
+    description: () => "TUNJANGAN JABATAN"
   }
 ];
 

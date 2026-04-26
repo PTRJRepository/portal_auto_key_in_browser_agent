@@ -106,7 +106,7 @@ $env:AUTO_KEY_IN_API_KEY="ISI_API_KEY_ANDA"
 Dari folder project:
 
 ```bash
-python -m app.main
+python -m app
 ```
 
 Alur penggunaan aman:
@@ -199,14 +199,29 @@ File: `configs/adjustment-categories.json`
 
 Kategori awal:
 
-- `spsi` → adcode `spsi`
-- `masa_kerja` → adcode `masa kerja`
-- `tunjangan_jabatan` → adcode `tunjangan jabatan`
+- `spsi` → adcode `spsi`, deskripsi: **POTONGAN SPSI**
+- `masa_kerja` → adcode `masa kerja`, deskripsi: **TUNJANGAN MASA KERJA**
+- `tunjangan_jabatan` → adcode `tunjangan jabatan`, deskripsi: **TUNJANGAN JABATAN**
 - `premi`
 - `potongan_upah_kotor`
 - `premi_tunjangan`
 
 Mapping bisa diperluas tanpa mengubah UI utama.
+
+### Aturan Deskripsi (DocDesc) di Plantware
+
+Lihat dokumentasi lengkap: [docs/DESCRIPTION-RULES.md](docs/DESCRIPTION-RULES.md)
+
+> **PENTING:** Deskripsi yang diinput ke field DocDesc Plantware **bukan** langsung dari adjustment_name.
+>
+> **AUTO_BUFFER categories:**
+> | Category | Adjustment Name | Deskripsi di Plantware |
+> |----------|----------------|----------------------|
+> | SPSI | AUTO SPSI | **POTONGAN SPSI** |
+> | Masa Kerja | AUTO MASA KERJA | **TUNJANGAN MASA KERJA** |
+> | Tunjangan Jabatan | AUTO TUNJANGAN JABATAN | **TUNJANGAN JABATAN** |
+>
+> **Non-AUTO_BUFFER:** ikuti adjustment_name apa adanya (strip prefix "AUTO " jika ada).
 
 ## Catatan Safety
 
