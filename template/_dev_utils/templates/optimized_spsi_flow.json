@@ -1,0 +1,251 @@
+{
+  "schemaVersion": "1.0.0",
+  "template": {
+    "id": "optimized-spsi-login-2026",
+    "name": "Optimized SPSI Login Flow",
+    "description": "Optimized Playwright-based login and navigation for plantwarep3:8001",
+    "version": "1.0.0",
+    "createdAt": "2026-04-24T00:00:00.000Z"
+  },
+  "entry": {
+    "url": "http://plantwarep3:8001/"
+  },
+  "variables": [
+    {
+      "name": "username",
+      "label": "Username",
+      "defaultValue": "adm075"
+    },
+    {
+      "name": "password",
+      "label": "Password",
+      "defaultValue": "adm075"
+    }
+  ],
+  "flow": [
+    {
+      "id": "step-1-open-login",
+      "type": "openPage",
+      "label": "Open login page",
+      "value": "http://plantwarep3:8001/",
+      "valueMode": "fixed",
+      "timeoutMs": 20000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/"
+      }
+    },
+    {
+      "id": "step-2-wait-username-input",
+      "type": "waitForElement",
+      "label": "Wait for username input",
+      "selector": "#txtUsername",
+      "selectorFallback": {
+        "css": "input[name='txtUsername']",
+        "text": "User Name"
+      },
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-3-click-username",
+      "type": "click",
+      "label": "Focus username field",
+      "selector": "#txtUsername",
+      "selectorFallback": {
+        "css": "input[name='txtUsername']"
+      },
+      "timeoutMs": 10000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-4-type-username",
+      "type": "type",
+      "label": "Enter username",
+      "selector": "#txtUsername",
+      "selectorFallback": {
+        "css": "input[name='txtUsername']"
+      },
+      "value": "{{username}}",
+      "valueMode": "variable",
+      "variableRef": "username",
+      "timeoutMs": 10000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/",
+        "inputType": "text"
+      }
+    },
+    {
+      "id": "step-5-press-tab-username",
+      "type": "pressKey",
+      "label": "Tab to password",
+      "value": "Tab",
+      "valueMode": "fixed",
+      "timeoutMs": 5000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/"
+      }
+    },
+    {
+      "id": "step-6-type-password",
+      "type": "type",
+      "label": "Enter password",
+      "selector": "#txtPassword",
+      "selectorFallback": {
+        "css": "input[name='txtPassword']"
+      },
+      "value": "{{password}}",
+      "valueMode": "variable",
+      "variableRef": "password",
+      "timeoutMs": 10000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/",
+        "inputType": "password"
+      }
+    },
+    {
+      "id": "step-7-press-tab-password",
+      "type": "pressKey",
+      "label": "Tab to submit",
+      "value": "Tab",
+      "valueMode": "fixed",
+      "timeoutMs": 5000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/"
+      }
+    },
+    {
+      "id": "step-8-press-enter",
+      "type": "pressKey",
+      "label": "Submit login",
+      "value": "Enter",
+      "valueMode": "fixed",
+      "timeoutMs": 10000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/"
+      }
+    },
+    {
+      "id": "step-9-wait-location-page",
+      "type": "waitForNavigation",
+      "label": "Wait for location selection page",
+      "value": "**/frmSystemUserSetlocation.aspx",
+      "valueMode": "fixed",
+      "timeoutMs": 20000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "**/frmSystemUserSetlocation.aspx"
+      }
+    },
+    {
+      "id": "step-10-wait-estate-radio",
+      "type": "waitForElement",
+      "label": "Wait for estate radio button",
+      "selector": "input[value='AB1']",
+      "selectorFallback": {
+        "css": "input[name*='rblLocList']",
+        "text": "ESTATE PARIT GUNUNG 1B"
+      },
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-11-click-estate-radio",
+      "type": "check",
+      "label": "Select ESTATE PARIT GUNUNG 1B",
+      "selector": "input[value='AB1']",
+      "selectorFallback": {
+        "css": "#MainContent_rblLocList_0",
+        "text": "ESTATE PARIT GUNUNG 1B"
+      },
+      "timeoutMs": 10000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "**/frmSystemUserSetlocation.aspx",
+        "inputType": "radio"
+      }
+    },
+    {
+      "id": "step-12-wait-ok-button",
+      "type": "waitForElement",
+      "label": "Wait for OK button",
+      "selector": "#MainContent_btnOkay",
+      "selectorFallback": {
+        "css": "input[name*='btnOkay']",
+        "role": "button",
+        "text": "ok"
+      },
+      "timeoutMs": 10000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-13-click-ok",
+      "type": "click",
+      "label": "Click OK button",
+      "selector": "#MainContent_btnOkay",
+      "selectorFallback": {
+        "css": "input[name*='btnOkay']",
+        "role": "button"
+      },
+      "timeoutMs": 10000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-14-navigate-to-list",
+      "type": "openPage",
+      "label": "Navigate to PR Lists",
+      "value": "http://plantwarep3:8001/en/PR/trx/frmPrTrxADLists.aspx",
+      "valueMode": "fixed",
+      "timeoutMs": 20000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3:8001/en/PR/trx/frmPrTrxADLists.aspx"
+      }
+    },
+    {
+      "id": "step-15-wait-new-button",
+      "type": "waitForElement",
+      "label": "Wait for New button",
+      "selector": "#MainContent_btnNew",
+      "selectorFallback": {
+        "css": "input[name*='btnNew']",
+        "role": "button"
+      },
+      "timeoutMs": 15000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-16-click-new",
+      "type": "click",
+      "label": "Click New button",
+      "selector": "#MainContent_btnNew",
+      "selectorFallback": {
+        "css": "input[name*='btnNew']",
+        "role": "button"
+      },
+      "timeoutMs": 10000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-17-wait-autocomplete-input",
+      "type": "waitForElement",
+      "label": "Wait for autocomplete input (data entry point)",
+      "selector": "input.ui-autocomplete-input",
+      "selectorFallback": {
+        "css": ".CBOBox",
+        "role": "textbox"
+      },
+      "timeoutMs": 15000,
+      "continueOnError": false
+    }
+  ],
+  "runtime": {
+    "defaultTimeoutMs": 15000,
+    "sessionMode": "fresh"
+  }
+}

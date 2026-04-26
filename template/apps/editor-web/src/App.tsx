@@ -1,17 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import ReactFlow, {
-  Background,
-  Controls,
-  MiniMap,
-  type Edge,
-  type Node
-} from "reactflow";
+import ReactFlow, { Background, Controls, MiniMap, type Edge, type Node } from "reactflow";
 import {
-  optimizeTemplatePackage,
   serializeTemplatePackage,
   validateTemplatePackage,
   type FlowStep,
-  type StepValueMode,
   type RunResult,
   type TemplatePackage
 } from "@template/flow-schema";
@@ -26,37 +18,7 @@ import {
   stopRecording,
   wsUrl
 } from "./api/agent-client";
-import {
-  convertStepValueToVariable,
-  reorderSteps,
-  toDownloadFilename,
-  updateStep
-} from "./lib/template-utils";
-
-function downloadJson(filename: string, content: string): void {
-  const blob = new Blob([content], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-function normalizeRecordingUrl(rawUrl: string): string {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) {
-    return "";
-  }
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-
-function resolveValueMode(step: FlowStep): StepValueMode {
-  if (step.valueMode) {
-    return step.valueMode;
-  }
-  return step.variableRef ? "variable" : "fixed";
-}
+import { toDownloadFilename } from "./lib/template-utils";
 
 type RecordingFlowPreview = {
   sessionId: string;
@@ -77,6 +39,12 @@ type AgentWsEvent =
       };
     }
   | {
+      type: "recording.browserClosed";
+      payload: {
+        sessionId: string;
+      };
+    }
+  | {
       type: string;
       payload?: unknown;
     };
@@ -90,10 +58,10 @@ function isFlowStepArray(value: unknown): value is FlowStep[] {
 }
 
 function isRecordingFlowPreviewEvent(value: unknown): value is Extract<AgentWsEvent, { type: "recording.flowPreview" }> {
-  if (!isObject(value) || value.type !== "recording.flowPreview" || !isObject(value.payload)) {
-    return false;
-  }
   return (
+    isObject(value) &&
+    value.type === "recording.flowPreview" &&
+    isObject(value.payload) &&
     typeof value.payload.sessionId === "string" &&
     typeof value.payload.entryUrl === "string" &&
     isFlowStepArray(value.payload.flow)
@@ -101,26 +69,108 @@ function isRecordingFlowPreviewEvent(value: unknown): value is Extract<AgentWsEv
 }
 
 function isRecordingStoppedEvent(value: unknown): value is Extract<AgentWsEvent, { type: "recording.stopped" }> {
-  if (!isObject(value) || value.type !== "recording.stopped" || !isObject(value.payload)) {
-    return false;
+  return (
+    isObject(value) &&
+    value.type === "recording.stopped" &&
+    isObject(value.payload) &&
+    typeof value.payload.sessionId === "string" &&
+    typeof value.payload.templateId === "string"
+  );
+}
+
+function isRecordingBrowserClosedEvent(value: unknown): value is Extract<AgentWsEvent, { type: "recording.browserClosed" }> {
+  return (
+    isObject(value) &&
+    value.type === "recording.browserClosed" &&
+    isObject(value.payload) &&
+    typeof value.payload.sessionId === "string"
+  );
+}
+
+function normalizeRecordingUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return "";
   }
-  return typeof value.payload.sessionId === "string" && typeof value.payload.templateId === "string";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function downloadJson(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeStepForDraft(step: FlowStep): FlowStep {
+  const selectorFallback = step.selectorFallback
+    ? Object.fromEntries(
+        Object.entries(step.selectorFallback).filter(([, value]) => typeof value === "string" && value.trim().length > 0)
+      )
+    : undefined;
+
+  return {
+    ...step,
+    selectorFallback: selectorFallback && Object.keys(selectorFallback).length > 0 ? selectorFallback : undefined
+  };
+}
+
+function StepInspector({ step }: { step: FlowStep | null }) {
+  if (!step) {
+    return (
+      <div className="inspector-empty">
+        <strong>No step selected</strong>
+        <p>Record a new flow or select a template to inspect its committed steps.</p>
+      </div>
+    );
+  }
+
+  return (
+    <article className="inspector-card">
+      <span className="node-type">{step.type}</span>
+      <h3>{step.label}</h3>
+      <dl>
+        <div>
+          <dt>Selector</dt>
+          <dd>{step.selector ?? step.selectorFallback?.css ?? "Not required"}</dd>
+        </div>
+        <div>
+          <dt>Captured value</dt>
+          <dd>{step.value ?? "None"}</dd>
+        </div>
+        <div>
+          <dt>Source URL</dt>
+          <dd>{step.metadata?.url ?? "Unknown"}</dd>
+        </div>
+        <div>
+          <dt>Replay mode</dt>
+          <dd>{step.value ? "Fixed exact value" : "Action only"}</dd>
+        </div>
+      </dl>
+    </article>
+  );
 }
 
 function App() {
   const [templates, setTemplates] = useState<TemplatePackage[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [recordingUrl, setRecordingUrl] = useState("https://example.com");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showRecordingModal, setShowRecordingModal] = useState(false);
   const [recordingPreview, setRecordingPreview] = useState<RecordingFlowPreview | null>(null);
-  const [runValues, setRunValues] = useState<Record<string, string>>({});
+  const [runValues] = useState<Record<string, string>>({});
   const [activityLog, setActivityLog] = useState<string[]>([]);
-  const [statusMessage, setStatusMessage] = useState<string>("Ready");
+  const [statusMessage, setStatusMessage] = useState("Ready");
   const [lastRunResult, setLastRunResult] = useState<RunResult | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const activeSessionRef = useRef<string | null>(null);
+  const recordingPreviewRef = useRef<RecordingFlowPreview | null>(null);
+  const stopInFlightRef = useRef(false);
 
   const selectedTemplate = useMemo(
     () => templates.find((item) => item.template.id === selectedTemplateId) ?? null,
@@ -133,73 +183,70 @@ function App() {
       return recordingPreview.flow;
     }
     return selectedTemplate?.flow ?? [];
-  }, [isLivePreviewMode, recordingPreview, activeSessionId, selectedTemplate]);
+  }, [activeSessionId, isLivePreviewMode, recordingPreview, selectedTemplate]);
+
+  const selectedStep = useMemo(
+    () => displayedFlow.find((step) => step.id === selectedStepId) ?? displayedFlow[0] ?? null,
+    [displayedFlow, selectedStepId]
+  );
 
   const flowNodes = useMemo<Node[]>(
     () =>
       displayedFlow.map((step, index) => ({
         id: step.id,
-        type: "default",
         position: {
-          x: index * 230,
-          y: index % 2 === 0 ? 80 : 220
+          x: index * 260,
+          y: index % 2 === 0 ? 90 : 230
         },
         data: {
           label: `${index + 1}. ${step.label}`
         },
         style: {
-          borderRadius: 12,
-          border: "1px solid #20444f",
-          width: 220,
-          color: "#09212a",
-          background:
-            step.type === "openPage"
-              ? "linear-gradient(120deg, #dff5de, #f7fff5)"
-              : "linear-gradient(120deg, #e5f6ff, #f7fdff)"
+          borderRadius: 18,
+          border: step.id === selectedStep?.id ? "2px solid #ff6a3d" : "1px solid #b9c6bb",
+          width: 230,
+          color: "#17211b",
+          background: step.type === "openPage" ? "#e0f3d9" : "#fffdf6",
+          boxShadow: "0 14px 34px rgba(23, 33, 27, 0.12)"
         }
       })),
-    [displayedFlow]
+    [displayedFlow, selectedStep?.id]
   );
 
   const flowEdges = useMemo<Edge[]>(
     () =>
-      displayedFlow
-        .slice(1)
-        .map((step, index) => ({
-          id: `${displayedFlow[index].id}-${step.id}`,
-          source: displayedFlow[index].id,
-          target: step.id,
-          animated: true,
-          style: {
-            stroke: "#1e6979",
-            strokeWidth: 2
-          }
-        })),
-    [displayedFlow]
+      displayedFlow.slice(1).map((step, index) => ({
+        id: `${displayedFlow[index].id}-${step.id}`,
+        source: displayedFlow[index].id,
+        target: step.id,
+        animated: isLivePreviewMode,
+        style: {
+          stroke: "#ff6a3d",
+          strokeWidth: 2
+        }
+      })),
+    [displayedFlow, isLivePreviewMode]
   );
 
   useEffect(() => {
     activeSessionRef.current = activeSessionId;
   }, [activeSessionId]);
 
-  async function loadTemplatesFromAgent(): Promise<void> {
-    try {
-      const summaries = await listTemplates();
-      const loaded = await Promise.all(summaries.map((summary) => getTemplate(summary.id)));
-      setTemplates(loaded);
-      if (loaded.length > 0) {
-        setSelectedTemplateId((previous) => previous ?? loaded[0].template.id);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to fetch templates";
-      setStatusMessage(message);
-    }
-  }
+  useEffect(() => {
+    recordingPreviewRef.current = recordingPreview;
+  }, [recordingPreview]);
 
   useEffect(() => {
-    loadTemplatesFromAgent().catch(() => {
-      // already reflected in status state
-    });
+    listTemplates()
+      .then((summaries) => Promise.all(summaries.map((summary) => getTemplate(summary.id))))
+      .then((loaded) => {
+        setTemplates(loaded);
+        setSelectedTemplateId((previous) => previous ?? loaded[0]?.template.id ?? null);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Failed to fetch templates";
+        setStatusMessage(message);
+      });
   }, []);
 
   useEffect(() => {
@@ -212,40 +259,30 @@ function App() {
         const parsed = JSON.parse(raw) as unknown;
         if (isRecordingFlowPreviewEvent(parsed)) {
           setRecordingPreview(parsed.payload);
-          if (activeSessionRef.current === parsed.payload.sessionId) {
-            setStatusMessage(`Recording live: ${parsed.payload.flow.length} step(s) captured`);
-          }
+          setStatusMessage(`Recording live: ${parsed.payload.flow.length} clean step(s)`);
         }
 
         if (isRecordingStoppedEvent(parsed) && activeSessionRef.current === parsed.payload.sessionId) {
           setRecordingPreview(null);
         }
+
+        if (
+          isRecordingBrowserClosedEvent(parsed) &&
+          activeSessionRef.current === parsed.payload.sessionId &&
+          !stopInFlightRef.current
+        ) {
+          setStatusMessage("Browser recording closed. Finalizing captured flow...");
+          void finalizeRecording(parsed.payload.sessionId);
+        }
       } catch {
-        // Keep raw log only when payload is not JSON.
+        // Raw log remains available for malformed or non-JSON agent output.
       }
     };
-
-    socket.onerror = () => {
-      setStatusMessage("WebSocket disconnected. Start local-agent first.");
-    };
-
-    return () => {
-      socket.close();
-    };
+    socket.onerror = () => setStatusMessage("WebSocket disconnected. Start the monolith server first.");
+    return () => socket.close();
   }, []);
 
-  useEffect(() => {
-    if (!selectedTemplate) {
-      return;
-    }
-    setRunValues(() =>
-      Object.fromEntries(
-        selectedTemplate.variables.map((variable) => [variable.name, variable.defaultValue ?? ""])
-      )
-    );
-  }, [selectedTemplateId, selectedTemplate?.variables]);
-
-  const upsertTemplate = (templatePackage: TemplatePackage): void => {
+  function upsertTemplate(templatePackage: TemplatePackage): void {
     setTemplates((current) => {
       const existingIndex = current.findIndex((item) => item.template.id === templatePackage.template.id);
       if (existingIndex === -1) {
@@ -255,32 +292,31 @@ function App() {
       next[existingIndex] = templatePackage;
       return next;
     });
-  };
+  }
 
-  const applyStepPatch = (stepId: string, patch: Parameters<typeof updateStep>[2]) => {
-    if (!selectedTemplate) {
-      return;
-    }
-    const updated = updateStep(selectedTemplate, stepId, patch);
-    upsertTemplate(updated);
-  };
+  function buildDraftTemplateFromPreview(preview: RecordingFlowPreview): TemplatePackage {
+    return validateTemplatePackage({
+      schemaVersion: "1.0.0",
+      template: {
+        id: `recovered-${preview.sessionId}`,
+        name: `Recovered Recording ${new Date().toISOString()}`,
+        description: "Recovered locally from live recording preview.",
+        version: "1.0.0",
+        createdAt: new Date().toISOString()
+      },
+      entry: {
+        url: preview.entryUrl
+      },
+      variables: [],
+      flow: preview.flow.map(sanitizeStepForDraft),
+      runtime: {
+        defaultTimeoutMs: 15000,
+        sessionMode: "fresh"
+      }
+    });
+  }
 
-  const moveStep = (index: number, direction: "up" | "down") => {
-    if (!selectedTemplate) {
-      return;
-    }
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= selectedTemplate.flow.length) {
-      return;
-    }
-    const updated = {
-      ...selectedTemplate,
-      flow: reorderSteps(selectedTemplate.flow, index, targetIndex)
-    };
-    upsertTemplate(updated);
-  };
-
-  const onStartRecording = async () => {
+  async function onStartRecording(): Promise<void> {
     const normalizedUrl = normalizeRecordingUrl(recordingUrl);
     if (!normalizedUrl) {
       setStatusMessage("Isi URL tujuan terlebih dulu.");
@@ -290,7 +326,6 @@ function App() {
     setIsBusy(true);
     try {
       const session = await startRecording(normalizedUrl);
-      setRecordingUrl(normalizedUrl);
       setActiveSessionId(session.sessionId);
       setRecordingPreview({
         sessionId: session.sessionId,
@@ -301,11 +336,10 @@ function App() {
             type: "openPage",
             label: "Open start page",
             value: session.url,
+            valueMode: "fixed",
             timeoutMs: 15000,
             continueOnError: false,
-            metadata: {
-              url: session.url
-            }
+            metadata: { url: session.url }
           }
         ]
       });
@@ -317,29 +351,50 @@ function App() {
     } finally {
       setIsBusy(false);
     }
-  };
+  }
 
-  const onStopRecording = async () => {
+  async function finalizeRecording(sessionId: string): Promise<void> {
+    if (stopInFlightRef.current) {
+      return;
+    }
+    stopInFlightRef.current = true;
+    setIsBusy(true);
+    try {
+      const templatePackage = await stopRecording(sessionId);
+      upsertTemplate(templatePackage);
+      setSelectedTemplateId(templatePackage.template.id);
+      setSelectedStepId(templatePackage.flow[0]?.id ?? null);
+      setActiveSessionId(null);
+      setRecordingPreview(null);
+      setStatusMessage(`Recording saved as clean template: ${templatePackage.template.name}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to stop recording";
+      const preview = recordingPreviewRef.current;
+      if (preview?.sessionId === sessionId && preview.flow.length > 0) {
+        const recoveredTemplate = buildDraftTemplateFromPreview(preview);
+        upsertTemplate(recoveredTemplate);
+        setSelectedTemplateId(recoveredTemplate.template.id);
+        setSelectedStepId(recoveredTemplate.flow[0]?.id ?? null);
+        setActiveSessionId(null);
+        setRecordingPreview(null);
+        setStatusMessage(`Stop failed on server (${message}). Draft recovered locally for export/replay.`);
+      } else {
+        setStatusMessage(message);
+      }
+    } finally {
+      setIsBusy(false);
+      stopInFlightRef.current = false;
+    }
+  }
+
+  async function onStopRecording(): Promise<void> {
     if (!activeSessionId) {
       return;
     }
-    setIsBusy(true);
-    try {
-      const templatePackage = await stopRecording(activeSessionId);
-      upsertTemplate(templatePackage);
-      setSelectedTemplateId(templatePackage.template.id);
-      setActiveSessionId(null);
-      setRecordingPreview(null);
-      setStatusMessage(`Recording converted to flow: ${templatePackage.template.name}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to stop recording";
-      setStatusMessage(message);
-    } finally {
-      setIsBusy(false);
-    }
-  };
+    await finalizeRecording(activeSessionId);
+  }
 
-  const onImportTemplate = async (event: ChangeEvent<HTMLInputElement>) => {
+  async function onImportTemplate(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -351,387 +406,171 @@ function App() {
       const result = await importTemplate(text, { optimize: true });
       upsertTemplate(result.templatePackage);
       setSelectedTemplateId(result.templatePackage.template.id);
-      const removed = result.optimization.removedSteps;
-      setStatusMessage(
-        removed > 0
-          ? `Template imported + optimized: ${result.templatePackage.template.name} (${removed} step dihapus)`
-          : `Template imported: ${result.templatePackage.template.name}`
-      );
+      setSelectedStepId(result.templatePackage.flow[0]?.id ?? null);
+      setStatusMessage(`Template imported: ${result.templatePackage.template.name}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Invalid template JSON";
       setStatusMessage(message);
     } finally {
       event.target.value = "";
     }
-  };
+  }
 
-  const onExportTemplate = async () => {
+  async function onExportTemplate(): Promise<void> {
     if (!selectedTemplate) {
       return;
     }
-    try {
-      const exported = await exportTemplate(selectedTemplate.template.id).catch(() => selectedTemplate);
-      const content = serializeTemplatePackage(exported);
-      downloadJson(toDownloadFilename(exported), content);
-      setStatusMessage(`Template exported: ${exported.template.name}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to export template";
-      setStatusMessage(message);
-    }
-  };
+    const exported = await exportTemplate(selectedTemplate.template.id).catch(() => selectedTemplate);
+    downloadJson(toDownloadFilename(exported), serializeTemplatePackage(exported));
+    setStatusMessage(`Template exported: ${exported.template.name}`);
+  }
 
-  const onRunTemplate = async () => {
+  async function onReplay(recallFromSaved: boolean): Promise<void> {
     if (!selectedTemplate) {
       return;
     }
+
     setIsBusy(true);
     try {
       const result = await runTemplate({
-        template: selectedTemplate,
+        templateId: recallFromSaved ? selectedTemplate.template.id : undefined,
+        template: recallFromSaved ? undefined : selectedTemplate,
         variables: runValues,
         strictFidelity: true,
-        recallFromSaved: false
+        recallFromSaved
       });
       setLastRunResult(result);
       const fidelityPercent = result.fidelity?.scorePercent ?? 0;
-      setStatusMessage(result.status === "success"
-        ? `Start selesai dengan fidelity ${fidelityPercent}%`
-        : `Start gagal di step ${result.failedStepId ?? "-"} (fidelity ${fidelityPercent}%)`);
+      setStatusMessage(`${recallFromSaved ? "Recall" : "Replay"} ${result.status}: ${fidelityPercent}% fidelity`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Run failed";
+      const message = error instanceof Error ? error.message : "Replay failed";
       setStatusMessage(message);
     } finally {
       setIsBusy(false);
     }
-  };
-
-  const onRecallTemplate = async () => {
-    if (!selectedTemplate) {
-      return;
-    }
-    setIsBusy(true);
-    try {
-      const result = await runTemplate({
-        templateId: selectedTemplate.template.id,
-        variables: runValues,
-        strictFidelity: true,
-        recallFromSaved: true
-      });
-      setLastRunResult(result);
-      const fidelityPercent = result.fidelity?.scorePercent ?? 0;
-      setStatusMessage(result.status === "success"
-        ? `Recall sukses 100% sesuai template tersimpan`
-        : `Recall gagal. Fidelity ${fidelityPercent}% (target 100%)`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Recall failed";
-      setStatusMessage(message);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const onSyncTemplate = async () => {
-    if (!selectedTemplate) {
-      return;
-    }
-    try {
-      await importTemplate(serializeTemplatePackage(selectedTemplate), { optimize: false });
-      setStatusMessage(`Template synced: ${selectedTemplate.template.name}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Sync failed";
-      setStatusMessage(message);
-    }
-  };
-
-  const onOptimizeSelectedTemplate = async () => {
-    if (!selectedTemplate) {
-      return;
-    }
-
-    const optimized = optimizeTemplatePackage(selectedTemplate);
-    upsertTemplate(optimized.templatePackage);
-
-    try {
-      await importTemplate(serializeTemplatePackage(optimized.templatePackage), { optimize: false });
-      const removed = optimized.report.removedSteps;
-      setStatusMessage(
-        removed > 0
-          ? `Flow optimized: ${removed} step berulang dihapus`
-          : "Flow sudah optimal, tidak ada step berulang yang dihapus"
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to sync optimized template";
-      setStatusMessage(message);
-    }
-  };
+  }
 
   return (
-    <div className="layout">
-      <header className="page-header">
-        <div>
-          <h1>Browser Flow Template Creator</h1>
-          <p>Record browser actions, edit as a linear flow, then replay with variable input.</p>
+    <main className="app-shell">
+      <aside className="template-sidebar" aria-label="Templates">
+        <div className="brand-block">
+          <span className="eyebrow">Local Automation</span>
+          <h1>Template Creator</h1>
+          <p>Record once, clean the noise, replay the exact same flow.</p>
         </div>
-        <div className="header-actions">
-          <button onClick={() => setShowRecordingModal(true)} disabled={isBusy || activeSessionId !== null}>
-            Start Recording
-          </button>
-          <button onClick={onStopRecording} disabled={isBusy || activeSessionId === null}>
-            Stop Recording
-          </button>
+
+        <button className="primary-action" onClick={() => setShowRecordingModal(true)} disabled={isBusy || isLivePreviewMode}>
+          Start Recording
+        </button>
+
+        <div className="sidebar-actions">
           <button onClick={() => importInputRef.current?.click()} disabled={isBusy}>
-            Import JSON
+            Import
           </button>
           <button onClick={onExportTemplate} disabled={isBusy || !selectedTemplate}>
-            Export JSON
-          </button>
-          <button onClick={onOptimizeSelectedTemplate} disabled={!selectedTemplate || isLivePreviewMode}>
-            Optimize Flow
-          </button>
-          <button onClick={onSyncTemplate} disabled={!selectedTemplate}>
-            Sync Template
+            Export
           </button>
         </div>
-      </header>
 
-      <input
-        ref={importInputRef}
-        type="file"
-        accept=".json,application/json"
-        className="hidden-input"
-        onChange={onImportTemplate}
-      />
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden-input"
+          onChange={onImportTemplate}
+        />
 
-      <main className="content-grid">
-        <section className="panel panel-templates">
+        <section className="template-list">
           <h2>Templates</h2>
-          <ul>
-            {templates.map((item) => (
-              <li key={item.template.id}>
-                <button
-                  className={item.template.id === selectedTemplateId ? "selected" : ""}
-                  onClick={() => setSelectedTemplateId(item.template.id)}
-                >
-                  <span>{item.template.name}</span>
-                  <small>{item.template.id}</small>
-                </button>
-              </li>
-            ))}
-          </ul>
-          {templates.length === 0 && <p className="empty-text">No templates yet. Start a recording first.</p>}
-
-          <div className="guide-card">
-            <h3>How to Start</h3>
-            <ol className="guide-list">
-              <li>Jalankan `npm run dev:agent` di terminal 1.</li>
-              <li>Jalankan `npm run dev:editor` di terminal 2.</li>
-              <li>Klik `Start Recording`, isi URL awal, lalu mulai interaksi.</li>
-              <li>Klik `Stop Recording` untuk ubah rekaman jadi flow.</li>
-              <li>Edit step/variable lalu klik `Run Template`.</li>
-            </ol>
-          </div>
-        </section>
-
-        <section className="panel panel-flow">
-          <h2>
-            Linear Flow Canvas {isLivePreviewMode ? `(LIVE ${displayedFlow.length} step)` : ""}
-          </h2>
-          <div className="flow-canvas">
-            <ReactFlow
-              nodes={flowNodes}
-              edges={flowEdges}
-              fitView
-              nodesDraggable={false}
-              nodesConnectable={false}
-              elementsSelectable={false}
-            >
-              <MiniMap />
-              <Controls />
-              <Background gap={16} />
-            </ReactFlow>
-          </div>
-        </section>
-
-        <section className="panel panel-steps">
-          <h2>{isLivePreviewMode ? "Live Step Stream" : "Step Editor"}</h2>
-          {displayedFlow.map((step, index) => (
-            <article key={step.id} className="step-card">
-              <header>
-                <strong>
-                  {index + 1}. {step.type}
-                </strong>
-                {!isLivePreviewMode && (
-                  <div className="row-actions">
-                    <button onClick={() => moveStep(index, "up")}>Up</button>
-                    <button onClick={() => moveStep(index, "down")}>Down</button>
-                  </div>
-                )}
-              </header>
-              {isLivePreviewMode ? (
-                <div className="live-step-readonly">
-                  <p>
-                    <strong>Label:</strong> {step.label}
-                  </p>
-                  {step.selector ? (
-                    <p>
-                      <strong>Selector:</strong> {step.selector}
-                    </p>
-                  ) : null}
-                  {step.value ? (
-                    <p>
-                      <strong>Value:</strong> {step.value}
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <>
-                  <label>
-                    Label
-                    <input
-                      value={step.label}
-                      onChange={(event) => applyStepPatch(step.id, { label: event.target.value })}
-                    />
-                  </label>
-                  {"selector" in step && (
-                    <label>
-                      Selector
-                      <input
-                        value={step.selector ?? ""}
-                        onChange={(event) => applyStepPatch(step.id, { selector: event.target.value })}
-                      />
-                    </label>
-                  )}
-                  {"value" in step && (
-                    <>
-                      <label>
-                        Data Mode
-                        <select
-                          value={resolveValueMode(step)}
-                          onChange={(event) => {
-                            const nextMode = event.target.value as StepValueMode;
-                            applyStepPatch(step.id, { valueMode: nextMode });
-                          }}
-                        >
-                          <option value="fixed">Fixed Value</option>
-                          <option value="variable">Variable</option>
-                          <option value="generatedTimestamp">Generated: Timestamp</option>
-                          <option value="generatedRandomNumber">Generated: Random Number</option>
-                          <option value="generatedUuid">Generated: UUID</option>
-                        </select>
-                      </label>
-                      <label>
-                        Value
-                        <input
-                          value={step.value ?? ""}
-                          disabled={resolveValueMode(step) !== "fixed" && resolveValueMode(step) !== "variable"}
-                          onChange={(event) => applyStepPatch(step.id, { value: event.target.value })}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {resolveValueMode(step) === "variable" && !step.variableRef && (
-                    <p className="empty-text">
-                      Mode variable aktif. Klik tombol di bawah untuk membuat variable dari value saat ini.
-                    </p>
-                  )}
-                  {step.value && (
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        if (!selectedTemplate) {
-                          return;
-                        }
-                        const updated = convertStepValueToVariable(selectedTemplate, step.id);
-                        upsertTemplate(updated);
-                      }}
-                    >
-                      Convert Value to Variable
-                    </button>
-                  )}
-                </>
-              )}
-            </article>
-          ))}
-          {displayedFlow.length === 0 && (
-            <p className="empty-text">
-              {isLivePreviewMode
-                ? "Menunggu event interaksi pertama dari browser..."
-                : "Select a template to edit its steps."}
-            </p>
-          )}
-        </section>
-
-        <section className="panel panel-variables">
-          <h2>Variables</h2>
-          {isLivePreviewMode && (
-            <p className="empty-text">Live recording aktif. Stop recording dulu untuk edit variable dan run.</p>
-          )}
-          {selectedTemplate?.variables.length ? (
-            <div className="variable-list">
-              {selectedTemplate.variables.map((variable) => (
-                <label key={variable.name}>
-                  {variable.label} ({variable.name})
-                  <input
-                    value={runValues[variable.name] ?? ""}
-                    onChange={(event) =>
-                      setRunValues((current) => ({
-                        ...current,
-                        [variable.name]: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-              ))}
-            </div>
+          {templates.length === 0 ? (
+            <p className="muted">No templates yet. Start a browser recording to create one.</p>
           ) : (
-            <p className="empty-text">No variables yet. Convert step values into placeholders.</p>
-          )}
-
-          <div className="row-actions">
-            <button onClick={onRunTemplate} disabled={isBusy || !selectedTemplate || isLivePreviewMode}>
-              Start (Strict)
-            </button>
-            <button className="secondary" onClick={onRecallTemplate} disabled={isBusy || !selectedTemplate || isLivePreviewMode}>
-              Recall Saved (100%)
-            </button>
-          </div>
-
-          {lastRunResult && (
-            <div className="run-result">
-              <strong>Latest Run: {lastRunResult.status.toUpperCase()}</strong>
-              <p>
-                Steps executed: {lastRunResult.steps.length}
-                {lastRunResult.failedStepId ? `, failed step: ${lastRunResult.failedStepId}` : ""}
-              </p>
-              {lastRunResult.fidelity ? (
-                <p>
-                  Fidelity: {lastRunResult.fidelity.scorePercent}% ({lastRunResult.fidelity.mode}){" "}
-                  {lastRunResult.fidelity.exactMatch ? "exact match" : "not exact"}
-                </p>
-              ) : null}
-            </div>
+            templates.map((templatePackage) => (
+              <button
+                key={templatePackage.template.id}
+                className={templatePackage.template.id === selectedTemplateId ? "template-item active" : "template-item"}
+                onClick={() => {
+                  setSelectedTemplateId(templatePackage.template.id);
+                  setSelectedStepId(templatePackage.flow[0]?.id ?? null);
+                }}
+              >
+                <strong>{templatePackage.template.name}</strong>
+                <span>{templatePackage.flow.length} step(s)</span>
+              </button>
+            ))
           )}
         </section>
+      </aside>
 
-        <section className="panel panel-events">
-          <h2>Live Events</h2>
-          <p className="status">{statusMessage}</p>
-          <div className="event-list">
-            {activityLog.length ? (
-              activityLog.map((entry, index) => <code key={`${entry}-${index}`}>{entry}</code>)
-            ) : (
-              <p className="empty-text">No events yet. Start recording or run a template.</p>
-            )}
+      <section className="canvas-panel">
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">{isLivePreviewMode ? "Recording Preview" : "Template Flow"}</span>
+            <h2>Workflow Canvas</h2>
+          </div>
+          <div className="topbar-actions">
+            <button onClick={() => onReplay(false)} disabled={!selectedTemplate || isBusy || isLivePreviewMode}>
+              Replay Draft
+            </button>
+            <button onClick={() => onReplay(true)} disabled={!selectedTemplate || isBusy || isLivePreviewMode}>
+              Recall Saved
+            </button>
+            <button onClick={onStopRecording} disabled={!activeSessionId || isBusy}>
+              Stop Recording
+            </button>
+          </div>
+        </header>
+
+        <div className="flow-canvas">
+          <ReactFlow
+            nodes={flowNodes}
+            edges={flowEdges}
+            fitView
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable
+            onNodeClick={(_event, node) => setSelectedStepId(node.id)}
+          >
+            <Background gap={28} color="#c9d0c9" />
+            <Controls />
+            <MiniMap />
+          </ReactFlow>
+        </div>
+
+        <section className="event-console">
+          <div>
+            <h3>Live Events</h3>
+            <p>{statusMessage}</p>
+          </div>
+          <div className="event-stream">
+            {activityLog.slice(0, 4).map((entry, index) => (
+              <code key={`${entry}-${index}`}>{entry}</code>
+            ))}
+            {activityLog.length === 0 ? <span className="muted">Waiting for agent events.</span> : null}
           </div>
         </section>
-      </main>
+      </section>
+
+      <aside className="inspector-panel">
+        <span className="eyebrow">Agent</span>
+        <h2>Agent Inspector</h2>
+        <p className="muted">Only committed clean steps are saved. Raw duplicate events stay in the log.</p>
+        <StepInspector step={selectedStep} />
+        {lastRunResult ? (
+          <section className="run-summary">
+            <h3>Latest Run</h3>
+            <strong>{lastRunResult.status.toUpperCase()}</strong>
+            <p>{lastRunResult.steps.length} step(s) executed</p>
+          </section>
+        ) : null}
+      </aside>
 
       {showRecordingModal && (
         <div className="modal-backdrop">
           <div className="modal">
-            <h3>Start Recording</h3>
-            <p>Where should the browser start before recording all interactions?</p>
-            <p className="hint-text">Tip: boleh isi `example.com` tanpa `https://`, nanti dinormalisasi otomatis.</p>
+            <span className="eyebrow">New Recording</span>
+            <h3>Start from URL</h3>
+            <p>Chromium will open locally. Username and password values are captured exactly for replay.</p>
             <input value={recordingUrl} onChange={(event) => setRecordingUrl(event.target.value)} />
             <div className="row-actions">
               <button className="secondary" onClick={() => setShowRecordingModal(false)}>
@@ -744,7 +583,7 @@ function App() {
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }
 

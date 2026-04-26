@@ -1,0 +1,161 @@
+{
+  "schemaVersion": "1.0.0",
+  "template": {
+    "id": "3a18511e-2ba4-491f-b440-d94de6c42559",
+    "name": "Template 2026-04-24T12:04:03.334Z",
+    "description": "",
+    "version": "1.0.0",
+    "createdAt": "2026-04-24T12:04:03.334Z"
+  },
+  "entry": {
+    "url": "http://plantwarep3.rebinmas.com:8001/"
+  },
+  "variables": [],
+  "flow": [
+    {
+      "id": "a914c343-48ae-4c79-96b8-b6e2be4bb59b",
+      "type": "openPage",
+      "label": "Open start page",
+      "value": "http://plantwarep3.rebinmas.com:8001/",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/"
+      }
+    },
+    {
+      "id": "ca19fe97-bd2f-4968-b11a-b4d412eece4d",
+      "type": "waitForNavigation",
+      "label": "Wait for navigation",
+      "value": "http://plantwarep3.rebinmas.com:8001/",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/"
+      }
+    },
+    {
+      "id": "faeb3769-ee52-471c-ad7f-13e336af34e3",
+      "type": "click",
+      "label": "Click: #txtUsername",
+      "selector": "#txtUsername",
+      "selectorFallback": {
+        "tag": "input"
+      },
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/"
+      }
+    },
+    {
+      "id": "4f5050c0-350a-4374-b4ed-afee13a2df52",
+      "type": "type",
+      "label": "Type: #txtUsername",
+      "selector": "#txtUsername",
+      "value": "adm075",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/",
+        "inputType": "text"
+      }
+    },
+    {
+      "id": "df4c8699-b2bf-4c1d-82ee-e3a97ee4d3ca",
+      "type": "pressKey",
+      "label": "Press key: Tab",
+      "value": "Tab",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/"
+      }
+    },
+    {
+      "id": "b718478b-ae73-4f15-9c45-6b7b02727c1e",
+      "type": "type",
+      "label": "Type: #txtPassword",
+      "selector": "#txtPassword",
+      "value": "adm075",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/",
+        "inputType": "password"
+      }
+    },
+    {
+      "id": "8f86fbdf-609d-4b19-ab8b-b358a0a73cfd",
+      "type": "pressKey",
+      "label": "Press key: Tab",
+      "value": "Tab",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/"
+      }
+    },
+    {
+      "id": "7eadee89-fddb-49f2-a32e-83852544363c",
+      "type": "pressKey",
+      "label": "Press key: Enter",
+      "value": "Enter",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/"
+      }
+    },
+    {
+      "id": "d4b23a77-f8ea-49ce-95a1-5554ea7a8f86",
+      "type": "waitForNavigation",
+      "label": "Wait for navigation",
+      "value": "http://plantwarep3.rebinmas.com:8001/EN/system/user/frmSystemUserSetlocation.aspx",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/EN/system/user/frmSystemUserSetlocation.aspx"
+      }
+    },
+    {
+      "id": "80fd1be7-0868-475e-a836-705822023a7d",
+      "type": "click",
+      "label": "Click: tr:nth-of-type(3) > td:nth-of-type(2) > label",
+      "selector": "tr:nth-of-type(3) > td:nth-of-type(2) > label",
+      "selectorFallback": {
+        "text": "ESTATE PARIT GUNUNG 1B",
+        "tag": "label"
+      },
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/EN/system/user/frmSystemUserSetlocation.aspx"
+      }
+    },
+    {
+      "id": "2695eda3-7476-409b-a616-b43b94babb4b",
+      "type": "waitForNavigation",
+      "label": "Wait for navigation",
+      "value": "http://plantwarep3.rebinmas.com:8001/EN/system/user/frmSystemUserSetlocation.aspx",
+      "valueMode": "fixed",
+      "timeoutMs": 15000,
+      "continueOnError": false,
+      "metadata": {
+        "url": "http://plantwarep3.rebinmas.com:8001/EN/system/user/frmSystemUserSetlocation.aspx"
+      }
+    }
+  ],
+  "runtime": {
+    "defaultTimeoutMs": 15000,
+    "sessionMode": "fresh"
+  }
+}

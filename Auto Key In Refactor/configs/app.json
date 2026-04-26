@@ -1,0 +1,11 @@
+{
+  "api_base_url": "http://localhost:8002",
+  "api_key": "88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a",
+  "runner_command": "node runner/dist/cli.js",
+  "default_period_month": 4,
+  "default_period_year": 2026,
+  "default_division_code": "P1B",
+  "default_runner_mode": "multi_tab_shared_session",
+  "default_max_tabs": 5,
+  "headless": false
+}

@@ -1,0 +1,82 @@
+1. Buka ini :
+http://plantwarep3:8001/
+
+
+wait for this element
+2. <input name="txtUsername" type="text" id="txtUsername" tabindex="1" placeholder="User Name" style="width:90%;text-align: center" fdprocessedid="xysvaj">
+
+keep this auth
+username : adm075
+password : adm075
+
+3. input username and password
+<input name="txtUsername" type="text" id="txtUsername" tabindex="1" placeholder="User Name" style="width:90%;text-align: center" fdprocessedid="xysvaj">
+<input name="txtPassword" type="password" id="txtPassword" tabindex="2" placeholder="Password" style="width:90%;text-align: center" fdprocessedid="khflu">
+
+4. klik submit
+<input type="submit" name="btnLogin" value="LOG IN" id="btnLogin" tabindex="4" class="button button-login" style="border-radius: 45px;padding: 1px;width:60%;height:30px;" fdprocessedid="nwivn">
+
+5. wait for this element
+
+#MainContent_pnlSetLocation > div
+
+6. find dan skilik sesuai divisi
+<input id="MainContent_rblLocList_0" type="radio" name="ctl00$MainContent$rblLocList" value="AB1" onclick="javascript:setTimeout('__doPostBack(\'ctl00$MainContent$rblLocList$0\',\'\')', 0)">
+
+7. klik ok
+<input name="ctl00$MainContent$btnOkay" type="button" id="MainContent_btnOkay" class="button" value="ok" fdprocessedid="cuct0m">
+
+
+8. after that lagsung menuju navigasi ke sini
+http://plantwarep3:8001/en/PR/trx/frmPrTrxADLists.aspx
+
+9. klik new
+<input type="submit" name="ctl00$MainContent$btnNew" value="New" id="MainContent_btnNew" class="button" fdprocessedid="c28dhw">
+
+10. jika suha ada elemen ini <input class="ui-autocomplete-input ui-widget CBOBox" autocomplete="off" role="textbox" aria-autocomplete="list" aria-haspopup="true" style="width: 332.182px; height: 17px;" fdprocessedid="r85ibc">
+
+maka iu sudah sampai dimaa thap penginputan datany dilakukan coba sampai situ dulu nanti kita lanjut ke looping datanya,
+
+
+
+
+AUTOMATION INPUT, step by step by step iputnya seperti ini :
+setah sudah di halamna ii http://plantwarep3:8001/en/PR/trx/frmPrTrxADDets.aspx
+
+1 baris data diproses seperti ini
+
+1. input nama employee
+<input class="ui-autocomplete-input ui-widget CBOBox" autocomplete="off" role="textbox" aria-autocomplete="list" aria-haspopup="true" style="width: 296.182px; height: 17px;" fdprocessedid="pnsfyl">
+
+2. pilih p1b samakan edngan ;olkasi divsi sbeleumnya
+
+<select name="ctl00$MainContent$ddlChargeTo" onchange="javascript:setTimeout('__doPostBack(\'ctl00$MainContent$ddlChargeTo\',\'\')', 0)" id="MainContent_ddlChargeTo" style="width: 350px" fdprocessedid="hukblg">
+					<option value=""></option>
+					<option value="AB1">ESTATE AIR RUAK B1</option>
+					<option value="AB2">ESTATE AIR RUAK B2</option>
+					<option value="ARA">ESTATE AIR RUAK A</option>
+					<option value="ARC">ESTATE AIR RUAK C</option>
+					<option value="DME">ESTATE DARUR MAKMUR</option>
+					<option value="HQ">PTRJ HQ</option>
+					<option value="IJL">ESTATE IMPIAN JAYA LESTARI</option>
+					<option value="P1A">ESTATE PARIT GUNUNG 1A</option>
+					<option selected="selected" value="P1B">ESTATE PARIT GUNUNG 1B</option>
+					<option value="P2A">ESTATE PARIT GUNUNG 2A</option>
+					<option value="P2B">ESTATE PARIT GUNUNG 2B</option>
+
+				</select>
+
+
+3. adcode nya = 'spsi', tungu sampai opsinya jdi satu, baru pilih sleksi ppertam arrow bawah baru enter
+
+<input class="ui-autocomplete-input ui-widget CBOBox" autocomplete="off" role="textbox" aria-autocomplete="list" aria-haspopup="true" style="width: 332.182px; height: 17px;" fdprocessedid="xtxry">
+
+
+4. tunggu halana merefersh , ditandai dengan adanyaa bmuncul elemen ini
+<input class="ui-autocomplete-input ui-widget CBOBox" autocomplete="off" role="textbox" aria-autocomplete="list" aria-haspopup="true" style="width: 282.182px; height: 17px;" fdprocessedid="ctirzr">
+
+
+
+5. masukkan amount  spsi nya
+
+<input name="ctl00$MainContent$txtAmount" type="text" value="0" maxlength="21" id="MainContent_txtAmount" style="width:250px;" fdprocessedid="k9hsj5">

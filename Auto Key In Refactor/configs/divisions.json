@@ -1,0 +1,18 @@
+[
+  {"code":"PG1A","label":"Plasma 1 Afdeling","aliases":["P1A","PLASMA1A","Plasma 1A"]},
+  {"code":"PG1B","label":"Plasma 1 Blok","aliases":["P1B","PLASMA1B","Plasma 1B"]},
+  {"code":"PG2A","label":"Plasma 2 Afdeling","aliases":["P2A","PLASMA2A","Plasma 2A"]},
+  {"code":"PG2B","label":"Plasma 2 Blok","aliases":["P2B","PLASMA2B","Plasma 2B"]},
+  {"code":"AB1","label":"Afdeling 1","aliases":["ARB1","AFDELING1","Air Ruak 1"]},
+  {"code":"AB2","label":"Afdeling 2","aliases":["ARB2","AFDELING2","Air Ruak 2"]},
+  {"code":"ARA","label":"Area","aliases":["Area"]},
+  {"code":"ARC","label":"Air Ruak Central","aliases":["AREC","Air Ruak Central"]},
+  {"code":"DME","label":"Dempo","aliases":["Dempo"]},
+  {"code":"IJL","label":"Ijuk","aliases":["L"]},
+  {"code":"INF","label":"Infrastruktur","aliases":[]},
+  {"code":"NRS","label":"Nursery","aliases":[]},
+  {"code":"WKS_AR","label":"Workshop Air Ruak","aliases":[]},
+  {"code":"WKS_PG","label":"Workshop Parit Gunung","aliases":[]},
+  {"code":"WORKSHOP","label":"Workshop All","aliases":[]},
+  {"code":"MILL","label":"Palm Oil Mill","aliases":[]}
+]

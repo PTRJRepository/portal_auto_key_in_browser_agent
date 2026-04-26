@@ -8,6 +8,24 @@ function toLabel(prefix: string, target?: string): string {
   return target ? `${prefix}: ${target}` : prefix;
 }
 
+function optionalNonEmpty(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function makeSelectorFallback(fallback: { text?: string; tag?: string } | undefined): FlowStep["selectorFallback"] {
+  const selectorFallback: FlowStep["selectorFallback"] = {};
+  const text = optionalNonEmpty(fallback?.text);
+  const tag = optionalNonEmpty(fallback?.tag);
+  if (text) {
+    selectorFallback.text = text;
+  }
+  if (tag) {
+    selectorFallback.tag = tag;
+  }
+  return Object.keys(selectorFallback).length > 0 ? selectorFallback : undefined;
+}
+
 function makeBaseStep(params: {
   type: FlowStep["type"];
   label: string;
@@ -59,15 +77,16 @@ function convertEventToStep(event: RawBrowserEvent): FlowStep | undefined {
       type: "click",
       label: toLabel("Click", event.selector),
       selector: event.selector,
-      fallback: {
-        text: event.fallback?.text,
-        tag: event.fallback?.tag
-      },
+      fallback: makeSelectorFallback(event.fallback),
       metadata: { url: event.url }
     });
   }
 
   if (event.kind === "input") {
+    if (event.inputType === "radio" || event.inputType === "checkbox") {
+      return undefined;
+    }
+
     return makeBaseStep({
       type: "type",
       label: toLabel("Type", event.selector),
@@ -81,7 +100,7 @@ function convertEventToStep(event: RawBrowserEvent): FlowStep | undefined {
   }
 
   if (event.kind === "change") {
-    if (event.inputType === "checkbox") {
+    if (event.inputType === "checkbox" || event.inputType === "radio") {
       return makeBaseStep({
         type: event.checked ? "check" : "uncheck",
         label: toLabel(event.checked ? "Check" : "Uncheck", event.selector),
@@ -91,6 +110,10 @@ function convertEventToStep(event: RawBrowserEvent): FlowStep | undefined {
           inputType: event.inputType
         }
       });
+    }
+
+    if (event.inputType !== "select") {
+      return undefined;
     }
 
     return makeBaseStep({

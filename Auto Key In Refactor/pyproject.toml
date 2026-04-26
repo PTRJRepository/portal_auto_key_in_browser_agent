@@ -1,0 +1,18 @@
+[project]
+name = "auto-key-in-refactor"
+version = "0.1.0"
+description = "Desktop controller for PlantwareP3 auto key-in runners"
+requires-python = ">=3.11"
+dependencies = [
+  "PySide6>=6.7",
+  "requests>=2.32"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -8,9 +8,11 @@
   ],
   "scripts": {
     "setup:chromium": "npx playwright install chromium",
+    "dev": "npm run build --workspace @template/flow-schema && npm run build --workspace editor-web && npm run dev --workspace local-agent",
     "dev:editor": "npm run dev --workspace editor-web",
     "dev:agent": "npm run dev --workspace local-agent",
     "build": "npm run build --workspaces --if-present",
+    "start": "npm run build --workspace @template/flow-schema && npm run build --workspace editor-web && npm run build --workspace local-agent && npm run start --workspace local-agent",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   }

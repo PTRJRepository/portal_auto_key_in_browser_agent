@@ -39,21 +39,19 @@ npm run setup:chromium
 
 ## Menjalankan Aplikasi
 
-Gunakan 2 terminal terpisah.
-
-Terminal 1 - jalankan local agent:
+Jalankan satu aplikasi monolit dari folder root `template/`:
 
 ```bash
-npm run dev:agent
+npm run dev
 ```
 
-Terminal 2 - jalankan editor web:
+Buka:
 
-```bash
-npm run dev:editor
+```text
+http://localhost:9001
 ```
 
-Buka URL editor dari output Vite (default: `http://localhost:5173`).
+Mode ini menjalankan UI, API, WebSocket, recorder Playwright, runner, dan template store dalam satu service lokal.
 
 ## Cara Pakai (Usage)
 
@@ -67,25 +65,18 @@ Buka URL editor dari output Vite (default: `http://localhost:5173`).
 6. Kembali ke editor, klik `Stop Recording`.
 7. Flow final hasil rekaman otomatis tersimpan sebagai template baru.
 
-### B. Edit flow template
+### B. Inspect flow template
 
 1. Pilih template di panel kiri.
-2. Atur urutan step dengan tombol `Up` / `Down`.
-3. Ubah `Label`, `Selector`, dan `Value` di step editor.
-4. Atur `Data Mode` per step/event:
-   - `Fixed Value`
-   - `Variable`
-   - `Generated: Timestamp`
-   - `Generated: Random Number`
-   - `Generated: UUID`
-5. Klik `Convert Value to Variable` kalau ingin value jadi placeholder reusable.
-6. Klik `Optimize Flow` untuk membersihkan step berulang tanpa mengubah alur utama.
+2. Lihat flow di `Workflow Canvas`.
+3. Klik node untuk melihat detail di `Agent Inspector`.
+4. Raw event tetap tampil di `Live Events`, tetapi template hanya menyimpan clean committed steps.
 
 ### C. Jalankan ulang template
 
 1. Isi nilai variable di panel `Variables`.
-2. Klik `Start (Strict)` untuk menjalankan flow versi editor saat ini.
-3. Klik `Recall Saved (100%)` untuk menjalankan template yang tersimpan persis dari storage.
+2. Klik `Replay Draft` untuk menjalankan flow versi editor saat ini.
+3. Klik `Recall Saved` untuk menjalankan template yang tersimpan persis dari storage.
 4. Cek nilai `Fidelity` pada hasil run. Target recall adalah `100%` dan `exact match`.
 5. Lihat status hasil run dan log event di panel `Live Events`.
 
@@ -105,12 +96,23 @@ Contoh template tersedia di:
 ## Command Penting
 
 ```bash
-npm run dev:agent      # jalankan local automation agent
-npm run dev:editor     # jalankan UI template creator
+npm run dev            # build UI lalu jalankan monolith di http://localhost:9001
+npm run start          # build UI + agent lalu jalankan hasil build
+npm run dev:agent      # jalankan local automation agent langsung
+npm run dev:editor     # jalankan Vite editor standalone untuk development UI
 npm run test           # jalankan semua test workspace
 npm run typecheck      # cek TypeScript semua workspace
 npm run build          # build semua workspace
 ```
+
+## Catatan Recording v1
+
+- Raw browser event tidak langsung disimpan sebagai step.
+- Input yang diketik berurutan pada selector dan URL yang sama diringkas menjadi satu step dengan nilai akhir.
+- Username dan password disimpan sebagai fixed value agar replay sama persis.
+- Idle setelah event selesai tidak membuat step baru.
+- Navigation/click/input duplikat yang berurutan dibuang oleh normalizer.
+- Action bermakna yang terjadi di antara input, click, atau key press tetap dipertahankan agar replay tidak berubah urutan.
 
 ## Batasan v1
 

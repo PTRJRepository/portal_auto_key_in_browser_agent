@@ -17,6 +17,15 @@ type InternalSession = {
   events: RawBrowserEvent[];
 };
 
+async function closeIgnoringAlreadyClosed(closeResource: () => Promise<void>): Promise<void> {
+  try {
+    await closeResource();
+  } catch {
+    // Browser may already be closed manually by the user. Recording finalization
+    // must still save the captured flow.
+  }
+}
+
 async function launchRecorderBrowser(): Promise<Browser> {
   const errors: string[] = [];
 
@@ -177,6 +186,17 @@ export class RecorderService {
       page,
       events
     });
+    browser.on("disconnected", () => {
+      if (!this.sessions.has(sessionId)) {
+        return;
+      }
+      this.publishEvent({
+        type: "recording.browserClosed",
+        payload: {
+          sessionId
+        }
+      });
+    });
 
     this.publishEvent({
       type: "recording.started",
@@ -202,9 +222,9 @@ export class RecorderService {
 
     const templatePackage = buildTemplateFromRecordedEvents(session.url, session.events);
 
-    await session.context.close();
-    await session.browser.close();
     this.sessions.delete(sessionId);
+    await closeIgnoringAlreadyClosed(() => session.context.close());
+    await closeIgnoringAlreadyClosed(() => session.browser.close());
 
     this.publishEvent({
       type: "recording.stopped",

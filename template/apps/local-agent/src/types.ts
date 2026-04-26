@@ -66,6 +66,12 @@ export type AgentEvent =
       };
     }
   | {
+      type: "recording.browserClosed";
+      payload: {
+        sessionId: string;
+      };
+    }
+  | {
       type: "run.started";
       payload: {
         runId: string;

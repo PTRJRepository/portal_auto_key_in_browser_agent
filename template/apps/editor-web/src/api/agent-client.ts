@@ -6,13 +6,17 @@ import type {
   TemplateSummary
 } from "@template/flow-schema";
 
-const defaultBaseUrl = "http://localhost:4100";
-const AGENT_BASE_URL = import.meta.env.VITE_AGENT_BASE_URL ?? defaultBaseUrl;
+const AGENT_BASE_URL = import.meta.env.VITE_AGENT_BASE_URL as string | undefined;
 
 type JsonValue = Record<string, unknown>;
 
+export function apiUrl(path: string): string {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return AGENT_BASE_URL ? `${AGENT_BASE_URL}/api${normalized}` : `/api${normalized}`;
+}
+
 async function postJson<TResponse>(path: string, body: JsonValue): Promise<TResponse> {
-  const response = await fetch(`${AGENT_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -31,7 +35,7 @@ async function postJson<TResponse>(path: string, body: JsonValue): Promise<TResp
 }
 
 export async function startRecording(url: string): Promise<RecordingSession> {
-  return postJson<RecordingSession>("/recordings/start", { url });
+  return postJson<RecordingSession>("/recordings", { url });
 }
 
 export async function stopRecording(sessionId: string): Promise<TemplatePackage> {
@@ -39,7 +43,7 @@ export async function stopRecording(sessionId: string): Promise<TemplatePackage>
 }
 
 export async function listTemplates(): Promise<TemplateSummary[]> {
-  const response = await fetch(`${AGENT_BASE_URL}/templates`);
+  const response = await fetch(apiUrl("/templates"));
   if (!response.ok) {
     throw new Error("Unable to load templates");
   }
@@ -48,7 +52,7 @@ export async function listTemplates(): Promise<TemplateSummary[]> {
 }
 
 export async function getTemplate(templateId: string): Promise<TemplatePackage> {
-  const response = await fetch(`${AGENT_BASE_URL}/templates/${templateId}`);
+  const response = await fetch(apiUrl(`/templates/${templateId}`));
   if (!response.ok) {
     throw new Error(`Unable to load template ${templateId}`);
   }
@@ -74,7 +78,11 @@ export async function importTemplate(
 }
 
 export async function exportTemplate(templateId: string): Promise<TemplatePackage> {
-  return postJson<TemplatePackage>("/templates/export", { templateId });
+  const response = await fetch(apiUrl(`/templates/${templateId}/export`));
+  if (!response.ok) {
+    throw new Error(`Unable to export template ${templateId}`);
+  }
+  return (await response.json()) as TemplatePackage;
 }
 
 export async function runTemplate(params: {
@@ -84,9 +92,13 @@ export async function runTemplate(params: {
   strictFidelity?: boolean;
   recallFromSaved?: boolean;
 }): Promise<RunResult> {
-  return postJson<RunResult>("/templates/run", params as JsonValue);
+  return postJson<RunResult>("/runs", params as JsonValue);
 }
 
-export function wsUrl(): string {
-  return AGENT_BASE_URL.replace("http", "ws") + "/ws";
+export function wsUrl(locationLike: Pick<Location | URL, "protocol" | "host"> = window.location): string {
+  if (AGENT_BASE_URL) {
+    return AGENT_BASE_URL.replace(/^http/i, "ws") + "/ws";
+  }
+  const protocol = locationLike.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${locationLike.host}/ws`;
 }

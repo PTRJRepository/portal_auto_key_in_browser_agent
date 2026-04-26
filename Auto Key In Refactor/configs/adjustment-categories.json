@@ -1,0 +1,8 @@
+[
+  {"key":"spsi","label":"SPSI","adjustment_type":"AUTO_BUFFER","match_contains":["SPSI"],"adcode":"spsi"},
+  {"key":"masa_kerja","label":"Masa Kerja","adjustment_type":"AUTO_BUFFER","match_contains":["MASA"],"adcode":"masa kerja"},
+  {"key":"tunjangan_jabatan","label":"Tunjangan Jabatan","adjustment_type":"AUTO_BUFFER","match_contains":["JABATAN"],"adcode":"tunjangan jabatan"},
+  {"key":"premi","label":"Premi","adjustment_type":"PREMI","match_contains":["PREMI"],"adcode":"premi"},
+  {"key":"potongan_upah_kotor","label":"Potongan Upah Kotor","adjustment_type":"POTONGAN_KOTOR","match_contains":["POTONGAN","KOREKSI"],"adcode":"potongan"},
+  {"key":"premi_tunjangan","label":"Premi Tunjangan","adjustment_type":"PREMI","match_contains":["TUNJANGAN PREMI"],"adcode":"premi"}
+]

@@ -115,14 +115,14 @@ describe("normalizeRecordedEvents", () => {
         kind: "change",
         selector: "#role",
         value: "editor",
-        inputType: "select-one",
+        inputType: "select",
         url: entryUrl
       },
       {
         kind: "change",
         selector: "#role",
         value: "admin",
-        inputType: "select-one",
+        inputType: "select",
         url: entryUrl
       }
     ]);
@@ -135,9 +135,59 @@ describe("normalizeRecordedEvents", () => {
       valueMode: "fixed",
       metadata: {
         url: entryUrl,
-        inputType: "select-one"
+        inputType: "select"
       }
     });
+  });
+
+  it("ignores text input change events because input events already capture final text", () => {
+    const flow = normalizeRecordedEvents(entryUrl, [
+      input("#username", "adm075"),
+      {
+        kind: "change",
+        selector: "#username",
+        value: "adm075",
+        inputType: "text",
+        url: entryUrl
+      }
+    ]);
+
+    expect(flow.map((step) => step.type)).toEqual(["openPage", "type"]);
+    expect(flow[1]).toMatchObject({
+      type: "type",
+      selector: "#username",
+      value: "adm075"
+    });
+  });
+
+  it("converts radio change events to check steps instead of select steps", () => {
+    const flow = normalizeRecordedEvents(entryUrl, [
+      {
+        kind: "change",
+        selector: "#location_8",
+        value: "P1B",
+        inputType: "radio",
+        checked: true,
+        url: entryUrl
+      }
+    ]);
+
+    expect(flow.map((step) => step.type)).toEqual(["openPage", "check"]);
+    expect(flow[1]).toMatchObject({
+      type: "check",
+      selector: "#location_8",
+      metadata: {
+        inputType: "radio"
+      }
+    });
+  });
+
+  it("ignores radio input events because change events capture checked state", () => {
+    const flow = normalizeRecordedEvents(entryUrl, [
+      input("#location_8", "P1B", "radio")
+    ]);
+
+    expect(flow.map((step) => step.type)).toEqual(["openPage"]);
   });
 
   it("preserves interleaved same-selector typing around meaningful actions", () => {
@@ -213,6 +263,29 @@ describe("normalizeRecordedEvents", () => {
     const flow = normalizeRecordedEvents(entryUrl, [firstClick, secondClick]);
 
     expect(flow.map((step) => step.type)).toEqual(["openPage", "click"]);
+  });
+
+  it("omits empty fallback text so recorded clicks remain schema-valid", () => {
+    const flow = normalizeRecordedEvents(entryUrl, [
+      {
+        kind: "click",
+        selector: "#icon-only",
+        fallback: {
+          text: "",
+          tag: "button"
+        },
+        url: entryUrl
+      }
+    ]);
+
+    expect(flow[1]).toMatchObject({
+      type: "click",
+      selector: "#icon-only",
+      selectorFallback: {
+        tag: "button"
+      }
+    });
+    expect(flow[1].selectorFallback).not.toHaveProperty("text");
   });
 
   it("preserves repeated clicks separated by meaningful input", () => {

@@ -5,6 +5,9 @@ import { chromium, type Page } from "playwright";
 import { type FlowStep, type RunResult, type StepExecutionResult, type TemplatePackage } from "@template/flow-schema";
 
 import type { AgentEvent } from "../types.js";
+import { retryWithBackoff, waitForNetworkIdle, DEFAULT_RETRY_OPTIONS } from "./wait-utils.js";
+import { captureFailureScreenshot } from "./screenshot-utils.js";
+import { resolveResilientLocator } from "./selector-resolver.js";
 
 function resolveStepValue(step: FlowStep, variables: Record<string, string>): string | undefined {
   const mode = step.valueMode ?? (step.variableRef ? "variable" : "fixed");
@@ -44,25 +47,34 @@ function normalizeComparableUrl(rawUrl: string): string {
   }
 }
 
-async function resolveLocator(page: Page, step: FlowStep) {
-  const candidates: string[] = [];
-  if (step.selector) {
-    candidates.push(step.selector);
-  }
-  if (step.selectorFallback?.css) {
-    candidates.push(step.selectorFallback.css);
-  }
-  if (step.selectorFallback?.text) {
-    candidates.push(`text=${step.selectorFallback.text}`);
+function isTextLikeInput(inputType: string | undefined): boolean {
+  return ["text", "password", "email", "search", "tel", "url", "number"].includes(inputType ?? "");
+}
+
+function isCheckableInput(inputType: string | undefined): boolean {
+  return inputType === "radio" || inputType === "checkbox";
+}
+
+function coerceLegacyInputStep(step: FlowStep): FlowStep {
+  const inputType = step.metadata?.inputType;
+
+  if ((step.type === "type" || step.type === "select") && isCheckableInput(inputType)) {
+    return {
+      ...step,
+      type: "check",
+      label: step.label.replace(/^(Type|Select):/, "Check:")
+    };
   }
 
-  for (const candidate of candidates) {
-    const locator = page.locator(candidate).first();
-    if ((await locator.count()) > 0) {
-      return locator;
-    }
+  if (step.type === "select" && isTextLikeInput(inputType)) {
+    return {
+      ...step,
+      type: "type",
+      label: step.label.replace(/^Select:/, "Type:")
+    };
   }
-  throw new Error(`Unable to find element for step ${step.id}`);
+
+  return step;
 }
 
 async function executeStep(page: Page, step: FlowStep, variables: Record<string, string>): Promise<void> {
@@ -74,7 +86,7 @@ async function executeStep(page: Page, step: FlowStep, variables: Record<string,
       if (!value) {
         throw new Error("openPage step requires URL value");
       }
-      await page.goto(value, { timeout, waitUntil: "domcontentloaded" });
+      await page.goto(value, { timeout, waitUntil: "networkidle" });
       if (value.startsWith("http")) {
         const expected = normalizeComparableUrl(value);
         const actual = normalizeComparableUrl(page.url());
@@ -84,17 +96,27 @@ async function executeStep(page: Page, step: FlowStep, variables: Record<string,
       }
       return;
     case "click": {
-      const locator = await resolveLocator(page, step);
-      await locator.click({ timeout });
+      const locator = await resolveResilientLocator(page, step, {
+        timeoutMs: timeout,
+        retryOptions: DEFAULT_RETRY_OPTIONS
+      });
+      await locator.click({ timeout, delay: 50 });
       return;
     }
     case "type": {
-      const locator = await resolveLocator(page, step);
+      const locator = await resolveResilientLocator(page, step, {
+        timeoutMs: timeout,
+        retryOptions: DEFAULT_RETRY_OPTIONS
+      });
+      await locator.clear();
       await locator.fill(value ?? "", { timeout });
       return;
     }
     case "select": {
-      const locator = await resolveLocator(page, step);
+      const locator = await resolveResilientLocator(page, step, {
+        timeoutMs: timeout,
+        retryOptions: DEFAULT_RETRY_OPTIONS
+      });
       if (!value) {
         throw new Error("select step requires value");
       }
@@ -102,17 +124,26 @@ async function executeStep(page: Page, step: FlowStep, variables: Record<string,
       return;
     }
     case "check": {
-      const locator = await resolveLocator(page, step);
+      const locator = await resolveResilientLocator(page, step, {
+        timeoutMs: timeout,
+        retryOptions: DEFAULT_RETRY_OPTIONS
+      });
       await locator.check({ timeout });
       return;
     }
     case "uncheck": {
-      const locator = await resolveLocator(page, step);
+      const locator = await resolveResilientLocator(page, step, {
+        timeoutMs: timeout,
+        retryOptions: DEFAULT_RETRY_OPTIONS
+      });
       await locator.uncheck({ timeout });
       return;
     }
     case "waitForElement": {
-      const locator = await resolveLocator(page, step);
+      const locator = await resolveResilientLocator(page, step, {
+        timeoutMs: timeout,
+        retryOptions: DEFAULT_RETRY_OPTIONS
+      });
       await locator.waitFor({
         timeout,
         state: "visible"
@@ -121,14 +152,14 @@ async function executeStep(page: Page, step: FlowStep, variables: Record<string,
     }
     case "waitForNavigation":
       if (value?.startsWith("http")) {
-        await page.waitForURL(value, { timeout });
+        await page.waitForURL(value, { timeout, waitUntil: "networkidle" });
         const expected = normalizeComparableUrl(value);
         const actual = normalizeComparableUrl(page.url());
         if (actual !== expected) {
           throw new Error(`waitForNavigation URL mismatch. expected=${expected} actual=${actual}`);
         }
       } else {
-        await page.waitForLoadState("domcontentloaded", { timeout });
+        await waitForNetworkIdle(page, timeout);
       }
       return;
     case "pressKey":
@@ -181,7 +212,14 @@ export class TemplateRunner {
       }
     });
 
-    const browser = await chromium.launch({ headless: false });
+    const browser = await chromium.launch({
+      headless: false,
+      args: [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+        "--no-sandbox"
+      ]
+    });
     const context = await browser.newContext();
     const page = await context.newPage();
 
@@ -193,16 +231,21 @@ export class TemplateRunner {
     try {
       await page.goto(templatePackage.entry.url, {
         timeout: templatePackage.runtime.defaultTimeoutMs,
-        waitUntil: "domcontentloaded"
+        waitUntil: "networkidle"
       });
 
       for (let index = 0; index < templatePackage.flow.length; index += 1) {
         const step = templatePackage.flow[index];
+        const executableStep = coerceLegacyInputStep(step);
         try {
-          await executeStep(page, step, variables);
+          const stepWithRetry = retryWithBackoff(
+            () => executeStep(page, executableStep, variables),
+            DEFAULT_RETRY_OPTIONS
+          );
+          await stepWithRetry;
           stepResults.push({
             stepId: step.id,
-            type: step.type,
+            type: executableStep.type,
             status: "success"
           });
           this.publishEvent({
@@ -210,15 +253,18 @@ export class TemplateRunner {
             payload: {
               runId,
               stepId: step.id,
-              stepType: step.type,
+              stepType: executableStep.type,
               status: "success"
             }
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown execution error";
+
+          await captureFailureScreenshot(page, step.id, step.label);
+
           stepResults.push({
             stepId: step.id,
-            type: step.type,
+            type: executableStep.type,
             status: "failed",
             message
           });
@@ -228,7 +274,7 @@ export class TemplateRunner {
             payload: {
               runId,
               stepId: step.id,
-              stepType: step.type,
+              stepType: executableStep.type,
               status: "failed",
               message
             }
@@ -304,5 +350,6 @@ export class TemplateRunner {
 
 export const runnerInternals = {
   resolveStepValue,
-  calculateFidelity
+  calculateFidelity,
+  coerceLegacyInputStep
 };

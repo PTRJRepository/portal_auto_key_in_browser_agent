@@ -102,3 +102,53 @@ describe("runnerInternals.calculateFidelity", () => {
     expect(fidelity.exactMatch).toBe(false);
   });
 });
+
+describe("runnerInternals.coerceLegacyInputStep", () => {
+  it("replays legacy select-on-text-input as a type step", () => {
+    const coerced = runnerInternals.coerceLegacyInputStep({
+      id: "legacy_username_change",
+      type: "select",
+      label: "Select: #txtUsername",
+      selector: "#txtUsername",
+      value: "adm075",
+      timeoutMs: 15000,
+      continueOnError: false,
+      metadata: {
+        inputType: "text"
+      }
+    });
+
+    expect(coerced.type).toBe("type");
+  });
+
+  it("replays legacy type/select-on-radio as a check step", () => {
+    const typeCoerced = runnerInternals.coerceLegacyInputStep({
+      id: "legacy_radio_input",
+      type: "type",
+      label: "Type: #location_8",
+      selector: "#location_8",
+      value: "P1B",
+      timeoutMs: 15000,
+      continueOnError: false,
+      metadata: {
+        inputType: "radio"
+      }
+    });
+
+    const selectCoerced = runnerInternals.coerceLegacyInputStep({
+      id: "legacy_radio_change",
+      type: "select",
+      label: "Select: #location_8",
+      selector: "#location_8",
+      value: "P1B",
+      timeoutMs: 15000,
+      continueOnError: false,
+      metadata: {
+        inputType: "radio"
+      }
+    });
+
+    expect(typeCoerced.type).toBe("check");
+    expect(selectCoerced.type).toBe("check");
+  });
+});
