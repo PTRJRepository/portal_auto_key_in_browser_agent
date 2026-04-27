@@ -19,7 +19,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
 
   try {
     await session.start();
-    emit({ event: "session.ready", session_reused: session.sessionReused });
+    emit({ event: "session.ready", division_code: payload.division_code, session_path: session.getSessionPath(), session_reused: session.sessionReused });
 
     const pages: Page[] = [];
     for (let index = 0; index < tabCount; index++) {

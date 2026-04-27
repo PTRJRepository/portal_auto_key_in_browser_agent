@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
@@ -91,6 +93,28 @@ class VerifyWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class SessionRefreshWorker(QObject):
+    event_received = Signal(str, object)
+    completed = Signal(str, object)
+    failed = Signal(str, str)
+
+    def __init__(self, division_code: str, bridge: RunnerBridge, payload: RunPayload) -> None:
+        super().__init__()
+        self.division_code = division_code
+        self.bridge = bridge
+        self.payload = payload
+
+    def run(self) -> None:
+        try:
+            result = self.bridge.run(self.payload, lambda event: self.event_received.emit(self.division_code, event))
+            self.completed.emit(self.division_code, result)
+        except Exception as exc:
+            self.failed.emit(self.division_code, str(exc))
+
+    def stop(self) -> None:
+        self.bridge.stop()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, config: AppConfig, categories: CategoryRegistry, divisions: list[DivisionOption] | None = None) -> None:
         super().__init__()
@@ -105,6 +129,11 @@ class MainWindow(QMainWindow):
         self.verify_thread: QThread | None = None
         self.verify_worker: VerifyWorker | None = None
         self.runner_bridge: RunnerBridge | None = None
+        self.session_refresh_threads: dict[str, QThread] = {}
+        self.session_refresh_workers: dict[str, SessionRefreshWorker] = {}
+        self.session_refresh_bridges: dict[str, RunnerBridge] = {}
+        self.session_refresh_results: dict[str, str] = {}
+        self.session_dir_override: Path | None = None
         self.artifact_store = RunArtifactStore()
         self.current_artifacts: RunArtifactPaths | None = None
         self.tab_progress: dict[int, dict[str, object]] = {}
@@ -116,6 +145,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.apply_category_preset()
         self._sync_verify_defaults()
+        self._refresh_session_status()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -172,6 +202,9 @@ class MainWindow(QMainWindow):
         filter_form.addRow("Adjustment Type", self.adjustment_type)
         filter_form.addRow("Adjustment Name", self.adjustment_name)
         filter_form.addRow("Category", self.category)
+        self.session_status_label = QLabel("")
+        filter_form.addRow("Selected Session", self.session_status_label)
+        self.division_code.currentIndexChanged.connect(self._refresh_session_status)
 
         runner_group = QGroupBox("Runner Settings")
         runner_form = QFormLayout(runner_group)
@@ -194,10 +227,29 @@ class MainWindow(QMainWindow):
         runner_form.addRow(self.headless)
         runner_form.addRow(self.only_missing)
 
+        session_group = QGroupBox("Session Status")
+        session_layout = QVBoxLayout(session_group)
+        session_actions = QHBoxLayout()
+        self.refresh_sessions_button = QPushButton("Refresh Status")
+        self.refresh_all_sessions_button = QPushButton("Get All Sessions")
+        self.refresh_sessions_button.clicked.connect(self._refresh_session_status)
+        self.refresh_all_sessions_button.clicked.connect(self.get_all_sessions)
+        session_actions.addWidget(self.refresh_sessions_button)
+        session_actions.addWidget(self.refresh_all_sessions_button)
+        session_actions.addStretch(1)
+        self.session_table = QTableWidget(0, 6)
+        self.session_table.setHorizontalHeaderLabels(["Division", "Location", "Status", "Age", "Last Saved", "Action"])
+        self.session_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.session_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.session_table.setMaximumHeight(320)
+        session_layout.addLayout(session_actions)
+        session_layout.addWidget(self.session_table)
+
         grid = QGridLayout()
         grid.addWidget(api_group, 0, 0)
         grid.addWidget(filter_group, 1, 0)
-        grid.addWidget(runner_group, 0, 1, 2, 1)
+        grid.addWidget(runner_group, 0, 1)
+        grid.addWidget(session_group, 1, 1)
         layout.addLayout(grid)
 
         actions = QHBoxLayout()
@@ -225,12 +277,17 @@ class MainWindow(QMainWindow):
         self.export_button = QPushButton("Open Artifacts")
         self.stop_button.setEnabled(False)
         self.process_context_label = QLabel("No data loaded.")
+        self.process_only_miss = QCheckBox("Input MISS/MISMATCH only")
+        self.process_only_miss.setChecked(True)
+        self.process_only_miss.setToolTip("Jika aktif, fetch/run hanya memakai row dengan remarks sync:MISS atau match:MISMATCH.")
+        self.process_only_miss.stateChanged.connect(self._update_process_context)
         self.test_get_data_button.clicked.connect(self.fetch_records)
         self.run_button.clicked.connect(self.run_auto_key_in)
         self.stop_button.clicked.connect(self.stop_run)
         self.export_button.clicked.connect(self.open_current_artifacts)
         for button in [self.test_get_data_button, self.run_button, self.stop_button, self.export_button]:
             controls.addWidget(button)
+        controls.addWidget(self.process_only_miss)
         controls.addWidget(self.process_context_label, 1)
         layout.addLayout(controls)
 
@@ -394,7 +451,12 @@ class MainWindow(QMainWindow):
     def _handle_fetch_completed(self, records: list[ManualAdjustmentRecord]) -> None:
         category_key = self.category.currentData()
         row_limit = self.row_limit.value() or None
-        self.records = apply_row_limit(filter_by_category(records, category_key), row_limit)
+        filtered_records = filter_by_category(records, category_key)
+        if self.process_only_miss.isChecked():
+            before_miss_filter = len(filtered_records)
+            filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
+            self.append_log(f"MISS-only filter active: {len(filtered_records)} of {before_miss_filter} category records will be previewed/run.")
+        self.records = apply_row_limit(filtered_records, row_limit)
         self.set_records(self.records)
         self.append_log(f"Fetched {len(records)} records; previewing {len(self.records)} records.")
         self.test_get_data_button.setEnabled(True)
@@ -411,9 +473,43 @@ class MainWindow(QMainWindow):
     def test_session(self) -> None:
         self.run_session_command("test_session")
 
-    def run_session_command(self, mode: str) -> None:
-        payload = self.build_payload(mode=mode, records=[])
-        self.start_runner(payload, f"Starting {mode.replace('_', ' ')}...")
+    def get_session_for_division(self, division_code: str) -> None:
+        self.run_session_command("get_session", division_code=division_code)
+
+    def get_all_sessions(self) -> None:
+        if self.session_refresh_threads:
+            self.append_log("Get All Sessions already running.")
+            return
+        division_options = self.divisions or [DivisionOption(self.config.default_division_code, self.config.default_division_code)]
+        division_codes = [division.code.strip().upper() for division in division_options if division.code.strip()]
+        self.session_refresh_results = {code: "Running" for code in division_codes}
+        self._set_run_buttons_enabled(False)
+        self.stop_button.setEnabled(True)
+        self.append_log(f"Starting {len(division_codes)} browser session logins in parallel...")
+        for division_code in division_codes:
+            payload = self.build_payload(mode="get_session", records=[], division_code=division_code)
+            bridge = RunnerBridge(self.config.runner_command)
+            thread = QThread(self)
+            worker = SessionRefreshWorker(division_code, bridge, payload)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.event_received.connect(self._handle_session_refresh_event)
+            worker.completed.connect(self._handle_session_refresh_completed)
+            worker.failed.connect(self._handle_session_refresh_failed)
+            worker.completed.connect(thread.quit)
+            worker.failed.connect(thread.quit)
+            thread.finished.connect(thread.deleteLater)
+            thread.finished.connect(lambda code=division_code: self._cleanup_session_refresh_worker(code))
+            self.session_refresh_threads[division_code] = thread
+            self.session_refresh_workers[division_code] = worker
+            self.session_refresh_bridges[division_code] = bridge
+            thread.start()
+        self.tabs.setCurrentIndex(1)
+
+    def run_session_command(self, mode: str, division_code: str | None = None) -> None:
+        target_division = (division_code or self._selected_division_code()).strip().upper()
+        payload = self.build_payload(mode=mode, records=[], division_code=target_division)
+        self.start_runner(payload, f"Starting {mode.replace('_', ' ')} for {target_division}...")
         self.tabs.setCurrentIndex(1)
 
     def run_auto_key_in(self) -> None:
@@ -422,6 +518,12 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentIndex(1)
             return
         mode = self.runner_mode.currentText()
+        if mode not in {"dry_run", "mock", "fresh_login_single"} and not self._selected_session_active():
+            division_code = self._selected_division_code()
+            self.append_log(f"Run blocked: no active verified session for {division_code}. Click Get Session for this division first.")
+            self._refresh_session_status()
+            self.tabs.setCurrentIndex(0)
+            return
         if str(self.category.currentData() or "") == "spsi" and mode not in {"dry_run", "mock"}:
             self.adjustment_type.setCurrentText("AUTO_BUFFER")
             self.adjustment_name.setText("AUTO SPSI")
@@ -434,12 +536,12 @@ class MainWindow(QMainWindow):
         self.start_runner(payload, f"Starting runner for {len(self.records)} records...")
         self.tabs.setCurrentIndex(1)
 
-    def build_payload(self, mode: str, records: list[ManualAdjustmentRecord]) -> RunPayload:
+    def build_payload(self, mode: str, records: list[ManualAdjustmentRecord], division_code: str | None = None) -> RunPayload:
         category_key = str(self.category.currentData() or "spsi")
         return RunPayload(
             period_month=self.period_month.value(),
             period_year=self.period_year.value(),
-            division_code=self._selected_division_code(),
+            division_code=(division_code or self._selected_division_code()).strip().upper(),
             gang_code=self.gang_code.text().strip().upper() or None,
             emp_code=self.emp_code.text().strip().upper() or None,
             adjustment_type=self.adjustment_type.currentText().strip().upper() or None,
@@ -480,7 +582,38 @@ class MainWindow(QMainWindow):
     def stop_run(self) -> None:
         if self.run_worker:
             self.run_worker.stop()
+        for worker in self.session_refresh_workers.values():
+            worker.stop()
         self.append_log("Stop requested.")
+
+    def _handle_session_refresh_event(self, division_code: str, event: RunnerEvent) -> None:
+        message = str(event.payload.get("message") or event.event)
+        session_path = event.payload.get("session_path")
+        if session_path:
+            self.session_dir_override = Path(str(session_path)).parent
+            message = f"{message} ({session_path})"
+            self._refresh_session_status()
+        self.append_log(f"[{division_code}] {message}")
+
+    def _handle_session_refresh_completed(self, division_code: str, result: object) -> None:
+        self.session_refresh_results[division_code] = "Completed"
+        self.append_log(f"[{division_code}] Session refresh completed.")
+        self._refresh_session_status()
+
+    def _handle_session_refresh_failed(self, division_code: str, message: str) -> None:
+        self.session_refresh_results[division_code] = f"Failed: {message}"
+        self.append_log(f"[{division_code}] Session refresh failed: {message}")
+        self._refresh_session_status()
+
+    def _cleanup_session_refresh_worker(self, division_code: str) -> None:
+        self.session_refresh_threads.pop(division_code, None)
+        self.session_refresh_workers.pop(division_code, None)
+        self.session_refresh_bridges.pop(division_code, None)
+        if not self.session_refresh_threads:
+            summary = ", ".join(f"{code}: {status}" for code, status in sorted(self.session_refresh_results.items()))
+            self.append_log(f"All parallel session refreshes finished. {summary}")
+            self._set_run_buttons_enabled(True)
+            self._refresh_session_status()
 
     def open_current_artifacts(self) -> None:
         if not self.current_artifacts:
@@ -496,6 +629,12 @@ class MainWindow(QMainWindow):
             self.artifact_store.append_event(self.current_artifacts, payload)
         message = str(payload.get("message") or event.event)
         self.append_log(message)
+        if event.event.startswith("session."):
+            session_path = payload.get("session_path")
+            if session_path:
+                self.session_dir_override = Path(str(session_path)).parent
+                self.append_log(f"Session file: {session_path}")
+            self._refresh_session_status()
         if event.event.startswith("tab.") or event.event.startswith("row."):
             self.update_agent_progress(event.event, payload)
         if event.event.startswith("row."):
@@ -573,6 +712,7 @@ class MainWindow(QMainWindow):
             self.append_log(f"Result saved: {self.current_artifacts.result_path}")
         self.append_log("Runner completed.")
         self._set_run_buttons_enabled(True)
+        self._refresh_session_status()
         self._refresh_summary()
         self.use_last_run_employees()
         self.tabs.setCurrentIndex(2)
@@ -583,6 +723,7 @@ class MainWindow(QMainWindow):
             self.append_log(f"Failure result saved: {self.current_artifacts.result_path}")
         self.append_log(f"Runner failed: {message}")
         self._set_run_buttons_enabled(True)
+        self._refresh_session_status()
         self._refresh_summary()
 
     def set_records(self, records: list[ManualAdjustmentRecord]) -> None:
@@ -728,6 +869,87 @@ class MainWindow(QMainWindow):
     def _selected_division_code(self) -> str:
         return str(self.division_code.currentData() or self.division_code.currentText()).split("-", 1)[0].strip().upper()
 
+    def _session_dir(self) -> Path:
+        if self.session_dir_override is not None:
+            return self.session_dir_override
+        for part in self.config.runner_command.replace("\\", "/").split():
+            path = Path(part.strip('"'))
+            if "runner" in path.parts:
+                runner_parts = path.parts[: path.parts.index("runner") + 1]
+                return Path(*runner_parts) / "data" / "sessions"
+        return Path("runner") / "data" / "sessions"
+
+    def _scan_session_status(self) -> list[dict[str, str | bool]]:
+        now = datetime.now(timezone.utc)
+        session_dir = self._session_dir()
+        division_options = self.divisions or [DivisionOption(self.config.default_division_code, self.config.default_division_code)]
+        results: list[dict[str, str | bool]] = []
+        for division in division_options:
+            code = division.code.strip().upper()
+            session_file = session_dir / f"session-{code}.json"
+            status = "— None"
+            age = ""
+            saved = ""
+            active = False
+            if session_file.exists():
+                try:
+                    data = json.loads(session_file.read_text(encoding="utf-8"))
+                    saved_at = self._parse_session_timestamp(str(data.get("savedAt", "")))
+                    file_division = str(data.get("division") or code).strip().upper()
+                    age_minutes = int((now - saved_at).total_seconds() / 60)
+                    active = file_division == code and age_minutes < 240
+                    if file_division != code:
+                        status = f"Mismatch ({file_division})"
+                    else:
+                        status = "Active" if active else "Expired"
+                    age = f"{age_minutes}m"
+                    saved = saved_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+                except (OSError, json.JSONDecodeError, ValueError):
+                    status = "Invalid"
+            results.append({"code": code, "label": division.label, "status": status, "age": age, "saved": saved, "active": active})
+        return results
+
+    def _parse_session_timestamp(self, value: str) -> datetime:
+        if not value:
+            raise ValueError("missing savedAt")
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _selected_session_status(self) -> dict[str, str | bool] | None:
+        selected_code = self._selected_division_code()
+        return next((item for item in self._scan_session_status() if item["code"] == selected_code), None)
+
+    def _selected_session_active(self) -> bool:
+        status = self._selected_session_status()
+        return bool(status and status["active"])
+
+    def _refresh_session_status(self) -> None:
+        if not hasattr(self, "session_table"):
+            return
+        selected_code = self._selected_division_code()
+        rows = self._scan_session_status()
+        self.session_table.setRowCount(len(rows))
+        selected_status: dict[str, str | bool] | None = None
+        for row, item in enumerate(rows):
+            if item["code"] == selected_code:
+                selected_status = item
+            values = [str(item["code"]), str(item["label"]), str(item["status"]), str(item["age"]), str(item["saved"])]
+            for column, value in enumerate(values):
+                table_item = QTableWidgetItem(value)
+                if item["code"] == selected_code:
+                    table_item.setBackground(Qt.GlobalColor.darkCyan)
+                    table_item.setForeground(Qt.GlobalColor.white)
+                self.session_table.setItem(row, column, table_item)
+            button = QPushButton("Get Session")
+            button.clicked.connect(lambda checked=False, code=str(item["code"]): self.get_session_for_division(code))
+            self.session_table.setCellWidget(row, 5, button)
+        if selected_status and selected_status["active"]:
+            self.session_status_label.setText(f"Session ready for {selected_code} (age: {selected_status['age']})")
+        else:
+            self.session_status_label.setText(f"No active session for {selected_code}. Use Get Session or runner will do fresh login.")
+
     def _description_for_record(self, record: ManualAdjustmentRecord) -> str:
         category = self.categories.by_key(record.category_key or str(self.category.currentData() or ""))
         if category and category.description:
@@ -780,6 +1002,11 @@ class MainWindow(QMainWindow):
             return explicit_match
         return self._sync_status_from_remarks(record)
 
+    def _record_is_miss(self, record: ManualAdjustmentRecord) -> bool:
+        sync_status = self._sync_status_from_remarks(record).upper()
+        match_status = self._match_status_from_remarks(record).upper()
+        return sync_status in {"MISS", "MISSING"} or match_status in {"MISMATCH", "MISS", "MISSING"}
+
     def _record_key(self, record: ManualAdjustmentRecord) -> str:
         return f"{record.emp_code}|{record.adjustment_name}|{record.amount:g}"
 
@@ -810,13 +1037,17 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(enabled)
         self.get_session_button.setEnabled(enabled)
         self.test_session_button.setEnabled(enabled)
+        self.refresh_sessions_button.setEnabled(enabled)
+        self.refresh_all_sessions_button.setEnabled(enabled)
+        self.session_table.setEnabled(enabled)
         self.stop_button.setEnabled(not enabled)
 
     def _update_process_context(self) -> None:
         if not hasattr(self, "process_context_label"):
             return
         limit_text = "No limit" if self.row_limit.value() == 0 else str(self.row_limit.value())
-        self.process_context_label.setText(f"Fetched: {len(self.records)} | Category: {self.category.currentText()} | Row limit: {limit_text}")
+        miss_filter = "MISS-only ON" if self.process_only_miss.isChecked() else "MISS-only OFF"
+        self.process_context_label.setText(f"Fetched: {len(self.records)} | Category: {self.category.currentText()} | Row limit: {limit_text} | {miss_filter}")
 
     def _sync_verify_defaults(self) -> None:
         if not hasattr(self, "verify_filters"):

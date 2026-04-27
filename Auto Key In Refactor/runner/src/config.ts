@@ -6,6 +6,5 @@ export const PLANTWARE_CONFIG = {
   division: process.env.PLANTWARE_DIVISION ?? "P1B",
   listPage: "/en/PR/trx/frmPrTrxADLists.aspx",
   detailPage: "/en/PR/trx/frmPrTrxADDets.aspx",
-  sharedSessionId: "shared-session",
   maxTabs: 10
 };

@@ -8,6 +8,7 @@ export interface BrowserSessionOptions {
   sessionId?: string;
   sessionDir?: string;
   freshLoginFirst?: boolean;
+  division?: string;
 }
 
 export class BrowserSession {
@@ -18,10 +19,12 @@ export class BrowserSession {
   private sessionDir: string;
   private freshLoginFirst: boolean;
   private headless: boolean;
+  private division: string;
 
   constructor(options: BrowserSessionOptions) {
     this.headless = options.headless;
-    this.sessionId = options.sessionId ?? PLANTWARE_CONFIG.sharedSessionId;
+    this.division = (options.division ?? PLANTWARE_CONFIG.division).trim().toUpperCase();
+    this.sessionId = options.sessionId ?? `session-${this.division}`;
     this.sessionDir = options.sessionDir ?? path.resolve(process.cwd(), "data/sessions");
     this.freshLoginFirst = options.freshLoginFirst ?? true;
   }
@@ -65,8 +68,8 @@ export class BrowserSession {
       await page.fill("#txtPassword", PLANTWARE_CONFIG.password);
       await page.click("#btnLogin");
       await page.waitForURL(/Setlocation/i, { timeout: 20000 });
-      await page.waitForSelector(`input[value='${PLANTWARE_CONFIG.division}']`, { timeout: 5000 });
-      await page.click(`input[value='${PLANTWARE_CONFIG.division}']`, { noWaitAfter: true });
+      await page.waitForSelector(`input[value='${this.division}']`, { timeout: 5000 });
+      await page.click(`input[value='${this.division}']`, { noWaitAfter: true });
       await page.evaluate(() => {
         const btn = document.getElementById("MainContent_btnOkay");
         if (btn) (btn as HTMLButtonElement).click();
@@ -91,6 +94,7 @@ export class BrowserSession {
     if (!this.browser || !fs.existsSync(sessionPath)) return false;
     try {
       const sessionData = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      if (sessionData.division && String(sessionData.division).trim().toUpperCase() !== this.division) return false;
       if (!sessionData.storageState?.cookies?.length) return false;
       const savedAt = new Date(sessionData.savedAt);
       const ageMinutes = (Date.now() - savedAt.getTime()) / 60000;
@@ -132,9 +136,14 @@ export class BrowserSession {
     const storageState = await this.context.storageState();
     fs.writeFileSync(sessionPath, JSON.stringify({
       sessionId: this.sessionId,
+      division: this.division,
       savedAt: new Date().toISOString(),
       storageState
     }, null, 2));
+  }
+
+  getSessionPath(): string {
+    return this.sessionPath();
   }
 
   async close(): Promise<void> {

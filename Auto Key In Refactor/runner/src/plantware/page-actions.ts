@@ -50,7 +50,8 @@ export async function fillAdjustmentRow(
   page: Page,
   record: ManualAdjustmentRecord,
   category: CategoryStrategy,
-  isFirstRow: boolean
+  isFirstRow: boolean,
+  division: string = PLANTWARE_CONFIG.division
 ): Promise<void> {
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(1000);
@@ -70,7 +71,7 @@ export async function fillAdjustmentRow(
     const divisionSelect = page.locator("#MainContent_ddlChargeTo");
     if (await divisionSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
       const currentValue = await divisionSelect.inputValue();
-      if (currentValue !== PLANTWARE_CONFIG.division) await divisionSelect.selectOption(PLANTWARE_CONFIG.division);
+      if (currentValue !== division) await divisionSelect.selectOption(division);
     }
   }
 
