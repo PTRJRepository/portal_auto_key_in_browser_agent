@@ -12,7 +12,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
   const requestedTabCount = payload.runner_mode.endsWith("_single") ? 1 : payload.max_tabs;
   const tabCount = Math.min(Math.max(1, requestedTabCount), PLANTWARE_CONFIG.maxTabs, Math.max(1, rows.length));
   const freshLoginFirst = payload.runner_mode === "fresh_login_single";
-  const session = new BrowserSession({ headless: payload.headless, freshLoginFirst });
+  const session = new BrowserSession({ headless: payload.headless, freshLoginFirst, division: payload.division_code });
   const rowResults: RowResult[] = [];
 
   emit({ event: "run.started", runner_mode: payload.runner_mode, total_records: rows.length, tabs: tabCount, requested_tabs: payload.max_tabs });
@@ -67,7 +67,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
             emit({ event: "tab.progress", tab_index: tabIndex, current_emp_code: record.emp_code, done: tabStats.done, skipped: tabStats.skipped, failed: tabStats.failed, total: tabStats.total });
             continue;
           }
-          await fillAdjustmentRow(page, record, category, rowIndex === 0);
+          await fillAdjustmentRow(page, record, category, rowIndex === 0, payload.division_code);
           const result: RowResult = {
             emp_code: record.emp_code,
             adjustment_name: record.adjustment_name,

@@ -62,6 +62,29 @@ class ManualAdjustmentApiClient:
             raise RuntimeError("Manual adjustment API returned invalid data shape")
         return [self._normalize(item) for item in raw_records if isinstance(item, dict)]
 
+    def check_adtrans(self, period_month: int, period_year: int, emp_codes: list[str], filters: list[str]) -> list[dict[str, Any]]:
+        url = f"{self.base_url}/payroll/manual-adjustment/check-adtrans/by-api-key"
+        response = requests.post(
+            url,
+            json={
+                "period_month": period_month,
+                "period_year": period_year,
+                "emp_codes": emp_codes,
+                "filters": filters,
+            },
+            headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("success", False):
+            message = payload.get("message") or payload.get("error") or "ADTRANS check API returned success=false"
+            raise RuntimeError(str(message))
+        data = payload.get("data", [])
+        if not isinstance(data, list):
+            raise RuntimeError("ADTRANS check API returned invalid data shape")
+        return [item for item in data if isinstance(item, dict)]
+
     def _normalize(self, raw: dict[str, Any]) -> ManualAdjustmentRecord:
         category_key = self.categories.detect(
             str(raw.get("adjustment_name") or ""),

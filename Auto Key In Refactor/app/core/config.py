@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 import json
 import os
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "configs"
+
+
+@dataclass(frozen=True)
+class DivisionOption:
+    code: str
+    label: str
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -21,6 +29,21 @@ class AppConfig:
     default_runner_mode: str = "multi_tab_shared_session"
     default_max_tabs: int = 5
     headless: bool = False
+
+
+def load_divisions(path: Path | None = None) -> list[DivisionOption]:
+    divisions_path = path or CONFIG_DIR / "divisions.json"
+    raw_items: list[Any] = json.loads(divisions_path.read_text(encoding="utf-8")) if divisions_path.exists() else []
+    divisions: list[DivisionOption] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip().upper()
+        label = str(item.get("label") or code).strip()
+        aliases = tuple(str(alias).strip() for alias in item.get("aliases", []) if str(alias).strip())
+        if code:
+            divisions.append(DivisionOption(code=code, label=label, aliases=aliases))
+    return divisions
 
 
 def load_app_config(path: Path | None = None) -> AppConfig:
