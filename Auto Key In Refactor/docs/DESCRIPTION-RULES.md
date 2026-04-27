@@ -65,4 +65,4 @@ Field `description` tersedia di `AdjustmentCategory` dataclass untuk referensi U
 
 - Aturan ini berlaku untuk field DocDesc saja, bukan untuk adcode autocomplete.
 - Adcode tetap menggunakan: `spsi`, `masa kerja`, `tunjangan jabatan`.
-- Deskripsi hanya diisi pada row pertama dalam satu form session (`isFirstRow`).
+- Deskripsi diisi pada setiap row/input attempt; `isFirstRow` hanya untuk setup form-level seperti division/charge-to.

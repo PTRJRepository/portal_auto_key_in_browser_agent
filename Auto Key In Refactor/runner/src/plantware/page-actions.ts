@@ -79,12 +79,10 @@ export async function fillAdjustmentRow(
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(3000);
 
-  if (isFirstRow) {
-    const descField = page.locator("#MainContent_txtDocDesc");
-    if (await descField.isVisible({ timeout: 15000 }).catch(() => false)) {
-      await descField.fill(category.description(record));
-      await descField.press("Tab").catch(() => {});
-    }
+  const descField = page.locator("#MainContent_txtDocDesc");
+  if (await descField.isVisible({ timeout: 15000 }).catch(() => false)) {
+    await descField.fill(category.description(record));
+    await descField.press("Tab").catch(() => {});
   }
 
   await form.amountField.waitFor({ state: "visible", timeout: 15000 });
