@@ -1,0 +1,31 @@
+# Local secrets
+.env
+.env.*
+!.env.example
+configs/app.json
+runner/.env
+runner/.env.*
+!runner/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node / Playwright
+runner/node_modules/
+runner/dist/
+
+# Local runtime data
+data/runs/
+data/sessions/
+runner/data/sessions/
+runner/data/runs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -11,6 +11,38 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "configs"
 
 
+def load_dotenv(path: Path | None = None) -> None:
+    env_path = path or PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class DivisionOption:
     code: str
@@ -47,6 +79,7 @@ def load_divisions(path: Path | None = None) -> list[DivisionOption]:
 
 
 def load_app_config(path: Path | None = None) -> AppConfig:
+    load_dotenv()
     config_path = path or CONFIG_DIR / "app.json"
     example_path = CONFIG_DIR / "app.example.json"
     data: dict[str, object] = {}
@@ -56,16 +89,14 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     elif example_path.exists():
         data = json.loads(example_path.read_text(encoding="utf-8"))
 
-    api_key = str(data.get("api_key") or os.getenv("AUTO_KEY_IN_API_KEY", ""))
-
     return AppConfig(
-        api_base_url=str(data.get("api_base_url", "http://localhost:8002")).rstrip("/"),
-        api_key=api_key,
-        runner_command=str(data.get("runner_command", "node runner/dist/cli.js")),
-        default_period_month=int(data.get("default_period_month", 4)),
-        default_period_year=int(data.get("default_period_year", 2026)),
-        default_division_code=str(data.get("default_division_code", "P1B")),
-        default_runner_mode=str(data.get("default_runner_mode", "multi_tab_shared_session")),
-        default_max_tabs=int(data.get("default_max_tabs", 5)),
-        headless=bool(data.get("headless", False)),
+        api_base_url=str(os.getenv("AUTO_KEY_IN_API_BASE_URL") or data.get("api_base_url", "http://localhost:8002")).rstrip("/"),
+        api_key=str(os.getenv("AUTO_KEY_IN_API_KEY") or data.get("api_key", "")),
+        runner_command=str(os.getenv("AUTO_KEY_IN_RUNNER_COMMAND") or data.get("runner_command", "node runner/dist/cli.js")),
+        default_period_month=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_MONTH", int(data.get("default_period_month", 4))),
+        default_period_year=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_YEAR", int(data.get("default_period_year", 2026))),
+        default_division_code=str(os.getenv("AUTO_KEY_IN_DEFAULT_DIVISION_CODE") or data.get("default_division_code", "P1B")),
+        default_runner_mode=str(os.getenv("AUTO_KEY_IN_DEFAULT_RUNNER_MODE") or data.get("default_runner_mode", "multi_tab_shared_session")),
+        default_max_tabs=env_int("AUTO_KEY_IN_DEFAULT_MAX_TABS", int(data.get("default_max_tabs", 5))),
+        headless=env_bool("AUTO_KEY_IN_HEADLESS", bool(data.get("headless", False))),
     )
