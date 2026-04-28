@@ -1,10 +1,13 @@
-"""Division monitor widget showing per-division, per-category status from DB."""
+"""Division monitor — compares manual adjustment (expected) vs db_ptrj actual (check-adtrans).
+
+Source of truth is db_ptrj via check_adtrans_report(division_code=...), NOT remarks.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -22,7 +25,6 @@ from PySide6.QtWidgets import (
 
 from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
 from app.core.category_registry import CategoryRegistry
-from app.core.models import ManualAdjustmentRecord
 from app.ui.themes import AppTheme
 
 CATEGORY_TO_FILTER = {
@@ -34,15 +36,22 @@ CATEGORY_TO_FILTER = {
     "premi_tunjangan": "premi",
 }
 
+
 @dataclass
 class CategoryStatus:
-    total: int = 0; match: int = 0; mismatch: int = 0; miss: int = 0
-    manual: int = 0; no_remarks: int = 0
-    match_amount: float = 0.0; mismatch_amount: float = 0.0; miss_amount: float = 0.0
+    total: int = 0
+    match: int = 0
+    mismatch: int = 0
+    miss: int = 0
+    match_amount: float = 0.0
+    mismatch_amount: float = 0.0
+    miss_amount: float = 0.0
+
 
 @dataclass
 class DivisionSummary:
-    division_code: str; division_label: str
+    division_code: str
+    division_label: str
     categories: dict[str, CategoryStatus] = field(default_factory=dict)
 
 
@@ -52,89 +61,112 @@ class DivisionMonitorWorker(QObject):
     completed = Signal(list)
     failed = Signal(str)
 
-    def __init__(self, client: ManualAdjustmentApiClient, period_month: int, period_year: int, division_codes: list[str]) -> None:
+    def __init__(
+        self,
+        client: ManualAdjustmentApiClient,
+        period_month: int,
+        period_year: int,
+        division_codes: list[str],
+        category_keys: list[str],
+    ) -> None:
         super().__init__()
-        self.client = client; self.period_month = period_month; self.period_year = period_year; self.division_codes = division_codes
+        self.client = client
+        self.period_month = period_month
+        self.period_year = period_year
+        self.division_codes = division_codes
+        self.category_keys = category_keys
 
     def run(self) -> None:
         try:
             summaries: list[DivisionSummary] = []
             for index, code in enumerate(self.division_codes):
                 self.progress.emit(code, index + 1, len(self.division_codes))
-                summaries.append(self._process_division(code))
-                self.division_done.emit(code, summaries[-1])
+                summary = self._process_division(code)
+                summaries.append(summary)
+                self.division_done.emit(code, summary)
             self.completed.emit(summaries)
         except Exception as exc:
             self.failed.emit(str(exc))
 
-    def _process_division(self, code: str) -> DivisionSummary:
-        query = ManualAdjustmentQuery(period_month=self.period_month, period_year=self.period_year, division_code=code)
+    def _process_division(self, division_code: str) -> DivisionSummary:
+        # 1) Get expected amounts from manual adjustment API
+        query = ManualAdjustmentQuery(
+            period_month=self.period_month,
+            period_year=self.period_year,
+            division_code=division_code,
+        )
         records = self.client.get_adjustments(query)
-        cats: dict[str, CategoryStatus] = {}
+
+        # Build expected: (emp_code, filter_name) -> total expected amount per category
+        expected: dict[tuple[str, str], float] = {}
         for record in records:
-            key = record.category_key or "unknown"
-            if key not in cats: cats[key] = CategoryStatus()
-            cats[key].total += 1
-            status = _status_from_remarks(record)
-            if status == "MATCH": cats[key].match += 1; cats[key].match_amount += record.amount
-            elif status == "MISMATCH": cats[key].mismatch += 1; cats[key].mismatch_amount += record.amount
-            elif status in {"MISS", "MISSING"}: cats[key].miss += 1; cats[key].miss_amount += record.amount
-            elif status == "MANUAL": cats[key].manual += 1
-            else: cats[key].no_remarks += 1
-        # Cross-check miss/mismatch with db_ptrj
-        suspect = [r for r in records if _is_suspect(r)]
-        if suspect:
-            emp_codes = sorted({r.emp_code for r in suspect if r.emp_code})
-            filters = sorted({CATEGORY_TO_FILTER.get(r.category_key or "", r.category_key or "") for r in suspect if r.category_key})
-            try:
-                data = self.client.check_adtrans(self.period_month, self.period_year, emp_codes, filters)
-                verif = _build_verification(suspect, data)
-                for r in suspect:
-                    key = r.category_key or "unknown"
-                    fn = CATEGORY_TO_FILTER.get(key, key)
-                    v = verif.get((r.emp_code, fn), {})
-                    st = str(v.get("status", ""))
-                    if st == "VERIFIED_MATCH":
-                        cats[key].mismatch -= 1; cats[key].mismatch_amount -= r.amount; cats[key].match += 1; cats[key].match_amount += r.amount
-            except Exception:
-                pass
-        return DivisionSummary(division_code=code, division_label=code, categories=cats)
+            cat_key = record.category_key or "unknown"
+            filter_name = CATEGORY_TO_FILTER.get(cat_key, cat_key)
+            key = (record.emp_code, filter_name)
+            expected[key] = expected.get(key, 0.0) + record.amount
 
+        # 2) Get actual from db_ptrj via check_adtrans_report(division_code=...)
+        filters = sorted({CATEGORY_TO_FILTER.get(k, k) for k in self.category_keys})
+        actual_data: list[dict[str, Any]] = []
+        try:
+            report = self.client.check_adtrans_report(
+                self.period_month, self.period_year,
+                filters,
+                division_code=division_code,
+            )
+            data = report.get("data", [])
+            if isinstance(data, dict):
+                data = data.get("data", [])
+            if isinstance(data, list):
+                actual_data = [item for item in data if isinstance(item, dict)]
+        except Exception:
+            pass
 
-def _status_from_remarks(record: ManualAdjustmentRecord) -> str:
-    parts = [p.strip() for p in record.remarks.split("|") if p.strip()]
-    sync_val = match_val = ""
-    for part in parts:
-        low = part.lower()
-        if low.startswith("sync:"): sync_val = part.split(":", 1)[1].strip().upper()
-        elif low.startswith("match:"): match_val = part.split(":", 1)[1].strip().upper()
-    if sync_val: return sync_val
-    if match_val: return match_val
-    if len(parts) >= 3:
-        try: return "MATCH" if float(parts[2].replace(",", "")) == record.amount else "MISMATCH"
-        except ValueError: return "UNKNOWN"
-    if record.remarks.strip(): return "MANUAL"
-    return "NO_REMARKS"
+        # Build actual lookup: (emp_code, filter_name) -> actual value from db_ptrj
+        actual: dict[tuple[str, str], float] = {}
+        for item in actual_data:
+            emp_code = str(
+                item.get("emp_code") or item.get("EmpCode") or ""
+            ).upper().strip()
+            for filter_name in filters:
+                val = item.get(filter_name)
+                if val is not None:
+                    try:
+                        actual[(emp_code, filter_name)] = float(val)
+                    except (TypeError, ValueError):
+                        pass
 
-def _is_suspect(record: ManualAdjustmentRecord) -> bool:
-    return _status_from_remarks(record).upper() in {"MISS", "MISSING", "MISMATCH"}
+        # 3) Compare expected vs actual per (emp_code, category)
+        #    Status determined DIRECTLY from db_ptrj, not from remarks
+        cats: dict[str, CategoryStatus] = {}
+        for (emp_code, filter_name), expected_amount in expected.items():
+            # Find category key from filter_name
+            cat_key = filter_name
+            for ck, fn in CATEGORY_TO_FILTER.items():
+                if fn == filter_name:
+                    cat_key = ck
+                    break
 
-def _build_verification(records: list[ManualAdjustmentRecord], data: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-    expected: dict[tuple[str, str], float] = {}
-    for r in records:
-        if _is_suspect(r):
-            key = r.category_key or "unknown"
-            expected[(r.emp_code, CATEGORY_TO_FILTER.get(key, key))] = expected.get((r.emp_code, CATEGORY_TO_FILTER.get(key, key)), 0.0) + r.amount
-    actual: dict[tuple[str, str], float] = {}
-    for item in data:
-        ec = str(item.get("emp_code") or item.get("EmpCode") or "").upper().strip()
-        for (e, f), _ in expected.items():
-            if ec == e and f in item: actual[(ec, f)] = float(item.get(f, 0) or 0)
-    result: dict[tuple[str, str], dict[str, Any]] = {}
-    for key, ea in expected.items():
-        aa = actual.get(key, 0.0)
-        result[key] = {"status": "VERIFIED_MATCH" if aa == ea else "VERIFIED_MISMATCH" if aa else "VERIFIED_NOT_FOUND", "expected": ea, "actual": aa}
-    return result
+            if cat_key not in cats:
+                cats[cat_key] = CategoryStatus()
+            cats[cat_key].total += 1
+
+            actual_amount = actual.get((emp_code, filter_name), 0.0)
+            if actual_amount == expected_amount and actual_amount != 0.0:
+                cats[cat_key].match += 1
+                cats[cat_key].match_amount += actual_amount
+            elif actual_amount != 0.0:
+                cats[cat_key].mismatch += 1
+                cats[cat_key].mismatch_amount += abs(expected_amount - actual_amount)
+            else:
+                cats[cat_key].miss += 1
+                cats[cat_key].miss_amount += expected_amount
+
+        return DivisionSummary(
+            division_code=division_code,
+            division_label=division_code,
+            categories=cats,
+        )
 
 
 class DivisionMonitorWidget(QWidget):
@@ -150,8 +182,8 @@ class DivisionMonitorWidget(QWidget):
         self.categories = categories
         self.divisions = divisions or []
         self.summaries: list[DivisionSummary] = []
-        self.worker: DivisionMonitorWorker | None = None
-        self.thread: QThread | None = None
+        self._thread: QThread | None = None
+        self._worker: DivisionMonitorWorker | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -162,8 +194,12 @@ class DivisionMonitorWidget(QWidget):
         # Controls
         ctrl = QHBoxLayout()
         ctrl_form = QFormLayout()
-        self.mon_month = QSpinBox(); self.mon_month.setRange(1, 12); self.mon_month.setValue(4)
-        self.mon_year = QSpinBox(); self.mon_year.setRange(2000, 2100); self.mon_year.setValue(2026)
+        self.mon_month = QSpinBox()
+        self.mon_month.setRange(1, 12)
+        self.mon_month.setValue(4)
+        self.mon_year = QSpinBox()
+        self.mon_year.setRange(2000, 2100)
+        self.mon_year.setValue(2026)
         ctrl_form.addRow("Period Month", self.mon_month)
         ctrl_form.addRow("Period Year", self.mon_year)
         ctrl.addLayout(ctrl_form)
@@ -203,38 +239,58 @@ class DivisionMonitorWidget(QWidget):
         layout.addLayout(card_grid)
 
         # Detail table
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Division", "Category", "Total", "Match", "Mismatch", "Miss", "Manual", "No Remarks", "Miss Amount"]
+            ["Division", "Category", "Total", "Match (DB)", "Mismatch (DB)", "Miss (DB)", "Miss Amount", "Mismatch Amount"]
         )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table, 1)
 
+    def _is_running(self) -> bool:
+        if self._thread is None:
+            return False
+        try:
+            return self._thread.isRunning()
+        except RuntimeError:
+            self._thread = None
+            self._worker = None
+            return False
+
     def _refresh_all(self) -> None:
-        if self.thread and self.thread.isRunning():
+        if self._is_running():
             return
         codes = [d.code for d in self.divisions] if self.divisions else ["P1B"]
+        cat_keys = [c.key for c in self.categories.categories]
         self.refresh_btn.setEnabled(False)
-        self.status_lbl.setText(f"Fetching {len(codes)} divisions...")
+        self.status_lbl.setText(f"Fetching {len(codes)} divisions from db_ptrj...")
         self.table.setRowCount(0)
+        self.summaries = []
         for total, miss, mismatch in self._card_widgets.values():
-            total.setText("0"); miss.setText("Miss: 0"); mismatch.setText("Mismatch: 0")
+            total.setText("0")
+            miss.setText("Miss: 0")
+            mismatch.setText("Mismatch: 0")
         client = self.api_client_factory()
-        self.thread = QThread(self)
-        self.worker = DivisionMonitorWorker(client, self.mon_month.value(), self.mon_year.value(), codes)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self._on_progress)
-        self.worker.division_done.connect(self._on_division_done)
-        self.worker.completed.connect(self._on_completed)
-        self.worker.failed.connect(self._on_failed)
-        self.worker.completed.connect(self.thread.quit)
-        self.worker.failed.connect(self.thread.quit)
-        self.thread.finished.connect(self.thread.deleteLater)
-        self.thread.start()
+        self._thread = QThread(self)
+        self._worker = DivisionMonitorWorker(
+            client, self.mon_month.value(), self.mon_year.value(), codes, cat_keys
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.division_done.connect(self._on_division_done)
+        self._worker.completed.connect(self._on_completed)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.completed.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._on_thread_finished)
+        self._thread.start()
+
+    def _on_thread_finished(self) -> None:
+        self._thread = None
+        self._worker = None
 
     def _on_progress(self, code: str, current: int, total: int) -> None:
-        self.status_lbl.setText(f"Fetching {code}... ({current}/{total})")
+        self.status_lbl.setText(f"Checking db_ptrj for {code}... ({current}/{total})")
 
     def _on_division_done(self, code: str, summary: DivisionSummary) -> None:
         self.summaries.append(summary)
@@ -244,9 +300,19 @@ class DivisionMonitorWidget(QWidget):
     def _on_completed(self, summaries: list[DivisionSummary]) -> None:
         self.summaries = summaries
         self.refresh_btn.setEnabled(True)
-        total_miss = sum(s.categories.get(k, CategoryStatus()).miss for s in summaries for k in s.categories)
-        total_mismatch = sum(s.categories.get(k, CategoryStatus()).mismatch for s in summaries for k in s.categories)
-        self.status_lbl.setText(f"Done. Total miss: {total_miss}, mismatch: {total_mismatch}")
+        total_miss = sum(
+            s.categories.get(k, CategoryStatus()).miss
+            for s in summaries
+            for k in s.categories
+        )
+        total_mismatch = sum(
+            s.categories.get(k, CategoryStatus()).mismatch
+            for s in summaries
+            for k in s.categories
+        )
+        self.status_lbl.setText(
+            f"Done. Total miss (db_ptrj): {total_miss}, mismatch (db_ptrj): {total_mismatch}"
+        )
         self._render_table()
         self._update_cards()
 
@@ -268,7 +334,9 @@ class DivisionMonitorWidget(QWidget):
         for summary in self.summaries:
             for key in sorted(summary.categories.keys()):
                 cat = summary.categories[key]
-                cat_label = next((c.label for c in self.categories.categories if c.key == key), key)
+                cat_label = next(
+                    (c.label for c in self.categories.categories if c.key == key), key
+                )
                 rows.append([
                     summary.division_code,
                     cat_label,
@@ -276,9 +344,8 @@ class DivisionMonitorWidget(QWidget):
                     str(cat.match),
                     str(cat.mismatch),
                     str(cat.miss),
-                    str(cat.manual),
-                    str(cat.no_remarks),
                     f"{cat.miss_amount:,.0f}",
+                    f"{cat.mismatch_amount:,.0f}",
                 ])
         self.table.setRowCount(len(rows))
         for r, values in enumerate(rows):
