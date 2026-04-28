@@ -1,0 +1,39 @@
+<td colspan="6">
+                <div>
+	<table cellspacing="0" cellpadding="2" pagerstyle-visible="False" id="MainContent_gvLine" style="width:100%;border-collapse:collapse;">
+		<tbody><tr class="mr-h" align="left">
+			<th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$DocID')">Document ID</a></th><th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$DocDate')">Document Date</a></th><th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$EmpCode')">Employee Code</a></th><th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$EmpName')">Employee Name</a></th><th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$DocDesc')">Description</a></th><th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$Status')">Status</a></th><th align="left" scope="col"><a href="javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$UpdatedBy')">Updated By</a></th>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674392">ADP2A26041171</a></td><td>27/04/2026</td><td>C0009</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674393">ADP2A26041172</a></td><td>27/04/2026</td><td>C0003</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674394">ADP2A26041173</a></td><td>27/04/2026</td><td>C0005</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674395">ADP2A26041174</a></td><td>27/04/2026</td><td>C0002</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674396">ADP2A26041175</a></td><td>27/04/2026</td><td>C0007</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674397">ADP2A26041176</a></td><td>27/04/2026</td><td>C0008</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674398">ADP2A26041177</a></td><td>27/04/2026</td><td>C0028</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674399">ADP2A26041178</a></td><td>27/04/2026</td><td>C0026</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674400">ADP2A26041179</a></td><td>27/04/2026</td><td>C0016</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674401">ADP2A26041180</a></td><td>27/04/2026</td><td>C0025</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674402">ADP2A26041181</a></td><td>27/04/2026</td><td>C0019</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674403">ADP2A26041182</a></td><td>27/04/2026</td><td>C0011</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674404">ADP2A26041183</a></td><td>27/04/2026</td><td>C0013</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-r">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674405">ADP2A26041184</a></td><td>27/04/2026</td><td>C0075</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr><tr class="mr-l">
+			<td align="left"><a href="frmPrTrxADDets.aspx?MasterID=674406">ADP2A26041185</a></td><td>27/04/2026</td><td>C0071</td><td>&nbsp;</td><td>POTONGAN SPSI</td><td>Active</td><td>adm075</td>
+		</tr>
+	</tbody></table>
+</div>
+            </td>
