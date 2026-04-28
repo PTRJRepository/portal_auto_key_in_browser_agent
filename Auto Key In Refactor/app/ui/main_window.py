@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,8 +18,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
+    QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -29,16 +32,102 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
+from app.ui.themes import AppTheme
 from app.core.category_registry import CategoryRegistry
 from app.core.config import AppConfig, DivisionOption
-from app.core.models import ManualAdjustmentRecord, RunPayload
+from app.core.models import DuplicateDocIdTarget, ManualAdjustmentRecord, RunPayload
 from app.core.run_artifacts import RunArtifactPaths, RunArtifactStore
 from app.core.run_service import apply_row_limit, filter_by_category
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 
+FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
+
+
+def remarks_parts(record: ManualAdjustmentRecord) -> list[str]:
+    return [part.strip() for part in record.remarks.split("|") if part.strip()]
+
+
+def remarks_token(record: ManualAdjustmentRecord, key: str) -> str:
+    prefix = f"{key.lower()}:"
+    for part in remarks_parts(record):
+        if part.lower().startswith(prefix):
+            return part.split(":", 1)[1].strip().upper()
+    return ""
+
+
+def sync_status_from_remarks(record: ManualAdjustmentRecord) -> str:
+    explicit_sync = remarks_token(record, "sync")
+    if explicit_sync:
+        return explicit_sync
+    parts = remarks_parts(record)
+    if len(parts) >= 3:
+        amount_part = parts[2].replace(",", "")
+        try:
+            remarks_amount = float(amount_part)
+        except ValueError:
+            return "UNKNOWN"
+        return "MATCH" if remarks_amount == record.amount else "MISMATCH"
+    if record.remarks.strip():
+        return "MANUAL"
+    return "NO REMARKS"
+
+
+def match_status_from_remarks(record: ManualAdjustmentRecord) -> str:
+    explicit_match = remarks_token(record, "match")
+    if explicit_match:
+        return explicit_match
+    return sync_status_from_remarks(record)
+
+
+def record_is_stale_miss(record: ManualAdjustmentRecord) -> bool:
+    sync_status = sync_status_from_remarks(record).upper()
+    match_status = match_status_from_remarks(record).upper()
+    return sync_status in {"MISS", "MISSING"} or match_status in {"MISMATCH", "MISS", "MISSING"}
+
+
+def filter_for_record(record: ManualAdjustmentRecord) -> str:
+    category_key = record.category_key or ""
+    if category_key == "masa_kerja":
+        return "masa kerja"
+    if category_key == "tunjangan_jabatan":
+        return "jabatan"
+    if category_key == "potongan_upah_kotor":
+        return "potongan"
+    if category_key == "premi_tunjangan":
+        return "premi"
+    if category_key:
+        return category_key
+    name = record.adjustment_name.strip()
+    return (name[5:] if name.upper().startswith("AUTO ") else name).lower()
+
+
+def build_fetch_verification_status(records: list[ManualAdjustmentRecord], data: list[dict[str, Any]]) -> FetchVerificationStatus:
+    expected: dict[tuple[str, str], float] = {}
+    for record in records:
+        if record_is_stale_miss(record):
+            key = (record.emp_code, filter_for_record(record))
+            expected[key] = expected.get(key, 0.0) + record.amount
+    actual_by_key: dict[tuple[str, str], float] = {}
+    for item in data:
+        emp_code = str(item.get("emp_code") or item.get("EmpCode") or "").upper().strip()
+        for _, filter_name in expected:
+            if (emp_code, filter_name) in expected:
+                actual_by_key[(emp_code, filter_name)] = float(item.get(filter_name, 0) or 0)
+    statuses: FetchVerificationStatus = {}
+    for key, expected_amount in expected.items():
+        actual = actual_by_key.get(key, 0.0)
+        if actual == expected_amount:
+            status = "VERIFIED_MATCH"
+        elif actual:
+            status = "VERIFIED_MISMATCH"
+        else:
+            status = "VERIFIED_NOT_FOUND"
+        statuses[key] = {"status": status, "expected": expected_amount, "actual": actual}
+    return statuses
+
 
 class FetchWorker(QObject):
-    completed = Signal(list)
+    completed = Signal(object, object)
     failed = Signal(str)
 
     def __init__(self, client: ManualAdjustmentApiClient, query: ManualAdjustmentQuery) -> None:
@@ -48,7 +137,21 @@ class FetchWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.completed.emit(self.client.get_adjustments(self.query))
+            records = self.client.get_adjustments(self.query)
+            suspect_records = [record for record in records if record_is_stale_miss(record)]
+            verification: FetchVerificationStatus = {}
+            if suspect_records:
+                emp_codes = sorted({record.emp_code for record in suspect_records if record.emp_code})
+                filters = sorted({filter_name for record in suspect_records if (filter_name := filter_for_record(record))})
+                try:
+                    data = self.client.check_adtrans(self.query.period_month, self.query.period_year, emp_codes, filters)
+                    verification = build_fetch_verification_status(suspect_records, data)
+                except Exception as exc:
+                    verification = {
+                        (record.emp_code, filter_for_record(record)): {"status": "VERIFY_ERROR", "expected": record.amount, "actual": 0.0, "message": str(exc)}
+                        for record in suspect_records
+                    }
+            self.completed.emit(records, verification)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -93,6 +196,25 @@ class VerifyWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class DuplicateFetchWorker(QObject):
+    completed = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, client: ManualAdjustmentApiClient, period_month: int, period_year: int, division_code: str, filters: list[str]) -> None:
+        super().__init__()
+        self.client = client
+        self.period_month = period_month
+        self.period_year = period_year
+        self.division_code = division_code
+        self.filters = filters
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self.client.get_duplicate_delete_targets(self.period_month, self.period_year, self.division_code, self.filters))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class SessionRefreshWorker(QObject):
     event_received = Signal(str, object)
     completed = Signal(str, object)
@@ -122,12 +244,17 @@ class MainWindow(QMainWindow):
         self.categories = categories
         self.divisions = divisions or []
         self.records: list[ManualAdjustmentRecord] = []
+        self.jobs: list[dict[str, Any]] = []
         self.fetch_thread: QThread | None = None
         self.fetch_worker: FetchWorker | None = None
         self.run_thread: QThread | None = None
         self.run_worker: RunWorker | None = None
         self.verify_thread: QThread | None = None
         self.verify_worker: VerifyWorker | None = None
+        self.duplicate_fetch_thread: QThread | None = None
+        self.duplicate_fetch_worker: DuplicateFetchWorker | None = None
+        self.duplicate_targets: list[DuplicateDocIdTarget] = []
+        self.duplicate_target_rows: dict[str, int] = {}
         self.runner_bridge: RunnerBridge | None = None
         self.session_refresh_threads: dict[str, QThread] = {}
         self.session_refresh_workers: dict[str, SessionRefreshWorker] = {}
@@ -138,21 +265,38 @@ class MainWindow(QMainWindow):
         self.current_artifacts: RunArtifactPaths | None = None
         self.tab_progress: dict[int, dict[str, object]] = {}
         self.record_status: dict[str, dict[str, Any]] = {}
+        self.fetch_verification_status: FetchVerificationStatus = {}
         self.last_run_result: dict[str, Any] | None = None
         self.last_successful_records: list[ManualAdjustmentRecord] = []
         self.setWindowTitle("Auto Key In Refactor")
         self.resize(1500, 920)
         self._build_ui()
+        self._apply_theme()
+        self._setup_shortcuts()
         self.apply_category_preset()
         self._sync_verify_defaults()
         self._refresh_session_status()
 
+    def _apply_theme(self) -> None:
+        self.setStyleSheet(AppTheme.get_stylesheet())
+
+    def _setup_shortcuts(self) -> None:
+        QShortcut(QKeySequence("Ctrl+R"), self, activated=self.run_auto_key_in)
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=self.fetch_records)
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.stop_run)
+        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.tabs.setCurrentIndex(0))
+        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self.tabs.setCurrentIndex(1))
+        QShortcut(QKeySequence("Ctrl+3"), self, activated=lambda: self.tabs.setCurrentIndex(2))
+
     def _build_ui(self) -> None:
         root = QWidget(self)
         layout = QVBoxLayout(root)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
         title = QLabel("PlantwareP3 Auto Key-In Dashboard")
+        title.setObjectName("title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 22px; font-weight: 700; padding: 8px;")
         layout.addWidget(title)
 
         self.tabs = QTabWidget()
@@ -160,7 +304,17 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_process_tab(), "Process")
         self.tabs.addTab(self._build_summary_tab(), "Summary")
         self.tabs.addTab(self._build_verify_tab(), "Verify db_ptrj")
+        self.tabs.addTab(self._build_duplicate_cleanup_tab(), "Duplicate Cleanup")
         layout.addWidget(self.tabs)
+
+        self.status_bar = QStatusBar()
+        self.status_bar.showMessage("Ready")
+        self.setStatusBar(self.status_bar)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumHeight(6)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setVisible(False)
+        self.status_bar.addPermanentWidget(self.progress_bar)
         self.setCentralWidget(root)
 
     def _build_config_tab(self) -> QWidget:
@@ -253,15 +407,23 @@ class MainWindow(QMainWindow):
         layout.addLayout(grid)
 
         actions = QHBoxLayout()
+        actions.setSpacing(10)
         self.apply_preset_button = QPushButton("Apply Category Preset")
+        self.apply_preset_button.setObjectName("primary")
         self.get_session_button = QPushButton("Get Session")
+        self.get_session_button.setObjectName("success")
         self.test_session_button = QPushButton("Test Session")
+        self.test_session_button.setObjectName("primary")
+        self.add_job_button = QPushButton("Tambahkan Job")
+        self.add_job_button.setObjectName("success")
         self.apply_preset_button.clicked.connect(self.apply_category_preset)
         self.get_session_button.clicked.connect(self.get_session)
         self.test_session_button.clicked.connect(self.test_session)
+        self.add_job_button.clicked.connect(self.add_job_from_current_config)
         actions.addWidget(self.apply_preset_button)
         actions.addWidget(self.get_session_button)
         actions.addWidget(self.test_session_button)
+        actions.addWidget(self.add_job_button)
         actions.addStretch(1)
         layout.addLayout(actions)
         layout.addStretch(1)
@@ -271,28 +433,45 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         controls = QHBoxLayout()
+        controls.setSpacing(10)
         self.test_get_data_button = QPushButton("Fetch / Refresh Data")
+        self.test_get_data_button.setObjectName("primary")
         self.run_button = QPushButton("Run Auto Key-In")
+        self.run_button.setObjectName("success")
+        self.run_selected_jobs_button = QPushButton("Run Selected Jobs")
+        self.run_selected_jobs_button.setObjectName("primary")
         self.stop_button = QPushButton("Stop")
-        self.export_button = QPushButton("Open Artifacts")
+        self.stop_button.setObjectName("danger")
         self.stop_button.setEnabled(False)
+        self.export_button = QPushButton("Open Artifacts")
         self.process_context_label = QLabel("No data loaded.")
+        self.process_context_label.setStyleSheet("font-weight: 500; color: #94a3b8;")
         self.process_only_miss = QCheckBox("Input MISS/MISMATCH only")
         self.process_only_miss.setChecked(True)
         self.process_only_miss.setToolTip("Jika aktif, fetch/run hanya memakai row dengan remarks sync:MISS atau match:MISMATCH.")
         self.process_only_miss.stateChanged.connect(self._update_process_context)
         self.test_get_data_button.clicked.connect(self.fetch_records)
         self.run_button.clicked.connect(self.run_auto_key_in)
+        self.run_selected_jobs_button.clicked.connect(self.run_selected_jobs)
         self.stop_button.clicked.connect(self.stop_run)
         self.export_button.clicked.connect(self.open_current_artifacts)
-        for button in [self.test_get_data_button, self.run_button, self.stop_button, self.export_button]:
+        for button in [self.test_get_data_button, self.run_button, self.run_selected_jobs_button, self.stop_button, self.export_button]:
             controls.addWidget(button)
         controls.addWidget(self.process_only_miss)
         controls.addWidget(self.process_context_label, 1)
         layout.addLayout(controls)
 
-        self.records_table = QTableWidget(0, 12)
-        self.records_table.setHorizontalHeaderLabels(["Status", "Sync", "Match", "Emp Code", "Gang", "Division", "Adjustment", "Description", "Adcode", "Remarks Adcode", "Amount", "Remarks"])
+        job_group = QGroupBox("Daftar Job")
+        job_layout = QVBoxLayout(job_group)
+        self.job_table = QTableWidget(0, 10)
+        self.job_table.setHorizontalHeaderLabels(["Run", "Division", "Gang", "Category", "Adjustment Type", "Adjustment Name", "Mode", "Max Tabs", "Row Limit", "Status"])
+        self.job_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.job_table.setMaximumHeight(180)
+        job_layout.addWidget(self.job_table)
+        layout.addWidget(job_group)
+
+        self.records_table = QTableWidget(0, 13)
+        self.records_table.setHorizontalHeaderLabels(["Input Status", "DB Status", "API Sync", "API Match", "Emp Code", "Gang", "Division", "Adjustment", "Description", "ADCode", "Remarks ADCode", "Amount", "Remarks"])
         self.records_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.records_table, 3)
 
@@ -363,8 +542,8 @@ class MainWindow(QMainWindow):
             cards.addWidget(group, index // 4, index % 4)
         layout.addLayout(cards)
 
-        self.summary_table = QTableWidget(0, 10)
-        self.summary_table.setHorizontalHeaderLabels(["Status", "Sync", "Match", "Emp Code", "Adjustment", "Description", "Adcode", "Amount", "Message", "Agent/Tab"])
+        self.summary_table = QTableWidget(0, 11)
+        self.summary_table.setHorizontalHeaderLabels(["Input Status", "DB Status", "API Sync", "API Match", "Emp Code", "Adjustment", "Description", "Adcode", "Amount", "Message", "Agent/Tab"])
         self.summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.summary_table, 1)
         return tab
@@ -406,6 +585,46 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.verify_table, 1)
         return tab
 
+    def _build_duplicate_cleanup_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        controls = QGroupBox("Hapus duplicate DocID Plantware")
+        form = QFormLayout(controls)
+        self.duplicate_month = QSpinBox()
+        self.duplicate_month.setRange(1, 12)
+        self.duplicate_month.setValue(self.config.default_period_month)
+        self.duplicate_year = QSpinBox()
+        self.duplicate_year.setRange(2000, 2100)
+        self.duplicate_year.setValue(self.config.default_period_year)
+        self.duplicate_filters = QLineEdit("spsi")
+        self.duplicate_dry_run = QCheckBox("Dry run: search Plantware, do not delete")
+        self.duplicate_dry_run.setChecked(True)
+        self.duplicate_dry_run.setToolTip("Browser akan membuka Plantware untuk mencari DocID, tetapi tombol Delete tidak akan diklik.")
+        self.fetch_duplicates_button = QPushButton("Fetch Duplicate Targets")
+        self.delete_duplicates_button = QPushButton("Delete Selected Duplicates")
+        self.delete_duplicates_button.setEnabled(False)
+        self.duplicate_status_label = QLabel("Belum dicek.")
+        self.fetch_duplicates_button.clicked.connect(self.fetch_duplicate_targets)
+        self.delete_duplicates_button.clicked.connect(self.run_duplicate_cleanup)
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.fetch_duplicates_button)
+        action_row.addWidget(self.delete_duplicates_button)
+        action_row.addWidget(self.duplicate_dry_run)
+        action_row.addWidget(self.duplicate_status_label, 1)
+        form.addRow("Period Month", self.duplicate_month)
+        form.addRow("Period Year", self.duplicate_year)
+        form.addRow("Division", QLabel("Mengikuti division di tab Config"))
+        form.addRow("Category", QLabel("Auto Buffer only: SPSI / Masa Kerja / Tunjangan Jabatan"))
+        form.addRow("Filters", self.duplicate_filters)
+        form.addRow(action_row)
+        layout.addWidget(controls)
+
+        self.duplicate_table = QTableWidget(0, 9)
+        self.duplicate_table.setHorizontalHeaderLabels(["Select", "Action", "DocID", "Emp Code", "Emp Name", "DocDesc", "Keep DocID", "Status", "Message"])
+        self.duplicate_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.duplicate_table, 1)
+        return tab
+
     def apply_category_preset(self) -> None:
         category_key = str(self.category.currentData() or "")
         if category_key == "spsi":
@@ -423,6 +642,84 @@ class MainWindow(QMainWindow):
             self.only_missing.setChecked(True)
         self._sync_verify_defaults()
         self._update_process_context()
+
+    def add_job_from_current_config(self) -> None:
+        job = {
+            "period_month": self.period_month.value(),
+            "period_year": self.period_year.value(),
+            "division_code": self._selected_division_code(),
+            "gang_code": self.gang_code.text().strip().upper(),
+            "emp_code": self.emp_code.text().strip().upper(),
+            "adjustment_type": self.adjustment_type.currentText().strip().upper(),
+            "adjustment_name": self.adjustment_name.text().strip(),
+            "category_key": str(self.category.currentData() or ""),
+            "runner_mode": self.runner_mode.currentText(),
+            "max_tabs": self.max_tabs.value(),
+            "headless": self.headless.isChecked(),
+            "only_missing_rows": self.only_missing.isChecked(),
+            "row_limit": self.row_limit.value() or None,
+            "status": "Pending",
+            "selected": True,
+        }
+        self.jobs.append(job)
+        self._render_jobs()
+        self.append_log(f"Job ditambahkan: {job['division_code']} / {job['category_key']} / {job['adjustment_name']}")
+        self.tabs.setCurrentIndex(1)
+
+    def _render_jobs(self) -> None:
+        self.job_table.setRowCount(len(self.jobs))
+        for row, job in enumerate(self.jobs):
+            select_item = QTableWidgetItem("")
+            select_item.setFlags(select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            select_item.setCheckState(Qt.CheckState.Checked if job.get("selected", True) else Qt.CheckState.Unchecked)
+            self.job_table.setItem(row, 0, select_item)
+            values = [
+                str(job.get("division_code", "")),
+                str(job.get("gang_code", "")),
+                str(job.get("category_key", "")),
+                str(job.get("adjustment_type", "")),
+                str(job.get("adjustment_name", "")),
+                str(job.get("runner_mode", "")),
+                str(job.get("max_tabs", "")),
+                str(job.get("row_limit") or "No limit"),
+                str(job.get("status", "Pending")),
+            ]
+            for column, value in enumerate(values, start=1):
+                self.job_table.setItem(row, column, QTableWidgetItem(value))
+
+    def selected_jobs(self) -> list[dict[str, Any]]:
+        selected: list[dict[str, Any]] = []
+        for row, job in enumerate(self.jobs):
+            item = self.job_table.item(row, 0)
+            job["selected"] = item is None or item.checkState() == Qt.CheckState.Checked
+            if job["selected"]:
+                selected.append(job)
+        return selected
+
+    def build_payload_from_job(self, job: dict[str, Any], records: list[ManualAdjustmentRecord]) -> RunPayload:
+        return RunPayload(
+            period_month=int(job["period_month"]),
+            period_year=int(job["period_year"]),
+            division_code=str(job["division_code"]).strip().upper(),
+            gang_code=str(job.get("gang_code") or "").strip().upper() or None,
+            emp_code=str(job.get("emp_code") or "").strip().upper() or None,
+            adjustment_type=str(job.get("adjustment_type") or "").strip().upper() or None,
+            adjustment_name=str(job.get("adjustment_name") or "").strip() or None,
+            category_key=str(job.get("category_key") or ""),
+            runner_mode=str(job.get("runner_mode") or "multi_tab_shared_session"),
+            max_tabs=int(job.get("max_tabs") or 1),
+            headless=bool(job.get("headless")),
+            only_missing_rows=bool(job.get("only_missing_rows")),
+            row_limit=job.get("row_limit"),
+            records=records,
+        )
+
+    def run_selected_jobs(self) -> None:
+        jobs = self.selected_jobs()
+        if not jobs:
+            self.append_log("Tidak ada job yang dipilih.")
+            return
+        self.append_log(f"Selected jobs ready: {len(jobs)}. Eksekusi queue akan ditambahkan setelah fetch per job.")
 
     def fetch_records(self) -> None:
         self.test_get_data_button.setEnabled(False)
@@ -448,7 +745,14 @@ class MainWindow(QMainWindow):
         self.fetch_thread.finished.connect(self.fetch_thread.deleteLater)
         self.fetch_thread.start()
 
-    def _handle_fetch_completed(self, records: list[ManualAdjustmentRecord]) -> None:
+    def _handle_fetch_completed(self, records: list[ManualAdjustmentRecord], verification: FetchVerificationStatus | None = None) -> None:
+        self.fetch_verification_status = verification or {}
+        if self.fetch_verification_status:
+            counts: dict[str, int] = {}
+            for item in self.fetch_verification_status.values():
+                status = str(item.get("status") or "")
+                counts[status] = counts.get(status, 0) + 1
+            self.append_log(f"db_ptrj fetch verification: {len(self.fetch_verification_status)} checked, {counts.get('VERIFIED_MATCH', 0)} match, {counts.get('VERIFIED_MISMATCH', 0)} mismatch, {counts.get('VERIFIED_NOT_FOUND', 0)} not found, {counts.get('VERIFY_ERROR', 0)} error.")
         category_key = self.category.currentData()
         row_limit = self.row_limit.value() or None
         filtered_records = filter_by_category(records, category_key)
@@ -560,6 +864,9 @@ class MainWindow(QMainWindow):
         self.get_session_button.setEnabled(False)
         self.test_session_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setVisible(True)
+        self.status_bar.showMessage("Running...")
         self.run_table.setRowCount(0)
         self.agent_table.setRowCount(0)
         self.tab_progress = {}
@@ -576,8 +883,14 @@ class MainWindow(QMainWindow):
         self.run_worker.completed.connect(self.run_thread.quit)
         self.run_worker.failed.connect(self.run_thread.quit)
         self.run_thread.finished.connect(self.run_thread.deleteLater)
+        self.run_thread.finished.connect(self._clear_run_thread)
         self.append_log(start_message)
         self.run_thread.start()
+
+    def _clear_run_thread(self) -> None:
+        self.run_thread = None
+        self.run_worker = None
+        self.runner_bridge = None
 
     def stop_run(self) -> None:
         if self.run_worker:
@@ -639,6 +952,8 @@ class MainWindow(QMainWindow):
             self.update_agent_progress(event.event, payload)
         if event.event.startswith("row."):
             self._update_record_from_event(event.event, payload, message)
+        if event.event.startswith("duplicate."):
+            self._handle_duplicate_event(event.event, payload, message)
         if event.event.startswith("row.") or event.event.startswith("session.") or event.event.startswith("tab."):
             self._append_event_row(event.event, payload, message)
 
@@ -727,14 +1042,16 @@ class MainWindow(QMainWindow):
         self._refresh_summary()
 
     def set_records(self, records: list[ManualAdjustmentRecord]) -> None:
+        self.records = records
         self.records_table.setRowCount(len(records))
         self.record_status = {}
         for row, record in enumerate(records):
             key = self._record_key(record)
-            self.record_status[key] = {"row": row, "status": "Pending", "message": ""}
-            values = ["Pending", self._sync_status_from_remarks(record), self._match_status_from_remarks(record), record.emp_code, record.gang_code, record.division_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), self._remarks_adcode(record), f"{record.amount:g}", record.remarks]
+            self.record_status[key] = {"row": row, "input_status": "Pending", "db_status": "Not Checked", "message": ""}
+            values = ["Pending", "Not Checked", self._sync_status_from_remarks(record), self._fetch_verification_display(record) or self._match_status_from_remarks(record), record.emp_code, record.gang_code, record.division_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), self._remarks_adcode(record), f"{record.amount:g}", record.remarks]
             for column, value in enumerate(values):
                 self.records_table.setItem(row, column, QTableWidgetItem(value))
+            self._apply_record_row_style(row, "Pending", "Not Checked")
         self._update_process_context()
         self._refresh_summary()
 
@@ -801,6 +1118,130 @@ class MainWindow(QMainWindow):
             for column, value in enumerate(values):
                 self.verify_table.setItem(row, column, QTableWidgetItem(value))
 
+    def fetch_duplicate_targets(self) -> None:
+        if not self._duplicate_category_supported():
+            self.duplicate_status_label.setText("Duplicate cleanup baru aktif untuk Auto Buffer.")
+            return
+        filters = self._parse_list(self.duplicate_filters.text())
+        if not filters:
+            self.duplicate_status_label.setText("Filters masih kosong.")
+            return
+        self.fetch_duplicates_button.setEnabled(False)
+        self.delete_duplicates_button.setEnabled(False)
+        self.duplicate_status_label.setText("Fetching duplicate targets...")
+        self.duplicate_fetch_thread = QThread(self)
+        self.duplicate_fetch_worker = DuplicateFetchWorker(self._api_client(), self.duplicate_month.value(), self.duplicate_year.value(), self._selected_division_code(), filters)
+        self.duplicate_fetch_worker.moveToThread(self.duplicate_fetch_thread)
+        self.duplicate_fetch_thread.started.connect(self.duplicate_fetch_worker.run)
+        self.duplicate_fetch_worker.completed.connect(self._handle_duplicate_fetch_completed)
+        self.duplicate_fetch_worker.failed.connect(self._handle_duplicate_fetch_failed)
+        self.duplicate_fetch_worker.completed.connect(self.duplicate_fetch_thread.quit)
+        self.duplicate_fetch_worker.failed.connect(self.duplicate_fetch_thread.quit)
+        self.duplicate_fetch_thread.finished.connect(self.duplicate_fetch_thread.deleteLater)
+        self.duplicate_fetch_thread.start()
+
+    def _handle_duplicate_fetch_completed(self, targets: list[DuplicateDocIdTarget]) -> None:
+        self.fetch_duplicates_button.setEnabled(True)
+        self.duplicate_targets = targets
+        self._render_duplicate_targets(targets)
+        self.delete_duplicates_button.setEnabled(bool(targets))
+        self.duplicate_status_label.setText(f"Loaded {len(targets)} DELETE_OLD duplicate targets.")
+
+    def _handle_duplicate_fetch_failed(self, message: str) -> None:
+        self.fetch_duplicates_button.setEnabled(True)
+        self.delete_duplicates_button.setEnabled(False)
+        self.duplicate_status_label.setText(f"Fetch failed: {message}")
+        self.append_log(f"Duplicate target fetch failed: {message}")
+
+    def _render_duplicate_targets(self, targets: list[DuplicateDocIdTarget]) -> None:
+        self.duplicate_target_rows = {}
+        self.duplicate_table.setRowCount(len(targets))
+        for row, target in enumerate(targets):
+            self.duplicate_target_rows[target.doc_id] = row
+            select_item = QTableWidgetItem("")
+            select_item.setFlags(select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            select_item.setCheckState(Qt.CheckState.Checked if target.action == "DELETE_OLD" else Qt.CheckState.Unchecked)
+            self.duplicate_table.setItem(row, 0, select_item)
+            values = [target.action, target.doc_id, target.emp_code, target.emp_name, target.doc_desc, target.keep_doc_id, "Pending", ""]
+            for column, value in enumerate(values, start=1):
+                self.duplicate_table.setItem(row, column, QTableWidgetItem(str(value)))
+
+    def run_duplicate_cleanup(self) -> None:
+        if self._runner_is_active():
+            self.duplicate_status_label.setText("Runner sedang berjalan.")
+            return
+        if not self._duplicate_category_supported():
+            self.duplicate_status_label.setText("Duplicate cleanup baru aktif untuk Auto Buffer.")
+            return
+        selected = self._selected_duplicate_targets()
+        if not selected:
+            self.duplicate_status_label.setText("Tidak ada duplicate target yang dipilih.")
+            return
+        if not self.duplicate_dry_run.isChecked() and self.runner_mode.currentText() != "fresh_login_single" and not self._selected_session_active():
+            division_code = self._selected_division_code()
+            message = f"Session aktif untuk {division_code} belum ada. Jalankan Get Session dulu atau pilih runner mode fresh_login_single."
+            self.duplicate_status_label.setText(message)
+            self.append_log(f"Duplicate cleanup blocked: {message}")
+            QMessageBox.warning(self, "Session belum aktif", message)
+            self.tabs.setCurrentIndex(0)
+            return
+        if not self.duplicate_dry_run.isChecked():
+            answer = QMessageBox.question(self, "Confirm Duplicate Delete", f"Delete {len(selected)} duplicate DocIDs from {self._selected_division_code()}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                self.duplicate_status_label.setText("Actual delete dibatalkan.")
+                return
+        self.duplicate_status_label.setText(f"Starting duplicate cleanup for {len(selected)} DocIDs...")
+        self.append_log(f"Duplicate cleanup selected targets: {[(target.doc_id, target.master_id) for target in selected[:10]]}")
+        payload = self.build_payload(mode=self.runner_mode.currentText(), records=[])
+        payload = RunPayload(
+            period_month=self.duplicate_month.value(),
+            period_year=self.duplicate_year.value(),
+            division_code=self._selected_division_code(),
+            gang_code=payload.gang_code,
+            emp_code=payload.emp_code,
+            adjustment_type=payload.adjustment_type,
+            adjustment_name=payload.adjustment_name,
+            category_key=payload.category_key,
+            runner_mode=payload.runner_mode,
+            max_tabs=payload.max_tabs,
+            headless=payload.headless,
+            only_missing_rows=payload.only_missing_rows,
+            row_limit=payload.row_limit,
+            records=[],
+            operation="delete_duplicates",
+            duplicate_targets=selected,
+            delete_dry_run=self.duplicate_dry_run.isChecked(),
+        )
+        self.start_runner(payload, f"Starting duplicate cleanup for {len(selected)} DocIDs...")
+        self.tabs.setCurrentIndex(1)
+
+    def _selected_duplicate_targets(self) -> list[DuplicateDocIdTarget]:
+        selected: list[DuplicateDocIdTarget] = []
+        for row, target in enumerate(self.duplicate_targets):
+            item = self.duplicate_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked and target.action == "DELETE_OLD":
+                selected.append(target)
+        return selected
+
+    def _handle_duplicate_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
+        doc_id = str(payload.get("doc_id", ""))
+        row = self.duplicate_target_rows.get(doc_id)
+        if row is not None:
+            status = str(payload.get("status") or event_name.rsplit(".", 1)[-1])
+            self.duplicate_table.setItem(row, 7, QTableWidgetItem(status))
+            self.duplicate_table.setItem(row, 8, QTableWidgetItem(message))
+        counts = {"deleted": 0, "dry_run": 0, "not_found": 0, "failed": 0}
+        for row_index in range(self.duplicate_table.rowCount()):
+            status_item = self.duplicate_table.item(row_index, 7)
+            status = status_item.text() if status_item else ""
+            if status in counts:
+                counts[status] += 1
+        self.duplicate_status_label.setText(f"Deleted: {counts['deleted']} | Dry-run: {counts['dry_run']} | Not found: {counts['not_found']} | Failed: {counts['failed']}")
+        self._append_event_row(event_name, payload, message)
+
+    def _duplicate_category_supported(self) -> bool:
+        return str(self.category.currentData() or "") in {"spsi", "masa_kerja", "tunjangan_jabatan"}
+
     def _update_record_from_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
         record = self._find_record(str(payload.get("emp_code", "")), str(payload.get("adjustment_name", "")))
         if not record:
@@ -809,10 +1250,11 @@ class MainWindow(QMainWindow):
         row = int(self.record_status.get(key, {}).get("row", -1))
         if row < 0:
             return
-        status_map = {"row.started": "Running", "row.success": "Success", "row.skipped": "Skipped", "row.failed": "Failed"}
+        status_map = {"row.started": "Running", "row.success": "Input Done", "row.skipped": "Skipped", "row.failed": "Failed"}
         status = status_map.get(event_name, event_name)
-        self.record_status[key].update({"status": status, "message": message, "tab_index": payload.get("tab_index")})
+        self.record_status[key].update({"input_status": status, "message": message, "tab_index": payload.get("tab_index")})
         self.records_table.setItem(row, 0, QTableWidgetItem(status))
+        self._apply_record_row_style(row, status, str(self.record_status[key].get("db_status", "Not Checked")))
         if event_name == "row.started":
             self.live_emp_label.setText(record.emp_code)
             self.live_adjustment_label.setText(record.adjustment_name)
@@ -830,14 +1272,15 @@ class MainWindow(QMainWindow):
         table_rows: list[list[str]] = []
         for record in self.records:
             state = self.record_status.get(self._record_key(record), {})
-            status = str(state.get("status", "Pending"))
-            if status == "Success":
+            input_status = str(state.get("input_status", "Pending"))
+            db_status = str(state.get("db_status", "Not Checked"))
+            if input_status == "Input Done":
                 success_records.append(record)
-            elif status == "Failed":
+            elif input_status == "Failed":
                 failed_records.append(record)
-            table_rows.append([status, self._sync_status_from_remarks(record), self._match_status_from_remarks(record), record.emp_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), f"{record.amount:g}", str(state.get("message", "")), str(state.get("tab_index", ""))])
+            table_rows.append([input_status, db_status, self._sync_status_from_remarks(record), self._match_status_from_remarks(record), record.emp_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), f"{record.amount:g}", str(state.get("message", "")), str(state.get("tab_index", ""))])
         self.last_successful_records = success_records
-        attempted = len([row for row in table_rows if row[0] in {"Success", "Skipped", "Failed"}])
+        attempted = len([row for row in table_rows if row[0] in {"Input Done", "Skipped", "Failed"}])
         skipped = len([row for row in table_rows if row[0] == "Skipped"])
         self.summary_total_fetched.setText(str(len(self.records)))
         self.summary_attempted.setText(str(attempted))
@@ -850,6 +1293,29 @@ class MainWindow(QMainWindow):
         for row, values in enumerate(table_rows):
             for column, value in enumerate(values):
                 self.summary_table.setItem(row, column, QTableWidgetItem(value))
+
+    def _apply_record_row_style(self, row: int, input_status: str, db_status: str) -> None:
+        from PySide6.QtGui import QColor
+        theme = AppTheme
+        if input_status == "Input Done":
+            background_color = QColor(theme.STATUS_SUCCESS)
+            foreground_color = QColor(theme.TEXT_PRIMARY)
+        elif input_status == "Skipped":
+            background_color = QColor(theme.STATUS_INFO)
+            foreground_color = QColor(theme.TEXT_PRIMARY)
+        elif input_status == "Failed" or db_status == "DB Mismatch":
+            background_color = QColor(theme.STATUS_ERROR)
+            foreground_color = QColor(theme.TEXT_PRIMARY)
+        elif db_status == "Already in DB":
+            background_color = QColor(theme.PRIMARY)
+            foreground_color = QColor(theme.TEXT_PRIMARY)
+        else:
+            return
+        for column in range(self.records_table.columnCount()):
+            item = self.records_table.item(row, column)
+            if item:
+                item.setBackground(background_color)
+                item.setForeground(foreground_color)
 
     def _api_client(self) -> ManualAdjustmentApiClient:
         return ManualAdjustmentApiClient(self.api_base_url.text().strip(), self.api_key.text().strip(), self.categories)
@@ -921,17 +1387,31 @@ class MainWindow(QMainWindow):
         selected_code = self._selected_division_code()
         return next((item for item in self._scan_session_status() if item["code"] == selected_code), None)
 
+    def _runner_is_active(self) -> bool:
+        if not self.run_thread:
+            return False
+        try:
+            return self.run_thread.isRunning()
+        except RuntimeError:
+            self.run_thread = None
+            self.run_worker = None
+            self.runner_bridge = None
+            return False
+
     def _selected_session_active(self) -> bool:
         status = self._selected_session_status()
         return bool(status and status["active"])
 
     def _refresh_session_status(self) -> None:
+        from PySide6.QtGui import QColor
         if not hasattr(self, "session_table"):
             return
         selected_code = self._selected_division_code()
         rows = self._scan_session_status()
         self.session_table.setRowCount(len(rows))
         selected_status: dict[str, str | bool] | None = None
+        highlight_color = QColor(AppTheme.PRIMARY)
+        text_color = QColor(AppTheme.TEXT_PRIMARY)
         for row, item in enumerate(rows):
             if item["code"] == selected_code:
                 selected_status = item
@@ -939,8 +1419,8 @@ class MainWindow(QMainWindow):
             for column, value in enumerate(values):
                 table_item = QTableWidgetItem(value)
                 if item["code"] == selected_code:
-                    table_item.setBackground(Qt.GlobalColor.darkCyan)
-                    table_item.setForeground(Qt.GlobalColor.white)
+                    table_item.setBackground(highlight_color)
+                    table_item.setForeground(text_color)
                 self.session_table.setItem(row, column, table_item)
             button = QPushButton("Get Session")
             button.clicked.connect(lambda checked=False, code=str(item["code"]): self.get_session_for_division(code))
@@ -967,45 +1447,32 @@ class MainWindow(QMainWindow):
         return self._description_for_record(record).lower()
 
     def _remarks_parts(self, record: ManualAdjustmentRecord) -> list[str]:
-        return [part.strip() for part in record.remarks.split("|") if part.strip()]
+        return remarks_parts(record)
 
     def _remarks_adcode(self, record: ManualAdjustmentRecord) -> str:
         parts = self._remarks_parts(record)
         return parts[1] if len(parts) >= 2 else ""
 
     def _remarks_token(self, record: ManualAdjustmentRecord, key: str) -> str:
-        prefix = f"{key.lower()}:"
-        for part in self._remarks_parts(record):
-            if part.lower().startswith(prefix):
-                return part.split(":", 1)[1].strip().upper()
-        return ""
+        return remarks_token(record, key)
 
     def _sync_status_from_remarks(self, record: ManualAdjustmentRecord) -> str:
-        explicit_sync = self._remarks_token(record, "sync")
-        if explicit_sync:
-            return explicit_sync
-        parts = self._remarks_parts(record)
-        if len(parts) >= 3:
-            amount_part = parts[2].replace(",", "")
-            try:
-                remarks_amount = float(amount_part)
-            except ValueError:
-                return "UNKNOWN"
-            return "MATCH" if remarks_amount == record.amount else "MISMATCH"
-        if record.remarks.strip():
-            return "MANUAL"
-        return "NO REMARKS"
+        return sync_status_from_remarks(record)
 
     def _match_status_from_remarks(self, record: ManualAdjustmentRecord) -> str:
-        explicit_match = self._remarks_token(record, "match")
-        if explicit_match:
-            return explicit_match
-        return self._sync_status_from_remarks(record)
+        return match_status_from_remarks(record)
+
+    def _fetch_verification_display(self, record: ManualAdjustmentRecord) -> str:
+        status = self.fetch_verification_status.get((record.emp_code, self._filter_for_record(record)), {})
+        return str(status.get("status") or "")
 
     def _record_is_miss(self, record: ManualAdjustmentRecord) -> bool:
-        sync_status = self._sync_status_from_remarks(record).upper()
-        match_status = self._match_status_from_remarks(record).upper()
-        return sync_status in {"MISS", "MISSING"} or match_status in {"MISMATCH", "MISS", "MISSING"}
+        verified_status = self._fetch_verification_display(record).upper()
+        if verified_status in {"VERIFIED_MATCH", "VERIFIED_MISMATCH"}:
+            return False
+        if verified_status == "VERIFIED_NOT_FOUND":
+            return True
+        return record_is_stale_miss(record)
 
     def _record_key(self, record: ManualAdjustmentRecord) -> str:
         return f"{record.emp_code}|{record.adjustment_name}|{record.amount:g}"
@@ -1022,9 +1489,11 @@ class MainWindow(QMainWindow):
         for record in self.records:
             key = self._record_key(record)
             row = int(self.record_status.get(key, {}).get("row", -1))
-            self.record_status[key] = {"row": row, "status": "Pending", "message": ""}
+            db_status = str(self.record_status.get(key, {}).get("db_status", "Not Checked"))
+            self.record_status[key] = {"row": row, "input_status": "Pending", "db_status": db_status, "message": ""}
             if row >= 0:
                 self.records_table.setItem(row, 0, QTableWidgetItem("Pending"))
+                self.records_table.setItem(row, 1, QTableWidgetItem(db_status))
         self.live_emp_label.setText("-")
         self.live_adjustment_label.setText("-")
         self.live_description_label.setText("-")
@@ -1040,7 +1509,14 @@ class MainWindow(QMainWindow):
         self.refresh_sessions_button.setEnabled(enabled)
         self.refresh_all_sessions_button.setEnabled(enabled)
         self.session_table.setEnabled(enabled)
+        if hasattr(self, "fetch_duplicates_button"):
+            self.fetch_duplicates_button.setEnabled(enabled)
+        if hasattr(self, "delete_duplicates_button"):
+            self.delete_duplicates_button.setEnabled(enabled and bool(self.duplicate_targets))
         self.stop_button.setEnabled(not enabled)
+        if enabled and hasattr(self, "progress_bar"):
+            self.progress_bar.setVisible(False)
+            self.status_bar.showMessage("Ready")
 
     def _update_process_context(self) -> None:
         if not hasattr(self, "process_context_label"):
@@ -1063,22 +1539,18 @@ class MainWindow(QMainWindow):
             "potongan_upah_kotor": "potongan",
             "premi_tunjangan": "premi",
         }
-        self.verify_filters.setText(defaults.get(category_key, category_key or "spsi"))
+        default_filter = defaults.get(category_key, category_key or "spsi")
+        self.verify_filters.setText(default_filter)
+        if hasattr(self, "duplicate_filters"):
+            self.duplicate_month.setValue(self.period_month.value())
+            self.duplicate_year.setValue(self.period_year.value())
+            self.duplicate_filters.setText(default_filter)
 
     def _parse_list(self, value: str) -> list[str]:
         return [item.strip() for chunk in value.splitlines() for item in chunk.split(",") if item.strip()]
 
     def _filter_for_record(self, record: ManualAdjustmentRecord) -> str:
-        category_key = record.category_key or ""
-        if category_key == "masa_kerja":
-            return "masa kerja"
-        if category_key == "tunjangan_jabatan":
-            return "jabatan"
-        if category_key == "potongan_upah_kotor":
-            return "potongan"
-        if category_key == "premi_tunjangan":
-            return "premi"
-        return category_key or self._description_for_record(record).lower()
+        return filter_for_record(record)
 
     def _expected_amounts_by_emp_filter(self) -> dict[tuple[str, str], float]:
         expected: dict[tuple[str, str], float] = {}
