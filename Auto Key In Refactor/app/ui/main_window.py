@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
+from app.ui.division_monitor import DivisionMonitorWidget
 from app.ui.themes import AppTheme
 from app.core.category_registry import CategoryRegistry
 from app.core.config import AppConfig, DivisionOption
@@ -305,6 +306,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_summary_tab(), "Summary")
         self.tabs.addTab(self._build_verify_tab(), "Verify db_ptrj")
         self.tabs.addTab(self._build_duplicate_cleanup_tab(), "Duplicate Cleanup")
+        self.division_monitor = DivisionMonitorWidget(self._api_client, self.categories, self.divisions)
+        self.tabs.addTab(self.division_monitor, "Division Monitor")
         layout.addWidget(self.tabs)
 
         self.status_bar = QStatusBar()
