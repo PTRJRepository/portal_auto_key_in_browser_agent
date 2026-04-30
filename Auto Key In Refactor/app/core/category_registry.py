@@ -37,6 +37,14 @@ class CategoryRegistry:
             name_matches = any(token.upper() in name for token in category.match_contains)
             if type_matches and name_matches:
                 return category.key
+        manual_type_defaults = {
+            "PREMI": "premi",
+            "POTONGAN_KOTOR": "potongan_upah_kotor",
+            "POTONGAN_BERSIH": "potongan_upah_bersih",
+        }
+        default_key = manual_type_defaults.get(adj_type)
+        if default_key and self.by_key(default_key):
+            return default_key
         for category in self._categories:
             if any(token.upper() in name for token in category.match_contains):
                 return category.key

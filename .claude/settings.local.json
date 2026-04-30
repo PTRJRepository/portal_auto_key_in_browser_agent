@@ -34,7 +34,11 @@
       "Bash(npm list *)",
       "Bash(period_year=2026 2>&1)",
       "Bash(netstat -anoalan api nya)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -m app)",
+      "Bash(python *)",
+      "Bash(npm *)",
+      "Bash(npx *)"
     ]
   }
 }

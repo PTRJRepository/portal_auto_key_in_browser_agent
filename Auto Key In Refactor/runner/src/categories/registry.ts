@@ -2,13 +2,34 @@ import type { ManualAdjustmentRecord } from "../types.js";
 
 export interface CategoryStrategy {
   key: string;
-  adcode: string;
+  adcode(record: ManualAdjustmentRecord): string;
   matches(record: ManualAdjustmentRecord): boolean;
   description(record: ManualAdjustmentRecord): string;
+  requiresGangAfterAdCode?: boolean;
+  expenseCode(record: ManualAdjustmentRecord): string;
 }
 
 function cleanDescription(value: string): string {
   return value.toUpperCase().startsWith("AUTO ") ? value.slice(5) : value;
+}
+
+function extractAdcodeFromRemarks(remarks: string): string {
+  const explicit = remarks.match(/\bAD\s*CODE\s*:\s*([^|\-]+)/i);
+  if (explicit?.[1]?.trim()) return explicit[1].trim().toUpperCase();
+  const parts = remarks.split("|").map((part) => part.trim()).filter(Boolean);
+  return parts.length >= 2 ? parts[1] : "";
+}
+
+function manualAdcode(record: ManualAdjustmentRecord, fallback: string): string {
+  return record.ad_code?.trim().toUpperCase() || extractAdcodeFromRemarks(record.remarks || "") || fallback;
+}
+
+function labourExpense(): string {
+  return "Labour";
+}
+
+function fieldExpense(): string {
+  return "PM";
 }
 
 /**
@@ -25,30 +46,67 @@ function cleanDescription(value: string): string {
 export const CATEGORY_STRATEGIES: CategoryStrategy[] = [
   {
     key: "spsi",
-    adcode: "spsi",
+    adcode: () => "spsi",
     matches: (record) => record.adjustment_name.toUpperCase().includes("SPSI"),
-    description: () => "POTONGAN SPSI"
+    description: () => "POTONGAN SPSI",
+    expenseCode: labourExpense
   },
   {
     key: "masa_kerja",
-    adcode: "masa kerja",
+    adcode: () => "masa kerja",
     matches: (record) => record.adjustment_name.toUpperCase().includes("MASA"),
-    description: () => "TUNJANGAN MASA KERJA"
+    description: () => "TUNJANGAN MASA KERJA",
+    expenseCode: labourExpense
   },
   {
     key: "tunjangan_jabatan",
-    adcode: "tunjangan jabatan",
+    adcode: () => "tunjangan jabatan",
     matches: (record) => record.adjustment_name.toUpperCase().includes("JABATAN"),
-    description: () => "TUNJANGAN JABATAN"
+    description: () => "TUNJANGAN JABATAN",
+    expenseCode: labourExpense
+  },
+  {
+    key: "premi_tunjangan",
+    adcode: (record) => manualAdcode(record, "premi"),
+    matches: (record) => record.adjustment_name.toUpperCase().includes("TUNJANGAN PREMI"),
+    description: (record) => cleanDescription(record.adjustment_name),
+    requiresGangAfterAdCode: true,
+    expenseCode: fieldExpense
+  },
+  {
+    key: "premi",
+    adcode: (record) => manualAdcode(record, "premi"),
+    matches: (record) => record.adjustment_type === "PREMI" || record.adjustment_name.toUpperCase().includes("PREMI"),
+    description: (record) => cleanDescription(record.adjustment_name),
+    requiresGangAfterAdCode: true,
+    expenseCode: fieldExpense
+  },
+  {
+    key: "potongan_upah_kotor",
+    adcode: (record) => manualAdcode(record, "potongan"),
+    matches: (record) => {
+      const name = record.adjustment_name.toUpperCase();
+      return record.adjustment_type === "POTONGAN_KOTOR" || name.includes("POTONGAN") || name.includes("KOREKSI");
+    },
+    description: (record) => cleanDescription(record.adjustment_name),
+    expenseCode: labourExpense
+  },
+  {
+    key: "potongan_upah_bersih",
+    adcode: (record) => manualAdcode(record, "potongan upah bersih"),
+    matches: (record) => record.adjustment_type === "POTONGAN_BERSIH" || record.adjustment_name.toUpperCase().includes("POTONGAN UPAH BERSIH"),
+    description: (record) => cleanDescription(record.adjustment_name),
+    expenseCode: labourExpense
   }
 ];
 
 export function resolveCategory(record: ManualAdjustmentRecord, fallbackKey: string): CategoryStrategy {
   const requestedKey = record.category_key || fallbackKey;
-  const byRequestedKey = CATEGORY_STRATEGIES.find((strategy) => strategy.key === requestedKey);
+  const normalizedRequestedKey = requestedKey === "koreksi" ? "potongan_upah_kotor" : requestedKey;
+  const byRequestedKey = CATEGORY_STRATEGIES.find((strategy) => strategy.key === normalizedRequestedKey);
   if (byRequestedKey) return byRequestedKey;
 
-  if (requestedKey) {
+  if (normalizedRequestedKey) {
     throw new Error(`Unsupported runner category: ${requestedKey}`);
   }
 

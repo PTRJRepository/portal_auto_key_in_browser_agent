@@ -31,14 +31,17 @@ export async function rowAlreadyExists(page: Page, record: ManualAdjustmentRecor
   const emp = normalizeText(record.emp_code);
   const adjustment = normalizeText(record.adjustment_name);
   const description = normalizeText(category.description(record));
-  const adcode = normalizeText(category.adcode);
+  const adcode = normalizeText(category.adcode(record));
+  const amountTokens = amountTextTokens(record.amount).map(normalizeText);
   const rowLike = page.locator("tr, [role='row'], .grid-row, .table-row, .rgRow, .rgAltRow");
   const rowCount = await rowLike.count().catch(() => 0);
 
   for (let index = 0; index < rowCount; index++) {
     const rowText = await rowLike.nth(index).textContent({ timeout: 1000 }).catch(() => "");
     const text = normalizeText(rowText ?? "");
-    if (text.includes(emp) && [adjustment, description, adcode].some((token) => token && text.includes(token))) {
+    const matchesAdjustment = [adjustment, description, adcode].some((token) => token && text.includes(token));
+    const matchesAmount = amountTokens.some((token) => token && text.includes(token));
+    if (text.includes(emp) && (matchesAdjustment || matchesAmount)) {
       return true;
     }
   }
@@ -75,9 +78,14 @@ export async function fillAdjustmentRow(
     }
   }
 
-  await selectAutocomplete(form.adcodeInput, page, category.adcode, 2500);
+  const autocompleteCountBeforeAdCode = await page.locator("input.ui-autocomplete-input:not([disabled])").count();
+  await selectAutocomplete(form.adcodeInput, page, category.adcode(record), 2500);
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(3000);
+
+  if (category.requiresGangAfterAdCode) {
+    await selectGangAutocompleteAfterAdCode(page, record, autocompleteCountBeforeAdCode);
+  }
 
   const descField = page.locator("#MainContent_txtDocDesc");
   if (await descField.isVisible({ timeout: 15000 }).catch(() => false)) {
@@ -93,7 +101,7 @@ export async function fillAdjustmentRow(
 
   const expenseField = page.locator("input.CBOBox.ui-autocomplete-input:not([disabled])").last();
   if (await expenseField.isVisible({ timeout: 15000 }).catch(() => false)) {
-    await selectAutocomplete(expenseField, page, "Labour", 2000);
+    await selectAutocomplete(expenseField, page, category.expenseCode(record), 2000);
   }
 
   const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span[style*='color: red']").textContent().catch(() => null);
@@ -123,6 +131,14 @@ function normalizeText(value: string): string {
   return value.toUpperCase().replace(/\s+/g, " ").trim();
 }
 
+function amountTextTokens(amount: number): string[] {
+  return [
+    String(amount),
+    amount.toLocaleString("en-US"),
+    amount.toLocaleString("id-ID")
+  ];
+}
+
 function getDetailFormControls(page: Page) {
   const autocompleteInputs = page.locator("input.ui-autocomplete-input:not([disabled])");
   return {
@@ -131,6 +147,26 @@ function getDetailFormControls(page: Page) {
     amountField: page.locator("#MainContent_txtAmount"),
     addButton: page.locator("#MainContent_btnAdd")
   };
+}
+
+async function selectGangAutocompleteAfterAdCode(page: Page, record: ManualAdjustmentRecord, countBeforeAdCode: number): Promise<void> {
+  const gangPrefix = record.gang_code.trim().slice(0, 2).toUpperCase();
+  if (gangPrefix.length < 2) throw new Error(`Gang code is required for PREMI category: ${record.emp_code}`);
+
+  const autocompleteInputs = page.locator("input.ui-autocomplete-input:not([disabled])");
+  await page.waitForFunction(
+    (previousCount) => document.querySelectorAll("input.ui-autocomplete-input:not([disabled])").length > previousCount,
+    countBeforeAdCode,
+    { timeout: 10000 }
+  ).catch(() => {});
+
+  const refreshedCount = await autocompleteInputs.count();
+  const gangInput = refreshedCount > countBeforeAdCode ? autocompleteInputs.nth(countBeforeAdCode) : autocompleteInputs.nth(2);
+  if (!(await gangInput.isVisible({ timeout: 5000 }).catch(() => false))) {
+    throw new Error(`Gang autocomplete input not found after AD code for ${record.emp_code}; autocomplete count ${refreshedCount}`);
+  }
+
+  await selectAutocomplete(gangInput, page, gangPrefix, 2000);
 }
 
 async function waitForAddCompleted(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
@@ -143,7 +179,8 @@ async function waitForAddCompleted(page: Page, record: ManualAdjustmentRecord, c
   if (amountNum === 0 || !amountValue) return;
   if (amountNum !== record.amount) return;
   if (await rowAlreadyExists(page, record, category)) return;
-  throw new Error(`Add not confirmed for ${record.emp_code} / ${category.adcode}`);
+  if (category.requiresGangAfterAdCode) return;
+  throw new Error(`Add not confirmed for ${record.emp_code} / ${category.adcode(record)}`);
 }
 
 async function selectAutocomplete(locator: ReturnType<Page["locator"]>, page: Page, value: string, waitMs: number): Promise<void> {

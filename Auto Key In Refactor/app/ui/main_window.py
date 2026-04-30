@@ -36,12 +36,15 @@ from app.ui.division_monitor import DivisionMonitorWidget
 from app.ui.themes import AppTheme
 from app.core.category_registry import CategoryRegistry
 from app.core.config import AppConfig, DivisionOption
-from app.core.models import DuplicateDocIdTarget, ManualAdjustmentRecord, RunPayload
+from app.core.models import DuplicateDocIdTarget, ManualAdjustmentRecord, RunPayload, enrich_records_with_automation_options, extract_ad_code_from_remarks
 from app.core.run_artifacts import RunArtifactPaths, RunArtifactStore
 from app.core.run_service import apply_row_limit, filter_by_category
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
+AUTOMATION_OPTION_CATEGORIES = ["premi", "koreksi", "potongan_upah_bersih"]
+AUTOMATION_OPTION_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
+MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
 
 
 def remarks_parts(record: ManualAdjustmentRecord) -> list[str]:
@@ -94,7 +97,11 @@ def filter_for_record(record: ManualAdjustmentRecord) -> str:
         return "jabatan"
     if category_key == "potongan_upah_kotor":
         return "potongan"
+    if category_key == "potongan_upah_bersih":
+        return "potongan upah bersih"
     if category_key == "premi_tunjangan":
+        return "premi"
+    if category_key == "premi":
         return "premi"
     if category_key:
         return category_key
@@ -139,6 +146,7 @@ class FetchWorker(QObject):
     def run(self) -> None:
         try:
             records = self.client.get_adjustments(self.query)
+            records = self._enrich_manual_automation_details(records)
             suspect_records = [record for record in records if record_is_stale_miss(record)]
             verification: FetchVerificationStatus = {}
             if suspect_records:
@@ -155,6 +163,25 @@ class FetchWorker(QObject):
             self.completed.emit(records, verification)
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def _enrich_manual_automation_details(self, records: list[ManualAdjustmentRecord]) -> list[ManualAdjustmentRecord]:
+        if not self.query.division_code:
+            return records
+        needs_detail = [
+            record for record in records
+            if record.adjustment_type in AUTOMATION_OPTION_TYPES and not (record.ad_code and record.task_code and record.task_desc)
+        ]
+        if not needs_detail:
+            return records
+        try:
+            options = self.client.get_automation_options(
+                division_code=self.query.division_code,
+                categories=AUTOMATION_OPTION_CATEGORIES,
+                limit=200,
+            )
+        except Exception:
+            return records
+        return enrich_records_with_automation_options(records, options)
 
 
 class RunWorker(QObject):
@@ -269,6 +296,7 @@ class MainWindow(QMainWindow):
         self.fetch_verification_status: FetchVerificationStatus = {}
         self.last_run_result: dict[str, Any] | None = None
         self.last_successful_records: list[ManualAdjustmentRecord] = []
+        self.division_run_dialogs: list[QDialog] = []
         self.setWindowTitle("Auto Key In Refactor")
         self.resize(1500, 920)
         self._build_ui()
@@ -307,6 +335,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_verify_tab(), "Verify db_ptrj")
         self.tabs.addTab(self._build_duplicate_cleanup_tab(), "Duplicate Cleanup")
         self.division_monitor = DivisionMonitorWidget(self._api_client, self.categories, self.divisions)
+        self.division_monitor.run_division_category.connect(self._on_division_monitor_run)
         self.tabs.addTab(self.division_monitor, "Division Monitor")
         layout.addWidget(self.tabs)
 
@@ -345,7 +374,8 @@ class MainWindow(QMainWindow):
         self.gang_code = QLineEdit()
         self.emp_code = QLineEdit()
         self.adjustment_type = QComboBox()
-        self.adjustment_type.addItems(["", "AUTO_BUFFER", "PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "PENDAPATAN_LAINNYA"])
+        self.adjustment_type.addItems(["", "AUTO_BUFFER", "MANUAL", "PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "PENDAPATAN_LAINNYA"])
+        self.adjustment_type.setToolTip("MANUAL = PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH,PENDAPATAN_LAINNYA; comma-separated values are supported by the API.")
         self.adjustment_name = QLineEdit()
         self.category = QComboBox()
         for item in self.categories.categories:
@@ -643,6 +673,26 @@ class MainWindow(QMainWindow):
             self.adjustment_type.setCurrentText("AUTO_BUFFER")
             self.adjustment_name.setText("TUNJANGAN JABATAN")
             self.only_missing.setChecked(True)
+        elif category_key == "premi_tunjangan":
+            self.adjustment_type.setCurrentText("PREMI")
+            self.adjustment_name.setText("TUNJANGAN PREMI")
+            self.only_missing.setChecked(False)
+            self.process_only_miss.setChecked(False)
+        elif category_key == "premi":
+            self.adjustment_type.setCurrentText("PREMI")
+            self.adjustment_name.clear()
+            self.only_missing.setChecked(False)
+            self.process_only_miss.setChecked(False)
+        elif category_key == "potongan_upah_kotor":
+            self.adjustment_type.setCurrentText("POTONGAN_KOTOR")
+            self.adjustment_name.clear()
+            self.only_missing.setChecked(False)
+            self.process_only_miss.setChecked(False)
+        elif category_key == "potongan_upah_bersih":
+            self.adjustment_type.setCurrentText("POTONGAN_BERSIH")
+            self.adjustment_name.clear()
+            self.only_missing.setChecked(False)
+            self.process_only_miss.setChecked(False)
         self._sync_verify_defaults()
         self._update_process_context()
 
@@ -756,16 +806,19 @@ class MainWindow(QMainWindow):
                 status = str(item.get("status") or "")
                 counts[status] = counts.get(status, 0) + 1
             self.append_log(f"db_ptrj fetch verification: {len(self.fetch_verification_status)} checked, {counts.get('VERIFIED_MATCH', 0)} match, {counts.get('VERIFIED_MISMATCH', 0)} mismatch, {counts.get('VERIFIED_NOT_FOUND', 0)} not found, {counts.get('VERIFY_ERROR', 0)} error.")
-        category_key = self.category.currentData()
+        category_key = str(self.category.currentData() or "")
         row_limit = self.row_limit.value() or None
         filtered_records = filter_by_category(records, category_key)
-        if self.process_only_miss.isChecked():
+        manual_preview = category_key in MANUAL_PREVIEW_CATEGORY_KEYS
+        if self.process_only_miss.isChecked() and not manual_preview:
             before_miss_filter = len(filtered_records)
             filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
             self.append_log(f"MISS-only filter active: {len(filtered_records)} of {before_miss_filter} category records will be previewed/run.")
+        elif self.process_only_miss.isChecked() and manual_preview:
+            self.append_log(f"Manual category preview: showing all {len(filtered_records)} category records; MISS-only filter is ignored for {category_key}.")
         self.records = apply_row_limit(filtered_records, row_limit)
         self.set_records(self.records)
-        self.append_log(f"Fetched {len(records)} records; previewing {len(self.records)} records.")
+        self.append_log(f"Fetched {len(records)} raw records; category {category_key or '-'} has {len(filtered_records)} records; previewing {len(self.records)} records.")
         self.test_get_data_button.setEnabled(True)
         self.tabs.setCurrentIndex(1)
 
@@ -1435,24 +1488,32 @@ class MainWindow(QMainWindow):
 
     def _description_for_record(self, record: ManualAdjustmentRecord) -> str:
         category = self.categories.by_key(record.category_key or str(self.category.currentData() or ""))
-        if category and category.description:
+        if record.adjustment_type == "AUTO_BUFFER" and category and category.description:
             return category.description
         name = record.adjustment_name.strip()
         return name[5:] if name.upper().startswith("AUTO ") else name
 
     def _adcode_for_record(self, record: ManualAdjustmentRecord) -> str:
         category = self.categories.by_key(record.category_key or str(self.category.currentData() or ""))
-        if category and category.adcode:
+        is_auto_buffer = record.adjustment_type == "AUTO_BUFFER" or (record.category_key or "") in {"spsi", "masa_kerja", "tunjangan_jabatan"}
+        if is_auto_buffer and category and category.adcode:
             return category.adcode
+        if record.ad_code:
+            return record.ad_code
         remarks_adcode = self._remarks_adcode(record)
         if remarks_adcode:
             return remarks_adcode
+        if category and category.adcode:
+            return category.adcode
         return self._description_for_record(record).lower()
 
     def _remarks_parts(self, record: ManualAdjustmentRecord) -> list[str]:
         return remarks_parts(record)
 
     def _remarks_adcode(self, record: ManualAdjustmentRecord) -> str:
+        explicit_adcode = extract_ad_code_from_remarks(record.remarks)
+        if explicit_adcode:
+            return explicit_adcode
         parts = self._remarks_parts(record)
         return parts[1] if len(parts) >= 2 else ""
 
@@ -1540,6 +1601,7 @@ class MainWindow(QMainWindow):
             "tunjangan_jabatan": "jabatan",
             "premi": "premi",
             "potongan_upah_kotor": "potongan",
+            "potongan_upah_bersih": "potongan upah bersih",
             "premi_tunjangan": "premi",
         }
         default_filter = defaults.get(category_key, category_key or "spsi")
@@ -1567,6 +1629,29 @@ class MainWindow(QMainWindow):
             if record.emp_code == emp_code and self._filter_for_record(record) == filter_name:
                 return record.adjustment_name
         return ""
+
+    def _on_division_monitor_run(self, division_code: str, cat_key: str, cat_label: str, mode: str, month: int, year: int, extra_details: object | None = None) -> None:
+        from app.ui.division_run_dialog import DivisionRunDialog
+        division_label = next((d.label for d in self.divisions if d.code == division_code), division_code)
+        dialog = DivisionRunDialog(
+            config=self.config,
+            categories=self.categories,
+            api_client=self._api_client(),
+            division_code=division_code,
+            division_label=division_label,
+            category_key=cat_key,
+            category_label=cat_label,
+            mode=mode,
+            month=month,
+            year=year,
+            extra_details=extra_details if isinstance(extra_details, list) else None,
+            parent=self,
+        )
+        self.division_run_dialogs.append(dialog)
+        dialog.finished.connect(lambda _result, d=dialog: self.division_run_dialogs.remove(d) if d in self.division_run_dialogs else None)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def append_log(self, message: str) -> None:
         self.log_output.append(message)

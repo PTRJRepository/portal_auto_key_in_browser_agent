@@ -20,7 +20,7 @@ export async function runMock(payload: RunPayload, emit: EmitEvent): Promise<Run
       adjustment_name: record.adjustment_name,
       category_key: category.key,
       status: "success",
-      message: `mock input using adcode ${category.adcode}`,
+      message: `mock input using adcode ${category.adcode(record)}`,
       tab_index
     };
     rowResults.push(result);

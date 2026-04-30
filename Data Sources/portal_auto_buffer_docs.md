@@ -89,8 +89,21 @@ curl -X POST "http://10.0.0.110:8001/v1/query" \
 | `emp_code` | string | ❌ | Employee code spesifik |
 | `gang_code` | string | ❌ | Filter per gang |
 | `division_code` | string | ❌ | Filter per division |
-| `adjustment_type` | string | ❌ | Filter per type: `PREMI`, `POTONGAN_KOTOR`, `POTONGAN_BERSIH`, `PENDAPATAN_LAINNYA`, `AUTO_BUFFER` |
+| `adjustment_type` | string | ❌ | Filter per type: `PREMI`, `POTONGAN_KOTOR`, `POTONGAN_BERSIH`, `PENDAPATAN_LAINNYA`, `AUTO_BUFFER`, `MANUAL` (alias = semua kecuali AUTO_BUFFER). Mendukung comma-separated, e.g. `PREMI,POTONGAN_KOTOR` |
 | `adjustment_name` | string | ❌ | Filter per nama (partial match) |
+
+**`adjustment_type` Values:**
+
+| Value | Description |
+|-------|-------------|
+| `PREMI` | Tunjangan bonus/premi tambahan |
+| `POTONGAN_KOTOR` | Potongan dari upah kotor (koreksi) |
+| `POTONGAN_BERSIH` | Potongan dari upah bersih |
+| `PENDAPATAN_LAINNYA` | Pendapatan lain (THR, bonus, dll) |
+| `AUTO_BUFFER` | Auto-generated Jabatan/Masa Kerja/SPSI (dari seeder) |
+| `MANUAL` | Alias untuk `PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH,PENDAPATAN_LAINNYA` (semua kecuali AUTO_BUFFER) |
+
+**Comma-separated example:** `adjustment_type=PREMI,POTONGAN_KOTOR` → filter PREMI dan POTONGAN_KOTOR sekaligus.
 
 **SQL Query untuk Get Adjustments by Employee:**
 
@@ -109,6 +122,14 @@ WHERE period_month = {month}
   AND period_year = {year}
   AND emp_code = '{emp_code}'
   AND adjustment_type = 'AUTO_BUFFER'
+
+-- Get hanya MANUAL adjustments (semua kecuali AUTO_BUFFER)
+SELECT emp_code, gang_code, division_code, adjustment_name, adjustment_type, amount
+FROM payroll_manual_adjustments
+WHERE period_month = {month}
+  AND period_year = {year}
+  AND emp_code = '{emp_code}'
+  AND adjustment_type IN ('PREMI', 'POTONGAN_KOTOR', 'POTONGAN_BERSIH', 'PENDAPATAN_LAINNYA')
 
 -- Get adjustment berdasarkan division
 SELECT emp_code, gang_code, division_code, adjustment_name, adjustment_type, amount
@@ -155,11 +176,179 @@ Jika API key valid, request akan mendapat akses **ADMIN** dengan semua divisions
 
 ---
 
+## ADCode untuk Manual Adjustment
+
+Manual adjustment kategori `PREMI`, `POTONGAN_KOTOR`, `POTONGAN_BERSIH`, dan `PENDAPATAN_LAINNYA` wajib membawa `ad_code`. Hanya `AUTO_BUFFER` yang boleh disimpan tanpa `ad_code`.
+
+Remarks disimpan dengan format:
+
+```text
+AD CODE: <adcode> - <taskdesc>
+```
+
+Daftar ADCode diambil dari cache JSON `backend/data/taskcode_mapping_db_ptrj.json` yang bersumber dari `PR_TASKCODE` dengan filter:
+
+```sql
+SELECT DISTINCT [TaskDesc]
+FROM [db_ptrj].[dbo].[PR_TASKCODE]
+WHERE [TaskDesc] LIKE '(AL)%'
+   OR [TaskDesc] LIKE '(DE)%'
+ORDER BY [TaskDesc];
+```
+
+### GET `/payroll/manual-adjustment/taskcode-options`
+
+Endpoint untuk search ADCode saat user mengetik di popup tambah kolom manual adjustment.
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `search` | string | ❌ | Cari berdasarkan ADCode, TaskCode, atau TaskDesc |
+| `division_code` | string | ❌ | Filter suffix lokasi/divisi jika tersedia |
+| `limit` | string | ❌ | Maksimal data, default 50, maksimum 100 |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "ad_code": "AL0001",
+      "task_code": "AL0001",
+      "base_task_code": "AL0001",
+      "task_desc": "(AL) BENEFIT IN KIND - ACCOMMODATION",
+      "doc_desc": "(AL) BENEFIT IN KIND - ACCOMMODATION",
+      "loc_code": null
+    }
+  ]
+}
+```
+
+### GET `/payroll/manual-adjustment/automation-options/by-api-key`
+
+Endpoint automation agent untuk mengambil pilihan input siap pakai dari `PR_TASKCODE`/cache taskcode. Endpoint ini memakai header `X-API-Key` dan mengembalikan `ad_code`; `description` hasil bersih dari `TaskDesc`; serta `adjustment_name` yang sama dengan `description`.
+
+Kategori yang dikembalikan:
+
+| `category` | `adjustment_type` untuk save | Aturan dari deskripsi |
+|------------|------------------------------|------------------------|
+| `premi` | `PREMI` | `(AL)` selain potongan/koreksi, SPSI, dan PPH |
+| `koreksi` | `POTONGAN_KOTOR` | Deskripsi mengandung `KOREKSI` |
+| `potongan_upah_bersih` | `POTONGAN_BERSIH` | Deskripsi mengandung `POTONGAN`, `POT `, atau `POT_` selain SPSI/PPH |
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `search` | string | ❌ | Cari berdasarkan ADCode, TaskCode, atau TaskDesc sumber |
+| `division_code` | string | ❌ | Filter suffix lokasi/divisi jika tersedia |
+| `categories` | string | ❌ | Comma separated: `premi,koreksi,potongan_upah_bersih` |
+| `limit` | string | ❌ | Maksimal data, default 100, maksimum 200 |
+
+**Example:**
+
+```bash
+curl -s "http://localhost:8002/payroll/manual-adjustment/automation-options/by-api-key?division_code=P1A&categories=premi,koreksi,potongan_upah_bersih" \
+  -H "X-API-Key: $API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "count": 3,
+  "data": [
+    {
+      "category": "premi",
+      "adjustment_type": "PREMI",
+      "adjustment_name": "INSENTIF PANEN",
+      "ad_code": "A100",
+      "description": "INSENTIF PANEN",
+      "task_code": "A100P1A",
+      "task_desc": "(AL) INSENTIF PANEN",
+      "base_task_code": "A100",
+      "loc_code": "P1A"
+    },
+    {
+      "category": "koreksi",
+      "adjustment_type": "POTONGAN_KOTOR",
+      "adjustment_name": "KOREKSI PANEN",
+      "ad_code": "D200",
+      "description": "KOREKSI PANEN",
+      "task_code": "D200P1A",
+      "task_desc": "(DE) KOREKSI PANEN",
+      "base_task_code": "D200",
+      "loc_code": "P1A"
+    },
+    {
+      "category": "potongan_upah_bersih",
+      "adjustment_type": "POTONGAN_BERSIH",
+      "adjustment_name": "POTONGAN PINJAMAN",
+      "ad_code": "D300",
+      "description": "POTONGAN PINJAMAN",
+      "task_code": "D300P1A",
+      "task_desc": "(DE) POTONGAN PINJAMAN",
+      "base_task_code": "D300",
+      "loc_code": "P1A"
+    }
+  ]
+}
+```
+
+Saat agent menyimpan manual adjustment, pakai:
+
+- `adjustment_type` dari response.
+- `adjustment_name = description` dari response.
+- `ad_code`, `task_code`, `task_desc`, dan `base_task_code` dari response.
+
+**Payload Save Manual Adjustment:**
+
+```json
+{
+  "period_month": 4,
+  "period_year": 2026,
+  "emp_code": "A0001",
+  "gang_code": "G1H",
+  "division_code": "AB1",
+  "adjustment_type": "PREMI",
+  "adjustment_name": "PREMI MANUAL",
+  "amount": 100000,
+  "ad_code": "AL0001",
+  "task_code": "AL0001",
+  "task_desc": "(AL) BENEFIT IN KIND - ACCOMMODATION",
+  "remarks": "AD CODE: AL0001 - (AL) BENEFIT IN KIND - ACCOMMODATION"
+}
+```
+
+Jika `ad_code` kosong untuk kategori selain `AUTO_BUFFER`, API akan menolak request dengan error `ADCode wajib diisi untuk manual adjustment selain auto buffer`.
+
+---
+
 ## Endpoints
 
 ### 1. GET `/payroll/manual-adjustment/by-api-key`
 
 Ambil data manual adjustment berdasarkan periode.
+
+Endpoint ini adalah endpoint read-only utama untuk agent mengambil isi tabel
+`extend_db_ptrj.dbo.payroll_manual_adjustments`. Jika `adjustment_type`
+tidak dikirim, response berisi semua kategori yang tersimpan:
+
+- `AUTO_BUFFER`
+- `PREMI`
+- `POTONGAN_KOTOR`
+- `POTONGAN_BERSIH`
+- `PENDAPATAN_LAINNYA`
+
+Filter `division_code` menormalisasi format kode divisi 3-kode dan 4-kode
+untuk data manual adjustment yang tersimpan dengan format berbeda. Contoh:
+`P2A`, `PG2A`, dan `2A` akan mengambil gabungan row `P2A` + `PG2A`.
+Alias yang didukung: `P1A/PG1A/1A`, `P1B/PG1B/1B`, `P2A/PG2A/2A`,
+`P2B/PG2B/2B`, `AB1/ARB1`, `AB2/ARB2`, dan `ARC/AREC`.
 
 **Query Parameters:**
 
@@ -170,8 +359,23 @@ Ambil data manual adjustment berdasarkan periode.
 | `gang_code` | string | ❌ | Filter per gang |
 | `emp_code` | string | ❌ | Filter per employee code |
 | `division_code` | string | ❌ | Filter per division |
-| `adjustment_type` | string | ❌ | Filter per type: `PREMI`, `POTONGAN_KOTOR`, `POTONGAN_BERSIH`, `PENDAPATAN_LAINNYA`, `AUTO_BUFFER` |
+| `adjustment_type` | string | ❌ | Filter per type: `PREMI`, `POTONGAN_KOTOR`, `POTONGAN_BERSIH`, `PENDAPATAN_LAINNYA`, `AUTO_BUFFER`, `MANUAL` (alias = semua kecuali AUTO_BUFFER). Mendukung comma-separated, e.g. `PREMI,POTONGAN_KOTOR` |
 | `adjustment_name` | string | ❌ | Filter per nama (partial match) |
+
+**Response Fields Penting untuk Agent:**
+
+| Field | Makna |
+|-------|-------|
+| `emp_code` | Kode/identifier karyawan yang tersimpan di manual adjustment. Bisa EmpCode PTRJ letter seperti `C0763` atau NIK numeric untuk row tertentu. |
+| `emp_name` | Nama karyawan jika tersedia. |
+| `gang_code` | Gang/asistensi asal row manual adjustment. Field ini wajib dipakai agent saat menampilkan atau mengelompokkan detail karyawan. |
+| `division_code` | Kode divisi yang tersimpan di row. Setelah normalisasi filter, response bisa berisi campuran 3-kode dan 4-kode, misalnya `P2A` dan `PG2A`. |
+| `adjustment_type` | Kategori row: `AUTO_BUFFER`, `PREMI`, `POTONGAN_KOTOR`, `POTONGAN_BERSIH`, atau `PENDAPATAN_LAINNYA`. |
+| `adjustment_name` | Nama adjustment/kolom. |
+| `amount` | Nominal adjustment. |
+| `remarks` | Catatan sinkronisasi/manual edit, termasuk ADCode jika ada. |
+
+Catatan: endpoint data manual adjustment (`/manual-adjustment/by-api-key` dan `/manual-adjustment`) selalu mengembalikan `gang_code` pada setiap row data karyawan. Endpoint master opsi seperti `taskcode-options`, `automation-options`, dan `manual-adjustment-presets` bukan data karyawan, sehingga tidak memiliki `gang_code`.
 
 **Example:**
 
@@ -183,12 +387,33 @@ curl -X GET "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_m
 **Filter Examples:**
 
 ```bash
-# Filter by division only (get all adjustment types)
+# Ambil semua kategori manual adjustment dalam satu division
+# Termasuk AUTO_BUFFER, PREMI, POTONGAN_KOTOR, POTONGAN_BERSIH, PENDAPATAN_LAINNYA
 curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Ambil semua kategori untuk satu employee
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&emp_code=B0745" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Ambil detail satu employee dalam divisi 2A, tetap membawa gang_code
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=P2A&emp_code=C0763" \
   -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
 
 # Filter by adjustment_type = AUTO_BUFFER only
 curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=AUTO_BUFFER" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Filter by adjustment_type = PREMI only
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=PREMI" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Filter koreksi/potongan kotor only
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=POTONGAN_KOTOR" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Filter potongan upah bersih only
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=POTONGAN_BERSIH" \
   -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
 
 # Filter by adjustment_name (partial match - contains "SPSI")
@@ -201,6 +426,18 @@ curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month
 
 # Combined filters: division + type
 curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=PREMI" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Filter MANUAL alias (semua kecuali AUTO_BUFFER: PREMI, POTONGAN_KOTOR, POTONGAN_BERSIH, PENDAPATAN_LAINNYA)
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=MANUAL" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Filter comma-separated types (PREMI + POTONGAN_KOTOR)
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=PREMI,POTONGAN_KOTOR" \
+  -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
+
+# Filter comma-separated (PREMI + POTONGAN_BERSIH)
+curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month=4&period_year=2026&division_code=AB1&adjustment_type=PREMI,POTONGAN_BERSIH" \
   -H "X-API-Key: 88217c42101662147aee16779663caa22ff1e896b57568a6576ed56f2f3d124a"
 
 # Via proxy
@@ -269,6 +506,47 @@ curl -s "http://localhost:8002/payroll/manual-adjustment/by-api-key?period_month
       "remarks": "AUTO SPSI | potongan spsi | 4000",
       "created_by": "api_key_admin",
       "created_at": "2026-04-25T13:41:38.187Z"
+    }
+  ]
+}
+```
+
+**Contoh Response Detail Employee dengan `gang_code`:**
+
+```json
+{
+  "success": true,
+  "count": 3,
+  "data": [
+    {
+      "emp_code": "C0763",
+      "emp_name": "INDAR JAYA ( SAHUTI )",
+      "gang_code": "C1B",
+      "division_code": "PG2A",
+      "adjustment_type": "POTONGAN_KOTOR",
+      "adjustment_name": "Koreksi Brondol",
+      "amount": 3500,
+      "remarks": "KOREKSI BRONDOL | DE0004 - (DE) POTONGAN PREMI | 3500 | sync:MANUAL | match:MANUAL"
+    },
+    {
+      "emp_code": "C0763",
+      "emp_name": "INDAR JAYA ( SAHUTI )",
+      "gang_code": "C1B",
+      "division_code": "PG2A",
+      "adjustment_type": "POTONGAN_BERSIH",
+      "adjustment_name": "POTONGAN LAINNYA POTONGAN TIKET",
+      "amount": 749053,
+      "remarks": "POTONGAN TIKET | DE0002 - (DE) POTONGAN HUTANG | 0 | sync:MISS | match:MISMATCH"
+    },
+    {
+      "emp_code": "C0763",
+      "emp_name": "INDAR JAYA ( SAHUTI )",
+      "gang_code": "C1B",
+      "division_code": "PG2A",
+      "adjustment_type": "PREMI",
+      "adjustment_name": "PREMI PRUNING",
+      "amount": 266900,
+      "remarks": "PREMI PRUNING | MANUAL EDIT | 266900 | sync:MANUAL | match:MANUAL"
     }
   ]
 }
@@ -1150,4 +1428,630 @@ curl -s -X POST "${BASE_URL}/payroll/manual-adjustment/by-api-key" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: ${API_KEY}" \
   -d '{"period_month":4,"period_year":2026,"emp_code":"C0001","gang_code":"H1H","adjustment_type":"PREMI","adjustment_name":"BONUS LEBARAN","amount":500000}' | jq .
+```
+
+
+### 4. Verifikasi Data Langsung ke `db_ptrj` (`PR_ADTRANS`)
+
+**Endpoint:** `POST /payroll/manual-adjustment/check-adtrans/by-api-key`  
+**Access:** Protected, wajib menggunakan header `X-API-Key`.
+
+Endpoint ini digunakan untuk mengecek nilai allowance/deduction/premi yang sudah benar-benar tersimpan di Plantware `db_ptrj`, bukan dari tabel manual adjustment di `extend_db_ptrj`. Gunakan endpoint ini ketika ingin memverifikasi employee tertentu pada periode tertentu, misalnya setelah sync/update Plantware untuk SPSI, tunjangan masa kerja, tunjangan jabatan, atau premi dynamic.
+
+Endpoint membaca data melalui SQL Gateway/API query dengan koneksi database yang dipilih dari konfigurasi `.env`, lalu mengambil sumber berikut:
+
+- `db_ptrj.dbo.PR_ADTRANS`
+- `db_ptrj.dbo.PR_ADTRANS_ARC`
+- `db_ptrj.dbo.PR_ADTRANSLN`
+- `db_ptrj.dbo.PR_ADTRANSLN_ARC`
+
+> **Penting — aturan periode:** query ini menggunakan `PhyMonth` dan `PhyYear`, bukan `AccMonth`/`AccYear`. `period_month` dikirim sebagai filter `PhyMonth`, dan `period_year` dikirim sebagai filter `PhyYear`. Field `PhyMonth` dan `PhyYear` adalah real month/year sesuai kalender.
+
+#### Request Body
+
+Cek berdasarkan list employee tertentu:
+
+```json
+{
+  "period_month": 4,
+  "period_year": 2026,
+  "emp_codes": ["B0065", "B0070"],
+  "filters": ["spsi", "masa kerja", "jabatan", "premi", "potongan"]
+}
+```
+
+Cek langsung semua employee dalam satu divisi:
+
+```json
+{
+  "period_month": 4,
+  "period_year": 2026,
+  "division_code": "P2A",
+  "filters": ["spsi", "masa kerja", "jabatan"]
+}
+```
+
+| Field | Type | Required | Keterangan |
+|-------|------|----------|------------|
+| `period_month` | number | Yes | Bulan kalender yang akan dicek. Dipakai sebagai `PhyMonth`. |
+| `period_year` | number | Yes | Tahun kalender yang akan dicek. Dipakai sebagai `PhyYear`. |
+| `emp_codes` | string[] | Conditional | List `EmpCode` yang akan dicek langsung ke `PR_ADTRANS` dan archive. Wajib jika `division_code` tidak dikirim. |
+| `division_code` | string | Conditional | Filter semua employee dalam satu divisi berdasarkan `PR_ADTRANS.LocCode`. Bisa kirim kode Plantware 3 karakter seperti `P2A`, `AB1`, `ARA`, `ARC`, `DME`, `IJL`, atau alias seperti `PG2A`/`2A` yang akan dinormalisasi ke `P2A`. Wajib jika `emp_codes` kosong/tidak dikirim. |
+| `filters` | string[] | Yes | List keyword komponen yang akan dicocokkan ke pola `DocDesc`. |
+
+Kirim salah satu atau keduanya: `emp_codes` dan/atau `division_code`. Jika keduanya dikirim, scope query mencakup employee dalam `emp_codes` **atau** record dengan `LocCode = normalized division_code`.
+
+Normalisasi `division_code` untuk `LocCode`:
+
+| Input | Dipakai ke `PR_ADTRANS.LocCode` |
+|-------|---------------------------------|
+| `PG1A`, `1A`, `P1A` | `P1A` |
+| `PG1B`, `1B`, `P1B` | `P1B` |
+| `PG2A`, `2A`, `P2A` | `P2A` |
+| `PG2B`, `2B`, `P2B` | `P2B` |
+| `ARB1`, `AB1` | `AB1` |
+| `ARB2`, `AB2` | `AB2` |
+| `AREC`, `ARC` | `ARC` |
+| `ARA`, `DME`, `IJL` | tetap sesuai input |
+
+#### Mapping Filter ke `DocDesc`
+
+| Input Filter | SQL Pattern ke `DocDesc` | Contoh Penggunaan |
+|--------------|---------------------------|-------------------|
+| `spsi` / `potongan spsi` | `%SPSI%` | Cek potongan SPSI. |
+| `masa kerja` / `tunjangan masa kerja` | `%MASA%KERJA%` | Cek tunjangan masa kerja, termasuk `TUNJANGAN MASA KERJA`. |
+| `jabatan` / `tunjangan jabatan` | `%JABATAN%` | Cek tunjangan jabatan. |
+| `premi` | `%PREMI%`, `%INSENTIF%`, `%PANEN%`, `%KINERJA%`, `%RAWAT%`, `%PRUN%` | Cek premi dynamic. Keyword ini tidak menjadi kolom static. |
+| `brondol` | `%BRONDOL%` | Brondol special/static: jumlahkan ke kolom `brondol` yang sudah ada. |
+| `koreksi` | `%KOREKSI%` | Koreksi selalu masuk `potongan upah kotor` sebagai kolom dynamic. |
+| `potongan` | `POT%`, `POTONGAN%` | Cek potongan umum dynamic; tidak mencakup static SPSI/PPH dan tidak double-count `koreksi` jika filter `koreksi` juga dikirim. |
+| filter lain | `%FILTER%` | Cek premi/komponen dynamic berdasarkan keyword yang dikirim. |
+
+#### Contoh cURL
+
+```bash
+API_KEY="your-api-key"
+BASE_URL="http://localhost:8002"
+
+# Cek employee tertentu
+curl -s -X POST "${BASE_URL}/payroll/manual-adjustment/check-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "emp_codes": ["B0065", "B0070"],
+    "filters": ["spsi", "masa kerja", "jabatan", "premi"]
+  }' | jq .
+
+# Cek semua employee dalam divisi dan tampilkan ringkasan duplicate
+curl -s -X POST "${BASE_URL}/payroll/manual-adjustment/check-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "P2A",
+    "filters": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"]
+  }' | jq '.data.duplicate_report'
+```
+
+#### Success Response
+
+Response berisi dua bagian utama:
+
+- `data.totals`: hasil agregasi `SUM(Amount)` per `emp_code` untuk setiap filter yang diminta.
+- `data.duplicate_report`: daftar employee + kategori yang memiliki lebih dari satu record `PR_ADTRANS` pada periode/scope yang sama.
+
+```json
+{
+  "success": true,
+  "message": "Adtrans check completed successfully",
+  "data": {
+    "totals": [
+      {
+        "emp_code": "B0065",
+        "spsi": 4000,
+        "masa kerja": 125000,
+        "jabatan": 250000,
+        "premi": 150000
+      },
+      {
+        "emp_code": "B0070",
+        "spsi": 0,
+        "masa kerja": 0,
+        "jabatan": 250000,
+        "premi": 87500
+      }
+    ],
+    "duplicate_report": {
+      "duplicate_count": 1,
+      "duplicates": [
+        {
+          "emp_code": "C0028",
+          "emp_name": "ASBI AL GHIFARI ( YUNENGSIH",
+          "category": "spsi",
+          "record_count": 2,
+          "keep_id": "674653",
+          "keep_doc_id": "ADP2A26041438",
+          "delete_ids": ["674398"],
+          "delete_doc_ids": ["ADP2A26041177"],
+          "records": [
+            {
+              "id": "674398",
+              "doc_id": "ADP2A26041177",
+              "doc_date": "2026-04-27",
+              "doc_desc": "POTONGAN SPSI",
+              "amount": 4000,
+              "action": "DELETE_OLD"
+            },
+            {
+              "id": "674653",
+              "doc_id": "ADP2A26041438",
+              "doc_date": "2026-04-27",
+              "doc_desc": "POTONGAN SPSI",
+              "amount": 4000,
+              "action": "KEEP_NEWEST"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+#### Duplicate Detection Rules
+
+Duplicate dihitung per kombinasi:
+
+```text
+emp_code + normalized filter/category
+```
+
+Contoh: employee `C0028` dengan dua record `DocDesc` yang match `spsi` akan muncul sebagai satu item duplicate kategori `spsi`.
+
+Aturan rekomendasi hapus:
+
+- `keep_id` / `keep_doc_id`: record dengan `ID` paling besar, dianggap record terbaru yang dipertahankan.
+- `delete_ids` / `delete_doc_ids`: record dengan `ID` lebih kecil, dianggap record lama yang disarankan dihapus.
+- Endpoint ini hanya memberi rekomendasi; tidak menjalankan delete.
+
+#### Catatan Penggunaan
+
+- Endpoint ini hanya untuk **membaca dan memverifikasi** data real di `db_ptrj`.
+- Endpoint ini **tidak mengupdate** manual adjustment, remarks, atau data di `extend_db_ptrj`.
+- Jika hasil filter bernilai `0`, artinya tidak ada `DocDesc` yang match untuk employee/filter tersebut pada `PhyMonth` dan `PhyYear` yang dikirim.
+- Untuk cek satu divisi penuh, cukup kirim `division_code` tanpa `emp_codes`; endpoint akan memakai `PR_ADTRANS.LocCode` sebagai scope.
+- `duplicate_report` cocok untuk kasus auto buffer/Plantware input yang seharusnya satu record per employee per kategori, misalnya potongan SPSI double di Divisi P2A.
+- Untuk mengecek data yang baru di-update oleh user tertentu seperti `UpdatedBy = 'adm075'`, gunakan query investigasi terpisah; endpoint ini saat ini fokus ke pengecekan berdasarkan `EmpCode`/`division_code`, periode, dan filter `DocDesc`.
+
+---
+
+### 4. POST `/payroll/manual-adjustment/compare-adtrans/by-api-key`
+
+**Komparasi langsung** antara nilai PR_ADTRANS di `db_ptrj` (source of truth) dan nilai `payroll_manual_adjustments` di `extend_db_ptrj`. Menampilkan per-employee per-category apakah nilai sudah **MATCH**, **MISMATCH**, atau **MISSING** (tidak ada di extend_db).
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `period_month` | number | ✅ | Bulan (1-12) |
+| `period_year` | number | ✅ | Tahun |
+| `division_code` | string | ✅ | Kode divisi (e.g. `AB1`, `PG2A`) |
+| `filters` | string[] | ❌ | Kategori filter (default: `['spsi', 'masa kerja', 'jabatan', 'premi', 'koreksi', 'potongan']`) |
+
+**Example:**
+
+```bash
+curl -X POST "http://localhost:8002/payroll/manual-adjustment/compare-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "AB1",
+    "filters": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"]
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Comparison completed successfully",
+  "data": {
+    "division": "AB1",
+    "period_month": 4,
+    "period_year": 2026,
+    "compared_categories": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"],
+    "total_employees": 25,
+    "match_count": 60,
+    "mismatch_count": 5,
+    "missing_in_adjustments": 10,
+    "comparisons": [
+      {
+        "emp_code": "G0007",
+        "category": "spsi",
+        "adjustment_name": "AUTO SPSI",
+        "source_amount": 4000,
+        "stored_amount": 4000,
+        "diff": 0,
+        "status": "MATCH",
+        "gang_code": "G1H",
+        "remarks": "AUTO SPSI | potongan spsi | 4000 | sync:SYNC | match:MATCH"
+      },
+      {
+        "emp_code": "G0010",
+        "category": "jabatan",
+        "adjustment_name": "AUTO TUNJANGAN JABATAN",
+        "source_amount": 150000,
+        "stored_amount": 0,
+        "diff": 150000,
+        "status": "MISMATCH",
+        "gang_code": "G1H",
+        "remarks": "AUTO TUNJANGAN JABATAN | tunjangan jabatan | 0 | sync:MISS | match:MISMATCH"
+      },
+      {
+        "emp_code": "G0015",
+        "category": "masa kerja",
+        "adjustment_name": "AUTO MASA KERJA",
+        "source_amount": 25000,
+        "stored_amount": null,
+        "diff": null,
+        "status": "MISSING",
+        "gang_code": null,
+        "remarks": null
+      }
+    ]
+  }
+}
+```
+
+**Comparison Status:**
+
+| Status | Description | Insight yang diberikan |
+|--------|-------------|------------------------|
+| `MATCH` | Nilai di `db_ptrj` sama dengan `extend_db_ptrj` (toleransi ≤ 0.01) | Data manual adjustment sudah sinkron dengan Plantware. |
+| `MISMATCH` | Nilai berbeda antara `db_ptrj` dan `extend_db_ptrj` | Ada record di kedua sisi, tetapi nominal tidak sama. Lihat `source_amount`, `stored_amount`, dan `diff`. |
+| `MISSING` | Tidak ada record di `extend_db_ptrj` untuk employee+category ini | Plantware punya nilai, tetapi manual adjustment belum punya record. Ini kandidat untuk dibuat/sync dari `db_ptrj`. |
+
+**Cara membaca detail comparison:**
+
+| Field | Makna |
+|-------|-------|
+| `emp_code` | Selalu EmpCode PTRJ letter dari `db_ptrj`, misalnya `A0001`, `B0745`. |
+| `category` | Kategori hasil mapping `DocDesc`: `spsi`, `masa kerja`, `jabatan`, `premi`, `koreksi`, atau `potongan`. |
+| `adjustment_name` | Nama record yang dicari/dibandingkan di `payroll_manual_adjustments`. Untuk premi/potongan manual, mengikuti `adjustment_name` dari extend DB jika ada. |
+| `source_amount` / `db_ptrj_amount` | Total nominal dari `db_ptrj.PR_ADTRANS` + `PR_ADTRANS_ARC`. |
+| `stored_amount` / `extend_db_ptrj_amount` | Nominal di `extend_db_ptrj.payroll_manual_adjustments`; `null` berarti missing. |
+| `diff` | `source_amount - stored_amount`; `null` untuk status `MISSING`. |
+| `status` | `MATCH`, `MISMATCH`, atau `MISSING`. |
+| `db_ptrj_doc_desc_details` | Detail baris pembentuk nilai source dari Plantware: `doc_desc`, `doc_id`, dan `amount`. Dipakai untuk tahu nilai `db_ptrj` berasal dari DocDesc apa saja. |
+| `extend_db_ptrj_remarks` | Remarks/catatan dari record manual adjustment di `extend_db_ptrj`. |
+| `gang_code` | Gang dari record manual adjustment jika tersedia. |
+| `remarks` | Alias lama dari `extend_db_ptrj_remarks` untuk kompatibilitas response. |
+
+**Contoh insight dari response compare:**
+
+```bash
+# Semua data Plantware yang belum ada di manual adjustment
+jq '.data.comparisons[] | select(.status == "MISSING")'
+
+# Ringkasan jumlah masalah per kategori
+jq '.data.comparisons
+  | map(select(.status != "MATCH"))
+  | group_by(.category)
+  | map({category: .[0].category, count: length, statuses: (group_by(.status) | map({status: .[0].status, count: length}))})'
+
+# Selisih nominal terbesar antara db_ptrj dan extend_db_ptrj
+jq '.data.comparisons
+  | map(select(.status == "MISMATCH"))
+  | sort_by((.diff | if . < 0 then -. else . end))
+  | reverse
+  | .[0:20]'
+
+# Lihat detail DocDesc db_ptrj dan remarks extend_db_ptrj untuk data yang beda
+jq '.data.comparisons[]
+  | select(.status != "MATCH")
+  | {emp_code, category, db_ptrj_amount, extend_db_ptrj_amount, diff, db_ptrj_doc_desc_details, extend_db_ptrj_remarks}'
+```
+
+**Category → Adjustment Name Mapping:**
+
+| ADTRANS Category | Adjustment Name |
+|-----------------|-----------------|
+| `spsi` | `AUTO SPSI` |
+| `masa kerja` | `AUTO MASA KERJA` |
+| `jabatan` | `AUTO TUNJANGAN JABATAN` |
+| `premi` | `adjustment_type = 'PREMI'`, nama sesuai `adjustment_name` |
+| `koreksi` | `adjustment_type = 'POTONGAN_KOTOR'` dan `adjustment_name` mengandung `KOREKSI` |
+| `potongan` | `adjustment_type = 'POTONGAN_KOTOR'` selain `KOREKSI` |
+
+---
+
+### 5. POST `/payroll/manual-adjustment/reverse-compare-adtrans/by-api-key`
+
+**Reverse komparasi** dari `payroll_manual_adjustments` di `extend_db_ptrj` ke nilai real `PR_ADTRANS` di `db_ptrj`. Endpoint ini dipakai untuk menemukan data yang **ada di extend_db_ptrj tetapi tidak ada / bernilai 0 di db_ptrj**, misalnya `AUTO SPSI` masih tersimpan 4000 di manual adjustment padahal Plantware sudah tidak punya record SPSI untuk employee tersebut.
+
+Endpoint ini memakai bypass API key yang sama: header `X-API-Key` wajib diisi.
+
+**Aturan EmpCode PTRJ:** saat endpoint mengecek `PR_ADTRANS` / `PR_ADTRANS_ARC`, identifier employee selalu di-resolve dulu ke format `EmpCode` PTRJ yang diawali huruf, misalnya `A0001` atau `B0745`. Jika `payroll_manual_adjustments.emp_code` berisi NIK/KTP numeric, endpoint akan mencari pasangan di `HR_EMPLOYEE.NewICNo` lalu memakai `HR_EMPLOYEE.EmpCode` untuk query `PR_ADTRANS.EmpCode`. Field response `emp_code` juga memakai EmpCode PTRJ letter; nilai numeric asal hanya muncul sebagai `stored_emp_identifier` jika berbeda. Jangan memakai NIK numeric langsung untuk query `PR_ADTRANS.EmpCode` karena akan menghasilkan false `EXTRA_IN_ADJUSTMENTS`.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `period_month` | number | ✅ | Bulan (1-12), dipakai sebagai `PhyMonth` saat cek `db_ptrj` |
+| `period_year` | number | ✅ | Tahun, dipakai sebagai `PhyYear` saat cek `db_ptrj` |
+| `division_code` | string | ✅ | Kode divisi, termasuk virtual division seperti `NRS` |
+| `filters` | string[] | ❌ | Kategori filter (default: `['spsi', 'masa kerja', 'jabatan', 'premi', 'koreksi', 'potongan']`) |
+
+**Example:**
+
+```bash
+curl -X POST "http://localhost:8002/payroll/manual-adjustment/reverse-compare-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "NRS",
+    "filters": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"]
+  }'
+```
+
+**Ambil hanya yang extra di extend:**
+
+```bash
+curl -s -X POST "http://localhost:8002/payroll/manual-adjustment/reverse-compare-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "NRS",
+    "filters": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"]
+  }' | jq '.data.comparisons[] | select(.status == "EXTRA_IN_ADJUSTMENTS")'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Reverse comparison completed successfully",
+  "data": {
+    "division": "NRS",
+    "period_month": 4,
+    "period_year": 2026,
+    "compared_categories": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"],
+    "total_adjustments": 3,
+    "match_count": 1,
+    "mismatch_count": 1,
+    "extra_in_adjustments": 1,
+    "comparisons": [
+      {
+        "emp_code": "B0745",
+        "category": "spsi",
+        "adjustment_name": "AUTO SPSI",
+        "stored_amount": 4000,
+        "source_amount": 4000,
+        "diff": 0,
+        "status": "MATCH",
+        "gang_code": "B2N",
+        "division_code": "NRS",
+        "remarks": "AUTO SPSI | potongan spsi | 4000"
+      },
+      {
+        "emp_code": "B0746",
+        "category": "spsi",
+        "adjustment_name": "AUTO SPSI",
+        "stored_amount": 4000,
+        "source_amount": 0,
+        "diff": -4000,
+        "status": "EXTRA_IN_ADJUSTMENTS",
+        "gang_code": "B2N",
+        "division_code": "NRS",
+        "remarks": "AUTO SPSI | potongan spsi | 4000"
+      },
+      {
+        "emp_code": "B0747",
+        "category": "masa kerja",
+        "adjustment_name": "AUTO MASA KERJA",
+        "stored_amount": 2500,
+        "source_amount": 5000,
+        "diff": 2500,
+        "status": "MISMATCH",
+        "gang_code": "B2N",
+        "division_code": "NRS",
+        "remarks": "AUTO MASA KERJA | masa kerja | 2500"
+      }
+    ]
+  }
+}
+```
+
+**Reverse Comparison Status:**
+
+| Status | Description | Insight yang diberikan |
+|--------|-------------|------------------------|
+| `MATCH` | Nilai di `extend_db_ptrj` sama dengan `db_ptrj` (toleransi ≤ 0.01) | Record manual adjustment masih sesuai dengan Plantware. |
+| `MISMATCH` | Nilai ada di kedua sisi tetapi nominal berbeda | Manual adjustment masih ada dan Plantware juga ada, tetapi nominal perlu ditinjau. |
+| `EXTRA_IN_ADJUSTMENTS` | Record ada di `extend_db_ptrj`, tetapi nilai source `db_ptrj` = 0 / tidak ada untuk employee+category tersebut | Manual adjustment kemungkinan sudah tidak punya pasangan di Plantware dan perlu dibersihkan/diupdate. |
+
+**Cara membaca detail reverse comparison:**
+
+| Field | Makna |
+|-------|-------|
+| `emp_code` | EmpCode PTRJ letter yang dipakai untuk query `PR_ADTRANS.EmpCode`. |
+| `stored_emp_identifier` | Identifier asal dari `payroll_manual_adjustments.emp_code` jika berbeda dari EmpCode PTRJ; biasanya NIK/KTP numeric. |
+| `category` | Kategori hasil mapping: `spsi`, `masa kerja`, `jabatan`, `premi`, `koreksi`, atau `potongan`. |
+| `adjustment_name` | Nama record di `payroll_manual_adjustments`. |
+| `stored_amount` / `extend_db_ptrj_amount` | Nominal yang tersimpan di `extend_db_ptrj.payroll_manual_adjustments`. |
+| `source_amount` / `db_ptrj_amount` | Total nominal pembanding dari `db_ptrj.PR_ADTRANS` + `PR_ADTRANS_ARC`. |
+| `diff` | `source_amount - stored_amount`; negatif berarti nilai manual adjustment lebih besar dari source Plantware. |
+| `status` | `MATCH`, `MISMATCH`, atau `EXTRA_IN_ADJUSTMENTS`. |
+| `db_ptrj_doc_desc_details` | Detail baris pembentuk nilai source dari Plantware: `doc_desc`, `doc_id`, dan `amount`. Jika source kosong, array ini kosong. |
+| `extend_db_ptrj_remarks` | Remarks/catatan dari record manual adjustment di `extend_db_ptrj`. |
+| `gang_code` / `division_code` | Scope asal record manual adjustment. |
+| `remarks` | Alias lama dari `extend_db_ptrj_remarks` untuk kompatibilitas response. |
+
+**Contoh insight dari response reverse compare:**
+
+```bash
+# Semua manual adjustment yang tidak punya pasangan/nilai di db_ptrj
+jq '.data.comparisons[] | select(.status == "EXTRA_IN_ADJUSTMENTS")'
+
+# Ringkasan extra/mismatch per kategori
+jq '.data.comparisons
+  | map(select(.status != "MATCH"))
+  | group_by(.category)
+  | map({category: .[0].category, count: length, statuses: (group_by(.status) | map({status: .[0].status, count: length}))})'
+
+# Cek kasus identifier numeric yang sudah dikonversi ke EmpCode PTRJ letter
+jq '.data.comparisons[] | select(.stored_emp_identifier != null) | {emp_code, stored_emp_identifier, category, status, stored_amount, source_amount}'
+
+# Top 20 selisih nominal terbesar dari manual adjustment ke db_ptrj
+jq '.data.comparisons
+  | map(select(.status != "MATCH"))
+  | sort_by((.diff | if . < 0 then -. else . end))
+  | reverse
+  | .[0:20]'
+
+# Lihat detail DocDesc db_ptrj dan remarks extend_db_ptrj untuk data yang beda/extra
+jq '.data.comparisons[]
+  | select(.status != "MATCH")
+  | {emp_code, stored_emp_identifier, category, db_ptrj_amount, extend_db_ptrj_amount, diff, db_ptrj_doc_desc_details, extend_db_ptrj_remarks}'
+```
+
+**Perbedaan dengan compare biasa:**
+
+| Endpoint | Arah cek | Cocok untuk |
+|----------|----------|-------------|
+| `compare-adtrans/by-api-key` | `db_ptrj` → `extend_db_ptrj` | Mencari data real Plantware yang belum ada (`MISSING`) atau nominalnya beda (`MISMATCH`) di manual adjustment. |
+| `reverse-compare-adtrans/by-api-key` | `extend_db_ptrj` → `db_ptrj` | Mencari manual adjustment yang masih ada padahal tidak ada/nol di Plantware (`EXTRA_IN_ADJUSTMENTS`) atau nominalnya beda (`MISMATCH`). |
+
+---
+
+### 6. POST `/payroll/manual-adjustment/sync-adtrans/by-api-key`
+
+**Sync real-time** dari PR_ADTRANS (`db_ptrj`) ke `payroll_manual_adjustments` (`extend_db_ptrj`). Hanya mensync item yang **MISMATCH** atau **MISSING** berdasarkan hasil komparasi.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `period_month` | number | ✅ | Bulan (1-12) |
+| `period_year` | number | ✅ | Tahun |
+| `division_code` | string | ✅ | Kode divisi (e.g. `AB1`, `PG2A`) |
+| `filters` | string[] | ❌ | Kategori filter (default: `['spsi', 'masa kerja', 'jabatan', 'premi', 'koreksi', 'potongan']`) |
+| `sync_mode` | string | ❌ | Mode sync: `MISSING_ONLY`, `MISMATCH_AND_MISSING`, `ALL` (default: `MISMATCH_AND_MISSING`) |
+| `created_by` | string | ❌ | User pencatat (default: `sync_adtrans_api`) |
+
+**Sync Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `MISSING_ONLY` | Hanya insert record yang belum ada di extend_db |
+| `MISMATCH_AND_MISSING` | Insert yang belum ada + update yang nilainya beda (default) |
+| `ALL` | Sync semua termasuk yang sudah MATCH (overwrite) |
+
+**Example:**
+
+```bash
+# Sync default (MISMATCH + MISSING only)
+curl -X POST "http://localhost:8002/payroll/manual-adjustment/sync-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "AB1"
+  }'
+
+# Sync hanya yang missing (tidak overwrite yang sudah ada)
+curl -X POST "http://localhost:8002/payroll/manual-adjustment/sync-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "AB1",
+    "sync_mode": "MISSING_ONLY"
+  }'
+
+# Force sync semua (overwrite match juga)
+curl -X POST "http://localhost:8002/payroll/manual-adjustment/sync-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "AB1",
+    "sync_mode": "ALL"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Sync completed: 15 records synced, 60 matches skipped",
+  "data": {
+    "division": "AB1",
+    "period_month": 4,
+    "period_year": 2026,
+    "sync_mode": "MISMATCH_AND_MISSING",
+    "total_compared": 75,
+    "synced_count": 15,
+    "skipped_match": 60,
+    "synced_details": [
+      {
+        "emp_code": "G0010",
+        "category": "jabatan",
+        "adjustment_name": "AUTO TUNJANGAN JABATAN",
+        "old_amount": 0,
+        "new_amount": 150000,
+        "action": "UPDATE"
+      },
+      {
+        "emp_code": "G0015",
+        "category": "masa kerja",
+        "adjustment_name": "AUTO MASA KERJA",
+        "old_amount": null,
+        "new_amount": 25000,
+        "action": "INSERT"
+      }
+    ]
+  }
+}
+```
+
+**Sync Behavior:**
+
+- **INSERT**: Jika record tidak ada di `extend_db_ptrj` (status `MISSING`), buat record baru dengan `adjustment_type = 'AUTO_BUFFER'`.
+- **UPDATE**: Jika record ada tapi nilainya beda (status `MISMATCH`), update amount dan remarks.
+- **Remarks**: Setelah sync, remarks berformat `{adjustment_name} | {adcode} | {amount} | sync:SYNC | match:MATCH`.
+- **Cache**: Cache payroll otomatis di-clear setelah sync agar data terbaru langsung terpakai.
+
+**Data Flow:**
+
+```text
+PR_ADTRANS + PR_ADTRANS_ARC (db_ptrj)
+  ↓ query by PhyMonth/PhyYear + LocCode
+  ↓ group by EmpCode + DocDesc category
+  ↓
+compareAdtransWithAdjustments()
+  ↓ compare with payroll_manual_adjustments (extend_db_ptrj)
+  ↓ identify MATCH / MISMATCH / MISSING
+  ↓
+syncAdtransToAdjustments()
+  ↓ INSERT missing records
+  ↓ UPDATE mismatched records
+  ↓ clear cache
+  ↓
+payroll_manual_adjustments (extend_db_ptrj) updated
 ```

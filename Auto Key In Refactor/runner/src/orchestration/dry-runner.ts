@@ -23,7 +23,7 @@ export async function runDryRun(payload: RunPayload, emit: EmitEvent): Promise<R
         adjustment_name: record.adjustment_name,
         category_key: category.key,
         status: "skipped",
-        message: `dry-run planned adcode ${category.adcode}; no browser action`,
+        message: `dry-run planned adcode ${category.adcode(record)}; no browser action`,
         tab_index: tabIndex
       };
       rowResults.push(result);
