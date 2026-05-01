@@ -1450,6 +1450,22 @@ def test_duplicate_cleanup_category_can_target_premi_filter():
     window.close()
 
 
+def test_duplicate_cleanup_button_text_tracks_dry_run_state():
+    config = AppConfig(default_division_code="IJL")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("IJL", "Ijuk")])
+
+    assert window.duplicate_dry_run.isChecked() is True
+    assert window.delete_duplicates_button.text() == "Scan Selected Duplicates (Dry Run)"
+
+    window.duplicate_dry_run.setChecked(False)
+
+    assert window.delete_duplicates_button.text() == "Delete Selected Duplicates"
+    window.close()
+
 def test_run_payload_serializes_duplicate_targets():
     target = DuplicateDocIdTarget("1", "AD1", "2026-04-27", "C0001", "Name", "POTONGAN SPSI", 4000, "DELETE_OLD", "AD2", "spsi", {"id": "1"})
     payload = RunPayload(4, 2026, "P2A", None, None, "AUTO_BUFFER", "AUTO SPSI", "spsi", "multi_tab_shared_session", 1, True, True, None, [], operation="delete_duplicates", duplicate_targets=[target], delete_dry_run=False)

@@ -1046,11 +1046,13 @@ class MainWindow(QMainWindow):
         self.duplicate_dry_run.setChecked(True)
         self.duplicate_dry_run.setToolTip("Browser akan membuka Plantware untuk mencari DocID, tetapi tombol Delete tidak akan diklik.")
         self.fetch_duplicates_button = QPushButton("Fetch Duplicate Targets")
-        self.delete_duplicates_button = QPushButton("Delete Selected Duplicates")
+        self.delete_duplicates_button = QPushButton()
         self.delete_duplicates_button.setEnabled(False)
         self.duplicate_status_label = QLabel("Belum dicek.")
         self.fetch_duplicates_button.clicked.connect(self.fetch_duplicate_targets)
         self.delete_duplicates_button.clicked.connect(self.run_duplicate_cleanup)
+        self.duplicate_dry_run.toggled.connect(self._sync_duplicate_cleanup_button_text)
+        self._sync_duplicate_cleanup_button_text()
         action_row = QHBoxLayout()
         action_row.addWidget(self.fetch_duplicates_button)
         action_row.addWidget(self.delete_duplicates_button)
@@ -1948,8 +1950,10 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 self.duplicate_status_label.setText("Actual delete dibatalkan.")
                 return
-        self.duplicate_status_label.setText(f"Starting duplicate cleanup for {len(selected)} DocIDs...")
-        self.append_log(f"Duplicate cleanup selected targets: {[(target.doc_id, target.master_id) for target in selected[:10]]}")
+        dry_run = self.duplicate_dry_run.isChecked()
+        action_label = "dry-run scan" if dry_run else "delete"
+        self.duplicate_status_label.setText(f"Starting duplicate {action_label} for {len(selected)} DocIDs...")
+        self.append_log(f"Duplicate cleanup selected targets: {[(target.doc_id, target.master_id) for target in selected[:10]]}; dry_run={dry_run}")
         payload = self.build_payload(mode=self.runner_mode.currentText(), records=[])
         duplicate_category_key = str(self.duplicate_category.currentData() or payload.category_key)
         payload = RunPayload(
@@ -1969,9 +1973,9 @@ class MainWindow(QMainWindow):
             records=[],
             operation="delete_duplicates",
             duplicate_targets=selected,
-            delete_dry_run=self.duplicate_dry_run.isChecked(),
+            delete_dry_run=dry_run,
         )
-        self.start_runner(payload, f"Starting duplicate cleanup for {len(selected)} DocIDs...")
+        self.start_runner(payload, f"Starting duplicate {action_label} for {len(selected)} DocIDs...")
         self.tabs.setCurrentIndex(1)
 
     def _selected_duplicate_targets(self) -> list[DuplicateDocIdTarget]:
@@ -2009,6 +2013,14 @@ class MainWindow(QMainWindow):
         default_filter = self._default_filter_for_category_key(str(self.duplicate_category.currentData() or ""))
         if default_filter:
             self.duplicate_filters.setText(default_filter)
+
+    def _sync_duplicate_cleanup_button_text(self) -> None:
+        if not hasattr(self, "delete_duplicates_button") or not hasattr(self, "duplicate_dry_run"):
+            return
+        if self.duplicate_dry_run.isChecked():
+            self.delete_duplicates_button.setText("Scan Selected Duplicates (Dry Run)")
+        else:
+            self.delete_duplicates_button.setText("Delete Selected Duplicates")
 
     def _update_record_from_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
         record = self._find_record(str(payload.get("emp_code", "")), str(payload.get("adjustment_name", "")), str(payload.get("detail_key", "") or ""))

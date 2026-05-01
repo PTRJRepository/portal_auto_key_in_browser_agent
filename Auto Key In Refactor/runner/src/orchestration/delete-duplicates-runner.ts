@@ -4,8 +4,21 @@ import { deleteVisibleDocId, findVisibleTargetMatches, goToNextListPage, gotoLis
 
 type Emit = (event: Record<string, unknown>) => void;
 
-const AUTO_BUFFER_DELETE_CATEGORIES = new Set(["spsi", "masa_kerja", "tunjangan_jabatan"]);
+const DUPLICATE_CLEANUP_CATEGORIES = new Set([
+  "spsi",
+  "masa_kerja",
+  "tunjangan_jabatan",
+  "premi",
+  "premi_tunjangan",
+  "potongan_upah_kotor",
+  "koreksi",
+  "potongan_upah_bersih"
+]);
 const MAX_DUPLICATE_SCAN_PAGES = 100;
+
+export function duplicateCleanupCategorySupported(categoryKey: string | null | undefined): boolean {
+  return DUPLICATE_CLEANUP_CATEGORIES.has(String(categoryKey ?? "").trim().toLowerCase());
+}
 
 export async function runDeleteDuplicates(payload: RunPayload, emit: Emit): Promise<RunResult> {
   const started = new Date().toISOString();
@@ -19,8 +32,8 @@ export async function runDeleteDuplicates(payload: RunPayload, emit: Emit): Prom
 
   emit({ event: "duplicate.run.started", total_targets: targets.length, dry_run: dryRun, max_pages: MAX_DUPLICATE_SCAN_PAGES, message: `Duplicate cleanup started for ${targets.length} targets, max scan ${MAX_DUPLICATE_SCAN_PAGES} pages` });
 
-  if (!AUTO_BUFFER_DELETE_CATEGORIES.has(payload.category_key)) {
-    throw new Error(`Duplicate cleanup is only enabled for Auto Buffer categories, got ${payload.category_key}`);
+  if (!duplicateCleanupCategorySupported(payload.category_key)) {
+    throw new Error(`Duplicate cleanup is not enabled for category ${payload.category_key}`);
   }
 
   const session = new BrowserSession({
