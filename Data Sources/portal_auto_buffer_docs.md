@@ -524,6 +524,8 @@ Alias yang didukung: `P1A/PG1A/1A`, `P1B/PG1B/1B`, `P2A/PG2A/2A`,
 | `remarks` | Catatan sinkronisasi/manual edit, termasuk ADCode jika ada. |
 | `metadata_json` | JSON string detail input jika ada, misalnya detail `blok`, `exp`, `kendaraan`, atau `blok,exp`. Inilah sumber detail transaksi terbaru. |
 
+Catatan nominal: `amount` dan `jumlah` untuk auto key-in tidak boleh bernilai minus. Jika endpoint/metadata mengirim nilai negatif, automation harus menormalisasi menjadi nilai absolut sebelum membuat payload runner dan sebelum mengisi field Amount Plantware.
+
 **Terminologi identitas karyawan di codebase ini:**
 
 | Istilah | Sumber | Makna |

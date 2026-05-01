@@ -132,7 +132,7 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
             if value in (None, ""):
                 continue
             try:
-                return float(value or 0)
+                return abs(float(value or 0))
             except (TypeError, ValueError):
                 return 0.0
         return 0.0

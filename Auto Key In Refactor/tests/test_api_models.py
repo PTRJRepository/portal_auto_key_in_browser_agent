@@ -132,6 +132,20 @@ def test_normalize_record_preserves_employee_identity_fields():
     assert record.to_runner_dict()["emp_name"] == "SURYANTI"
     assert record.to_runner_dict()["nik"] == "1902054607770001"
 
+def test_normalize_record_normalizes_negative_amounts_to_positive_values():
+    record = normalize_record({
+        "emp_code": "b0128",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI ANGKUT",
+        "amount": "-684355",
+        "jumlah": "-684355",
+    }, "premi")
+
+    assert record.amount == 684355
+    assert record.jumlah == 684355
+    assert record.to_runner_dict()["amount"] == 684355
+    assert record.to_runner_dict()["jumlah"] == 684355
+
 def test_normalize_record_maps_nomor_kendaraan_to_vehicle_fields():
     record = normalize_record({
         "emp_code": "b0128",
