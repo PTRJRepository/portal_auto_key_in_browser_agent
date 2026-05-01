@@ -303,7 +303,9 @@ export function vehicleAutocompleteValue(record: ManualAdjustmentRecord): string
 }
 
 export function vehicleExpenseAutocompleteValue(record: ManualAdjustmentRecord): string {
-  const value = (record.vehicle_expense_code ?? record.expense_code ?? "").trim().toUpperCase();
+  const value = [record.vehicle_expense_code, record.expense_code]
+    .map((candidate) => (candidate ?? "").trim().toUpperCase())
+    .find(Boolean) ?? "";
   if (!value) throw new Error(`Vehicle expense code is required for vehicle-based PREMI row: ${record.emp_code}`);
   return value;
 }

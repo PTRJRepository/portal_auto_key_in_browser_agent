@@ -89,6 +89,13 @@ Observed vehicle-based dimensional controls:
 | Vehicle code | `Vehicle Code` | `#MainContent_MultiDimAcc_ddlVehCode` | Hidden select + adjacent autocomplete input. |
 | Vehicle expense code | `Vehicle Expense Code` | `#MainContent_MultiDimAcc_ddlVehExpCode` | Hidden select + adjacent autocomplete input. |
 
+API-to-form mapping for vehicle-based rows:
+
+- If grouped premium metadata/detail has `vehicle_code`, `nomor_kendaraan`, `NOMOR_KENDARAAN`, `nomorKendaraan`, `no_kendaraan`, or `vehicle_number`, map it to Plantware `Vehicle Code`.
+- If the same metadata item has `expense_code`, map it to Plantware `Vehicle Expense Code` unless an explicit `vehicle_expense_code` is present.
+- A row with `subblok` is block-based. A row with `nomor_kendaraan`/`vehicle_code` is vehicle-based.
+- Example P1B gang B1T `PREMI ANGKUT`: `metadata_json.items[].nomor_kendaraan = "T0020"` becomes runner `vehicle_code = "T0020"` and `metadata_json.items[].expense_code = "DRIVER"` becomes runner `vehicle_expense_code = "DRIVER"`.
+
 Observed selected AD Code in the vehicle snapshot:
 
 - `#MainContent_ddlTaskCode` selected value: `AL3PT2304AB1`

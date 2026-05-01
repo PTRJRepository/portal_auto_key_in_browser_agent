@@ -167,7 +167,22 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
         divisioncode = divisioncode_from_gang(gang_code)
     subblok_raw = text("subblok_raw", "subblokRaw", "sub_block_raw", "subBlockRaw")
     subblok = normalize_subblok_code(text("subblok", "sub_block", "subBlock") or subblok_raw)
-    vehicle_code = text("vehicle_code", "vehicleCode", "veh_code", "vehCode", "kendaraan", "vehicle").upper()
+    expense_code = text("expense_code", "expenseCode", "exp_code", "expCode").upper()
+    vehicle_code = text(
+        "vehicle_code",
+        "vehicleCode",
+        "veh_code",
+        "vehCode",
+        "kendaraan",
+        "vehicle",
+        "nomor_kendaraan",
+        "NOMOR_KENDARAAN",
+        "nomorKendaraan",
+        "no_kendaraan",
+        "NoKendaraan",
+        "vehicle_number",
+        "vehicleNumber",
+    ).upper()
     vehicle_expense_code = text(
         "vehicle_expense_code",
         "vehicleExpenseCode",
@@ -178,6 +193,8 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
         "kendaraan_expense_code",
     ).upper()
     detail_type = normalize_detail_type(text("detail_type", "detailType", "input_type", "inputType"), subblok=subblok, vehicle_code=vehicle_code)
+    if not vehicle_expense_code and (detail_type == "kendaraan" or vehicle_code):
+        vehicle_expense_code = expense_code
     amount = number("amount", "jumlah")
     jumlah = number("jumlah", "amount")
     transaction_index = integer_or_none("transaction_index", "transactionIndex")
@@ -222,7 +239,7 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
         subblok=subblok,
         subblok_raw=subblok_raw,
         jumlah=jumlah,
-        expense_code=text("expense_code", "expenseCode", "exp_code", "expCode").upper(),
+        expense_code=expense_code,
         vehicle_code=vehicle_code,
         vehicle_expense_code=vehicle_expense_code,
         transaction_index=transaction_index,

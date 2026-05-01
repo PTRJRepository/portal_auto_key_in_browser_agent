@@ -762,9 +762,17 @@ Catatan response grouped:
 | `metadata.input_type` | Sumber detail | Field nominal detail | Output di grouped response |
 |-----------------------|---------------|----------------------|----------------------------|
 | `blok` | `metadata.items[]` | `jumlah` atau `amount` | `premium_transactions[]` dengan `detail_type: "blok"`, `subblok` alphanumeric, `subblok_raw` jika asalnya mengandung simbol, `gang_code`, `jumlah`, `amount` |
-| `kendaraan` | `metadata.items[]` | `jumlah` atau `amount` | `premium_transactions[]` dengan `detail_type: "kendaraan"` plus field item kendaraan dari metadata |
+| `kendaraan` | `metadata.items[]` | `jumlah` atau `amount` | `premium_transactions[]` dengan `detail_type: "kendaraan"`, `vehicle_code` dari `vehicle_code`/`nomor_kendaraan`/`NOMOR_KENDARAAN`, dan `vehicle_expense_code` dari `vehicle_expense_code` atau `expense_code` metadata |
 | `exp` | object metadata langsung atau `expense` | `amount`, `jumlah`, atau `total_amount` | `premium_transactions[]` dengan `detail_type: "exp"` plus field expense dari metadata |
 | `blok,exp` | `metadata.blok_items[]` + `metadata.expense` | `jumlah` atau `amount` | Gabungan detail `blok` dan `exp` dalam satu `premium_transactions[]` employee |
+
+Aturan vehicle-based untuk agent:
+
+- Jika detail metadata punya `subblok`, form yang dipakai adalah block-based.
+- Jika detail metadata punya `vehicle_code`, `nomor_kendaraan`, `NOMOR_KENDARAAN`, `nomorKendaraan`, `no_kendaraan`, atau `vehicle_number`, form yang dipakai adalah vehicle-based.
+- Pada vehicle-based, nilai kendaraan harus dikirim ke runner sebagai `vehicle_code`; jangan dimasukkan ke employee, NIK, atau description.
+- `expense_code` dari item metadata adalah sumber `Vehicle Expense Code` Plantware jika `vehicle_expense_code` belum tersedia.
+- Contoh P1B gang B1T `PREMI ANGKUT`: `metadata_json.items[].nomor_kendaraan = "T0020"` dan `expense_code = "DRIVER"` harus menjadi `vehicle_code = "T0020"` dan `vehicle_expense_code = "DRIVER"` pada payload auto key-in.
 
 Halaman testing lokal untuk endpoint ini tersedia di:
 

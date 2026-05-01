@@ -130,7 +130,8 @@ Aturan input Premi:
 - Field Description/DocDesc Plantware harus sama dengan `adjustment_name`.
 - ADCode/TaskDesc tetap berasal dari `ad_code_desc` / `task_desc`, bukan dari Description.
 - Jika ada `subblok`, data dianggap block-based.
-- Jika ada `vehicle_code`, data dianggap vehicle-based.
+- Jika ada `vehicle_code` atau metadata `nomor_kendaraan` / `NOMOR_KENDARAAN`, data dianggap vehicle-based.
+- Untuk vehicle-based seperti P1B gang B1T `PREMI ANGKUT`, `nomor_kendaraan` dari `metadata_json.items[]` harus dipetakan ke field runner `vehicle_code`, lalu `expense_code` dari metadata dipakai sebagai `vehicle_expense_code`.
 
 ### Retry Premi Setelah Ada Failed
 
