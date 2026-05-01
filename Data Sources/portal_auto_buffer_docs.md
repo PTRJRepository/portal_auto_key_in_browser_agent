@@ -20,6 +20,7 @@ Gunakan endpoint ini setelah input Plantware selesai. Endpoint akan:
 - mengecek transaksi yang sudah masuk di `db_ptrj` (`PR_ADTRANS` dan `PR_ADTRANS_ARC`);
 - mengubah hanya segmen `sync:` di `remarks`, misalnya `sync:MANUAL` menjadi `sync:SYNC`;
 - tidak mengubah `amount`, `metadata_json`, `adjustment_name`, TaskDesc/ADCode, atau segmen `match:`;
+- selalu mengembalikan field display ADCode: `ad_code`, `ad_code_desc`, `ad_desc`, dan `task_desc`;
 - melewati row yang belum ada di ADTRANS atau baru masuk sebagian detailnya.
 
 Gunakan `dry_run=true` dulu untuk verifikasi. Jika hasilnya sesuai, panggil ulang dengan `dry_run=false`.
@@ -522,9 +523,8 @@ Alias yang didukung: `P1A/PG1A/1A`, `P1B/PG1B/1B`, `P2A/PG2A/2A`,
 | `ad_code_desc` | Deskripsi ADCode terpisah dari `task_desc` atau hasil parse `remarks`. |
 | `amount` | Total nominal row adjustment di `payroll_manual_adjustments`. Untuk row yang punya `metadata_json`, field ini adalah agregat/total row, bukan detail transaksi tunggal. Jangan pakai field ini sebagai sumber auto input per subblok. |
 | `remarks` | Catatan sinkronisasi/manual edit, termasuk ADCode jika ada. |
-| `metadata_json` | JSON string detail input jika ada, misalnya detail `blok`, `exp`, `kendaraan`, atau `blok,exp`. Inilah sumber detail transaksi terbaru. |
-
-Catatan nominal: `amount` dan `jumlah` untuk auto key-in tidak boleh bernilai minus. Jika endpoint/metadata mengirim nilai negatif, automation harus menormalisasi menjadi nilai absolut sebelum membuat payload runner dan sebelum mengisi field Amount Plantware.
+| `metadata_json` | JSON string detail input yang sudah dinormalisasi untuk response automation, misalnya detail `blok`, `exp`, `kendaraan`, atau `blok,exp`. Jangan anggap ini selalu sama persis dengan raw DB. |
+| `metadata_json_raw` | Raw JSON string dari DB jika berbeda dari `metadata_json` response. Dipakai untuk audit/debug saja, bukan untuk auto input. |
 
 **Terminologi identitas karyawan di codebase ini:**
 
@@ -562,8 +562,7 @@ view=grouped&adjustment_type=PREMI&metadata_only=true
 - Jangan memakai `premiums[].amount`, `adjustments[].amount`, atau row flat `amount` sebagai detail transaksi. Field itu adalah total row di DB. Contoh `PREMI PRUNING` amount `504900` bisa berasal dari beberapa subblok di metadata.
 - Untuk metadata `input_type = "blok"`, nilai per detail diambil dari `metadata_json.items[].jumlah`, lalu endpoint menampilkannya sebagai `premium_transactions[].jumlah` dan `premium_transactions[].amount`.
 - Untuk field subblok, endpoint menormalisasi simbol: `subblok` hanya berisi huruf dan angka. Contoh `P09/01-A` menjadi `P0901A`. Jika nilai asli mengandung simbol, nilai aslinya tetap tersedia di `subblok_raw`.
-- Mode form auto key-in ditentukan dari isi metadata detail, bukan dari nama kategori saja. Jika item punya `subblok`, pakai form block-based dan isi Division/Block dari `field_code`/`divisioncode` atau turunan `gang_code`. Jika item punya `nomor_kendaraan`/`vehicle_code`, pakai form vehicle-based dan isi Vehicle Code.
-- Aturan ini juga berlaku untuk koreksi/potongan (`POTONGAN_KOTOR` / `POTONGAN_BERSIH`) yang memiliki `metadata_json` detail; jangan menginput total row tanpa membaca detail metadata.
+- Untuk metadata `input_type = "kendaraan"`, `expense_code` di response dinormalisasi untuk kebutuhan input Plantware: nilainya menjadi `DRIVER` atau `HELPER`, bukan raw metadata seperti `TRANSPORT`. Ini berlaku di `metadata_json`, `metadata`, `detail_items`, dan `premium_transactions`. Nilai lama disimpan di `expense_code_raw`; sumber keputusan ada di `expense_code_source`.
 - Untuk data lama tanpa `metadata_json`, endpoint tidak punya subblok/detail transaksi. Pakai `metadata_only=true` supaya automation hanya memproses data detail terbaru.
 - Tree preview yang benar tidak berhenti di baris `Division | Gang | Employee | Type | Name | Amount`. Row seperti `AB1 | G1H | AHMAD DARYONO | PREMI | PREMI PRUNING | 504900` adalah total row; detail subbloknya harus dibaca dari `premium_transactions[]` atau `premiums[].detail_items[]`.
 
@@ -756,8 +755,9 @@ Catatan response grouped:
 - `ad_code` dan `ad_code_desc` sudah dipisahkan dari `remarks`; automation tidak perlu parse string remarks lagi.
 - `premiums` hanya berisi row `adjustment_type = "PREMI"` milik employee tersebut. `premiums[].amount` tetap total row.
 - `adjustments` berisi semua row adjustment employee tersebut sesuai filter request. Jika request `adjustment_type=PREMI`, isinya sama dengan row premi.
-- `metadata_json` tetap ditampilkan sebagai raw JSON string dari DB.
-- `metadata` adalah hasil parse `metadata_json` agar agent tidak perlu parse manual.
+- `metadata_json` adalah JSON string response yang sudah dinormalisasi. Untuk kendaraan, jangan sampai masih memakai raw `TRANSPORT`; nilai final harus `DRIVER` atau `HELPER`.
+- `metadata_json_raw` berisi raw JSON string dari DB jika berbeda dari `metadata_json`; gunakan hanya untuk audit/debug.
+- `metadata` adalah hasil parse dari metadata yang sudah dinormalisasi agar agent tidak perlu parse manual.
 - `detail_items` adalah bentuk datar dari detail transaksi di `metadata`, tersedia di setiap row premium/adjustment.
 - Row tanpa `metadata_json` dianggap data lama. Pakai `metadata_only=true` untuk fokus ke data detail terbaru saja.
 
@@ -766,18 +766,16 @@ Catatan response grouped:
 | `metadata.input_type` | Sumber detail | Field nominal detail | Output di grouped response |
 |-----------------------|---------------|----------------------|----------------------------|
 | `blok` | `metadata.items[]` | `jumlah` atau `amount` | `premium_transactions[]` dengan `detail_type: "blok"`, `subblok` alphanumeric, `subblok_raw` jika asalnya mengandung simbol, `gang_code`, `jumlah`, `amount` |
-| `kendaraan` | `metadata.items[]` | `jumlah` atau `amount` | `premium_transactions[]` dengan `detail_type: "kendaraan"`, `vehicle_code` dari `vehicle_code`/`nomor_kendaraan`/`NOMOR_KENDARAAN`, dan `vehicle_expense_code` dari `vehicle_expense_code` atau `expense_code` metadata |
+| `kendaraan` | `metadata.items[]` | `jumlah` atau `amount` | `premium_transactions[]` dengan `detail_type: "kendaraan"`, `nomor_kendaraan`, `expense_code` final `DRIVER`/`HELPER`, `expense_code_raw` jika metadata lama berisi nilai seperti `TRANSPORT`, `expense_code_source`, `jumlah`, `amount` |
 | `exp` | object metadata langsung atau `expense` | `amount`, `jumlah`, atau `total_amount` | `premium_transactions[]` dengan `detail_type: "exp"` plus field expense dari metadata |
 | `blok,exp` | `metadata.blok_items[]` + `metadata.expense` | `jumlah` atau `amount` | Gabungan detail `blok` dan `exp` dalam satu `premium_transactions[]` employee |
 
-Aturan vehicle-based untuk agent:
+Aturan normalisasi `expense_code` kendaraan:
 
-- Jika detail metadata punya `subblok`, form yang dipakai adalah block-based.
-- Jika detail metadata punya `vehicle_code`, `nomor_kendaraan`, `NOMOR_KENDARAAN`, `nomorKendaraan`, `no_kendaraan`, atau `vehicle_number`, form yang dipakai adalah vehicle-based.
-- Untuk block-based, nilai field/divisi Plantware berasal dari `field_code`, `fieldCode`, `fieldcode`, atau `divisioncode` jika tersedia; jika kosong, automation menurunkannya dari `gang_code`, misalnya `B1T` menjadi `B 1`.
-- Pada vehicle-based, nilai kendaraan harus dikirim ke runner sebagai `vehicle_code`; jangan dimasukkan ke employee, NIK, atau description.
-- `expense_code` dari item metadata adalah sumber `Vehicle Expense Code` Plantware jika `vehicle_expense_code` belum tersedia.
-- Contoh P1B gang B1T `PREMI ANGKUT`: `metadata_json.items[].nomor_kendaraan = "T0020"` dan `expense_code = "DRIVER"` harus menjadi `vehicle_code = "T0020"` dan `vehicle_expense_code = "DRIVER"` pada payload auto key-in.
+1. Endpoint membaca role dari metadata item jika ada (`jabatan`, `role`, `position`, `job_title`).
+2. Jika metadata tidak punya role, endpoint memakai `jabatan` employee dari lookup `employee_estate`/NIK.
+3. Jika masih kosong, endpoint memakai `task_desc`/`ad_code_desc`/`remarks` sebagai fallback.
+4. Teks `HELPER` menjadi `expense_code: "HELPER"`. Teks `DRIVER`, `OPERATOR`, `SOPIR`, atau `SUPIR` menjadi `expense_code: "DRIVER"`.
 
 Halaman testing lokal untuk endpoint ini tersedia di:
 
@@ -1869,6 +1867,47 @@ Endpoint membaca data melalui SQL Gateway/API query dengan koneksi database yang
 
 > **Penting — aturan periode:** query ini menggunakan `PhyMonth` dan `PhyYear`, bukan `AccMonth`/`AccYear`. `period_month` dikirim sebagai filter `PhyMonth`, dan `period_year` dikirim sebagai filter `PhyYear`. Field `PhyMonth` dan `PhyYear` adalah real month/year sesuai kalender.
 
+#### Cara Mengecek Duplikat Menggunakan Endpoint
+
+Gunakan endpoint ini, bukan query SQL manual:
+
+```text
+POST /payroll/manual-adjustment/check-adtrans/by-api-key
+```
+
+Header wajib:
+
+```http
+Content-Type: application/json
+X-API-Key: <API_KEY>
+```
+
+Hasil duplikat ada di:
+
+```text
+data.duplicate_report
+```
+
+Field penting untuk cleanup:
+
+| Field | Arti |
+|-------|------|
+| `duplicate_count` | Jumlah grup duplikat yang ditemukan. |
+| `duplicates[].emp_code` | Employee PTRJ/Plantware yang memiliki transaksi duplikat. |
+| `duplicates[].doc_desc` | Nama transaksi di `PR_ADTRANS.DocDesc`, misalnya `PREMI TBS`. |
+| `duplicates[].amount` | Total amount dari `PR_ADTRANSLN` untuk transaksi itu. |
+| `duplicates[].keep_doc_id` | `DocID` terbaru yang direkomendasikan tetap disimpan. |
+| `duplicates[].delete_doc_ids` | `DocID` lama yang direkomendasikan untuk dicek/dihapus. |
+| `duplicates[].records` | Detail semua record pembentuk grup, lengkap dengan action `KEEP_NEWEST` atau `DELETE_OLD`. |
+
+Aturan duplicate endpoint:
+
+```text
+EmpCode + category + DocDesc + Amount
+```
+
+`DocID` **bukan** kunci duplicate. `DocID` hanya identitas record untuk menentukan mana yang disimpan dan mana yang lama.
+
 #### Request Body
 
 Cek berdasarkan list employee tertentu:
@@ -1893,15 +1932,43 @@ Cek langsung semua employee dalam satu divisi:
 }
 ```
 
+Cek duplicate berdasarkan `adjustment_type` tanpa menulis `filters`:
+
+```json
+{
+  "period_month": 4,
+  "period_year": 2026,
+  "division_code": "IJL",
+  "adjustment_type": "PREMI"
+}
+```
+
+Cek duplicate untuk premi/koreksi spesifik:
+
+```json
+{
+  "period_month": 4,
+  "period_year": 2026,
+  "division_code": "IJL",
+  "adjustment_type": "PREMI",
+  "adjustment_name": "PREMI TBS"
+}
+```
+
 | Field | Type | Required | Keterangan |
 |-------|------|----------|------------|
 | `period_month` | number | Yes | Bulan kalender yang akan dicek. Dipakai sebagai `PhyMonth`. |
 | `period_year` | number | Yes | Tahun kalender yang akan dicek. Dipakai sebagai `PhyYear`. |
 | `emp_codes` | string[] | Conditional | List `EmpCode` yang akan dicek langsung ke `PR_ADTRANS` dan archive. Wajib jika `division_code` tidak dikirim. |
 | `division_code` | string | Conditional | Filter semua employee dalam satu divisi berdasarkan `PR_ADTRANS.LocCode`. Bisa kirim kode Plantware 3 karakter seperti `P2A`, `AB1`, `ARA`, `ARC`, `DME`, `IJL`, atau alias seperti `PG2A`/`2A` yang akan dinormalisasi ke `P2A`. Wajib jika `emp_codes` kosong/tidak dikirim. |
-| `filters` | string[] | Yes | List keyword komponen yang akan dicocokkan ke pola `DocDesc`. |
+| `filters` | string[] | Conditional | List keyword komponen yang akan dicocokkan ke pola `DocDesc`. Wajib jika `adjustment_type`, `adjustment_name`, dan `doc_desc` tidak dikirim. |
+| `adjustment_type` / `adjustment_types` | string/string[] | Conditional | Alternatif dari `filters`. Mapping: `PREMI` -> `premi`, `POTONGAN_KOTOR`/`KOREKSI` -> `koreksi`, `POTONGAN_BERSIH` -> `potongan`, `SPSI` -> `spsi`, `JABATAN` -> `jabatan`, `MASA_KERJA` -> `masa kerja`. |
+| `adjustment_name` / `adjustment_names` | string/string[] | Optional | Filter nama spesifik yang dicocokkan ke `DocDesc`, misalnya `PREMI TBS`, `PREMI INSENTIF PANEN`, atau `KOREKSI PANEN`. Bisa comma-separated. |
+| `doc_desc` / `doc_descs` | string/string[] | Optional | Alias teknis untuk filter spesifik `DocDesc`. Gunakan jika ingin mencari teks `DocDesc` langsung, bukan nama adjustment. |
 
 Kirim salah satu atau keduanya: `emp_codes` dan/atau `division_code`. Jika keduanya dikirim, scope query mencakup employee dalam `emp_codes` **atau** record dengan `LocCode = normalized division_code`.
+
+Kirim minimal salah satu filter transaksi: `filters`, `adjustment_type`, `adjustment_name`, atau `doc_desc`. Jika hanya `adjustment_name`/`doc_desc` dikirim, endpoint akan mencoba infer kategori dari awalan/isi nama: `PREMI...`, `KOREKSI...`, `POT...`, `SPSI`, `JABATAN`, atau `MASA KERJA`.
 
 Normalisasi `division_code` untuk `LocCode`:
 
@@ -1956,14 +2023,39 @@ curl -s -X POST "${BASE_URL}/payroll/manual-adjustment/check-adtrans/by-api-key"
     "division_code": "P2A",
     "filters": ["spsi", "masa kerja", "jabatan", "premi", "koreksi", "potongan"]
   }' | jq '.data.duplicate_report'
+
+# Cek duplicate hanya untuk PREMI TBS di IJL
+curl -s -X POST "${BASE_URL}/payroll/manual-adjustment/check-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "IJL",
+    "adjustment_type": "PREMI",
+    "adjustment_name": "PREMI TBS"
+  }' | jq '.data.duplicate_report'
+
+# Cek duplicate hanya untuk koreksi tertentu
+curl -s -X POST "${BASE_URL}/payroll/manual-adjustment/check-adtrans/by-api-key" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{
+    "period_month": 4,
+    "period_year": 2026,
+    "division_code": "IJL",
+    "adjustment_type": "POTONGAN_KOTOR",
+    "adjustment_name": "KOREKSI PANEN"
+  }' | jq '.data.duplicate_report'
 ```
 
 #### Success Response
 
-Response berisi dua bagian utama:
+Response berisi tiga bagian utama:
 
 - `data.totals`: hasil agregasi `SUM(Amount)` per `emp_code` untuk setiap filter yang diminta.
-- `data.duplicate_report`: daftar employee + kategori yang memiliki lebih dari satu record `PR_ADTRANS` pada periode/scope yang sama.
+- `data.doc_desc_details`: detail baris pembentuk nilai source dari `PR_ADTRANS`/archive. Ini berisi semua baris yang match filter, termasuk yang tidak duplikat.
+- `data.duplicate_report`: daftar employee + kategori + `DocDesc` + `Amount` yang memiliki lebih dari satu record isi transaksi yang sama pada periode/scope yang sama.
 
 ```json
 {
@@ -1986,6 +2078,22 @@ Response berisi dua bagian utama:
         "premi": 87500
       }
     ],
+    "doc_desc_details": [
+      {
+        "emp_code": "C0028",
+        "category": "spsi",
+        "doc_desc": "POTONGAN SPSI",
+        "doc_id": "ADP2A26041177",
+        "amount": 4000
+      },
+      {
+        "emp_code": "C0028",
+        "category": "spsi",
+        "doc_desc": "POTONGAN SPSI",
+        "doc_id": "ADP2A26041438",
+        "amount": 4000
+      }
+    ],
     "duplicate_report": {
       "duplicate_count": 1,
       "duplicates": [
@@ -1993,6 +2101,8 @@ Response berisi dua bagian utama:
           "emp_code": "C0028",
           "emp_name": "ASBI AL GHIFARI ( YUNENGSIH",
           "category": "spsi",
+          "doc_desc": "POTONGAN SPSI",
+          "amount": 4000,
           "record_count": 2,
           "keep_id": "674653",
           "keep_doc_id": "ADP2A26041438",
@@ -2028,10 +2138,16 @@ Response berisi dua bagian utama:
 Duplicate dihitung per kombinasi:
 
 ```text
-emp_code + normalized filter/category
+emp_code + normalized filter/category + normalized DocDesc + normalized Amount
 ```
 
-Contoh: employee `C0028` dengan dua record `DocDesc` yang match `spsi` akan muncul sebagai satu item duplicate kategori `spsi`.
+`DocID` bukan kunci duplikat. `DocID` hanya identitas record untuk menentukan `keep_doc_id` dan `delete_doc_ids`.
+
+Contoh: employee `L0073` memiliki dua record `DocDesc = PREMI TBS` dengan `Amount = 1046398`, maka masuk duplicate kategori `premi`. Jika employee yang sama memiliki `PREMI TBS` amount berbeda, itu tidak digabung sebagai duplicate yang sama.
+
+Khusus `filter = premi`, `duplicate_report` hanya menganggap duplicate cleanup untuk `DocDesc` yang diawali `PREMI`, misalnya `PREMI TBS` atau `PREMI INSENTIF PANEN`. `DocDesc` seperti `INSENTIF PANEN` tetap bisa muncul di agregasi/check detail jika match pattern premi, tetapi tidak masuk rekomendasi duplicate cleanup premi karena tidak diawali `PREMI`.
+
+Jika `adjustment_name` atau `doc_desc` dikirim, `doc_desc_details` dan `duplicate_report` hanya berisi `DocDesc` yang mengandung teks spesifik tersebut. Contoh `adjustment_name = "PREMI TBS"` tidak akan mengembalikan duplicate `PREMI INSENTIF PANEN`, walaupun sama-sama kategori `premi`.
 
 Aturan rekomendasi hapus:
 
@@ -2367,9 +2483,9 @@ Aturan penting:
 - Hanya memproses `PREMI`, `POTONGAN_KOTOR`, dan `POTONGAN_BERSIH`.
 - Tidak memproses `AUTO_BUFFER`.
 - Hanya mengubah segmen pipe `sync:<status>` dari `remarks.split("|")`; segmen lain seperti adjustment name, task desc/ADCode, amount, dan `match:` tidak diubah.
+- Response setiap row harus punya `ad_code`, `ad_code_desc`, `ad_desc`, dan `task_desc` yang tidak null. Nilai diambil dari kolom structured jika ada, lalu parse remarks, lalu fallback `backend/data/premium_definitions.json`, lalu fallback terakhir `adjustment_name`.
 - Jika `only_if_adtrans_exists=true`, row hanya diubah menjadi `sync:SYNC` kalau transaksi terkait sudah ditemukan di `db_ptrj`.
 - Untuk premi yang punya `metadata_json` detail, pembanding nominal memakai total detail metadata. Jika baru sebagian detail/subblok yang terinput di Plantware, response memberi `skip_reason: "ADTRANS_AMOUNT_PARTIAL"` dan remarks tidak diubah.
-- Untuk automation client, segmen `sync:SYNC` di remarks adalah status authoritative bahwa row sudah sync. Segmen lain seperti `match:MANUAL` tidak boleh dipakai untuk retry/input ulang jika `sync` sudah `SYNC`.
 
 Jangan tertukar dengan `sync-adtrans/by-api-key`. Endpoint `sync-adtrans` membuat atau mengubah data manual adjustment dari ADTRANS. Endpoint `sync-status` hanya menandai row manual adjustment yang sudah berhasil diinput ke Plantware.
 
@@ -2408,13 +2524,6 @@ Jangan tertukar dengan `sync-adtrans/by-api-key`. Endpoint `sync-adtrans` membua
 3. Panggil endpoint ini dengan `only_if_adtrans_exists=true` dan `dry_run=true` untuk preview.
 4. Jika `updated_count` sesuai dan `partial_count=0`, panggil lagi dengan `dry_run=false`.
 5. Jika ada `ADTRANS_AMOUNT_PARTIAL`, lanjutkan input detail/subblok yang belum masuk; jangan paksa `sync:SYNC`.
-
-**Catatan UI Auto Key In Refactor:**
-
-- Kolom `Input Status` hanya menunjukkan hasil runner/browser untuk baris tersebut.
-- Kolom `API Sync` dan `API Match` harus diperbarui dari endpoint ini, bukan dari asumsi bahwa browser berhasil klik Add.
-- Setelah event `row.success`, app boleh langsung mengantrekan id row ke endpoint ini untuk status realtime, tetapi final verification tetap perlu dijalankan lagi setelah Save/Submit tab selesai karena ADTRANS bisa baru muncul setelah submit.
-- Status `ADTRANS_AMOUNT_PARTIAL` atau `ADTRANS_NOT_FOUND` tidak boleh dianggap sukses sync dan tidak boleh dipaksa update remarks.
 
 **Contoh dry run untuk AB1 premi:**
 
@@ -2509,6 +2618,10 @@ curl -X POST "http://localhost:8002/payroll/manual-adjustment/sync-status/by-api
         "target_amount": 500000,
         "metadata_detail_total": 500000,
         "adtrans_amount": 350000,
+        "ad_code": "AL3PM0601P1A",
+        "ad_code_desc": "(AL) TUNJANGAN PREMI ((PM) PRUNING)",
+        "ad_desc": "(AL) TUNJANGAN PREMI ((PM) PRUNING)",
+        "task_desc": "(AL) TUNJANGAN PREMI ((PM) PRUNING)",
         "old_sync_status": "MANUAL",
         "new_sync_status": "SYNC",
         "status": "SKIPPED",
@@ -2533,6 +2646,15 @@ curl -X POST "http://localhost:8002/payroll/manual-adjustment/sync-status/by-api
 | `skipped_count` | Row yang dilewati karena tidak memenuhi syarat |
 | `partial_count` | Row detail/metadata yang baru sebagian nominalnya ditemukan di ADTRANS |
 | `rows[]` | Detail keputusan per row, termasuk `remarks_before`, `remarks_after`, dan `skip_reason` |
+
+Field ADCode per `rows[]`:
+
+| Field | Arti |
+|-------|------|
+| `ad_code` | Kode AD/task code untuk input Plantware. Contoh `AL0018P1A`. Jika tidak ada kode pendek, fallback berisi TaskDesc/display text agar tidak null. |
+| `ad_code_desc` | Deskripsi ADCode/TaskDesc. Ini field utama untuk AD_DESC. |
+| `ad_desc` | Alias dari `ad_code_desc` untuk agent/browser automation yang memakai nama AD_DESC. |
+| `task_desc` | TaskDesc final untuk matching dan tampilan. |
 
 **Skip reason utama:**
 
