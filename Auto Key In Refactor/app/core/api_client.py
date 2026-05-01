@@ -10,6 +10,7 @@ from app.core.models import (
     AutomationOption,
     DuplicateDocIdTarget,
     ManualAdjustmentRecord,
+    metadata_detail_items,
     normalize_automation_option,
     normalize_duplicate_target,
     normalize_record,
@@ -131,7 +132,7 @@ class ManualAdjustmentApiClient:
             raise RuntimeError("Manual adjustment API returned invalid data shape")
         if query.uses_grouped_view() or str(payload.get("view") or "").strip().lower() == "grouped":
             return self._normalize_grouped_premium_records(raw_records, query)
-        return [self._normalize(item) for item in raw_records if isinstance(item, dict)]
+        return [self._normalize(item) for item in self._flatten_detail_records(raw_records)]
 
     def get_automation_options(
         self,
@@ -402,8 +403,12 @@ class ManualAdjustmentApiClient:
         report = data.get("duplicate_report", {}) if isinstance(data, dict) else payload.get("duplicate_report", {})
         duplicates = report.get("duplicates", []) if isinstance(report, dict) else []
         targets: list[DuplicateDocIdTarget] = []
+        premium_filter = any(str(item).strip().lower() == "premi" for item in filters)
         for duplicate in duplicates:
             if not isinstance(duplicate, dict):
+                continue
+            if premium_filter or str(duplicate.get("category") or "").strip().lower() == "premi":
+                targets.extend(self._premium_duplicate_delete_targets(duplicate))
                 continue
             records = duplicate.get("records", [])
             if not isinstance(records, list):
@@ -418,12 +423,76 @@ class ManualAdjustmentApiClient:
                     targets.append(target)
         return targets
 
+    def _premium_duplicate_delete_targets(self, duplicate: dict[str, Any]) -> list[DuplicateDocIdTarget]:
+        records = [record for record in duplicate.get("records", []) if isinstance(record, dict)]
+        groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+        for record in records:
+            doc_desc = " ".join(str(record.get("doc_desc") or record.get("docDesc") or record.get("DocDesc") or "").upper().split())
+            amount_units = int(round(float(record.get("amount") or record.get("Amount") or 0) * 100))
+            key = (doc_desc, amount_units)
+            if doc_desc:
+                groups.setdefault(key, []).append(record)
+
+        targets: list[DuplicateDocIdTarget] = []
+        for group_records in groups.values():
+            if len(group_records) < 2:
+                continue
+            ordered = sorted(group_records, key=self._duplicate_record_sort_key)
+            keep = ordered[-1]
+            keep_doc_id = str(keep.get("doc_id") or keep.get("docId") or keep.get("DocID") or "").strip()
+            group_duplicate = dict(duplicate)
+            group_duplicate["keep_doc_id"] = keep_doc_id
+            for record in ordered[:-1]:
+                raw_record = dict(record)
+                raw_record["action"] = "DELETE_OLD"
+                target = normalize_duplicate_target(raw_record, group_duplicate)
+                if target.doc_id:
+                    targets.append(target)
+        return targets
+
+    def _duplicate_record_sort_key(self, record: dict[str, Any]) -> tuple[int, str]:
+        row_id = str(record.get("id") or record.get("master_id") or record.get("MasterID") or "").strip()
+        try:
+            numeric_id = int(row_id)
+        except ValueError:
+            numeric_id = 0
+        doc_id = str(record.get("doc_id") or record.get("docId") or record.get("DocID") or "").strip()
+        return (numeric_id, doc_id)
+
     def _normalize(self, raw: dict[str, Any]) -> ManualAdjustmentRecord:
         category_key = self.categories.detect(
             str(raw.get("adjustment_name") or ""),
             str(raw.get("adjustment_type") or ""),
         )
         return normalize_record(raw, category_key)
+
+    def _flatten_detail_records(self, raw_records: list[Any]) -> list[dict[str, Any]]:
+        flattened: list[dict[str, Any]] = []
+        for raw in raw_records:
+            if not isinstance(raw, dict):
+                continue
+            details = metadata_detail_items(raw)
+            if not details:
+                flattened.append(raw)
+                continue
+            parent = {
+                key: value
+                for key, value in raw.items()
+                if key not in {"metadata", "metadata_json", "detail_items"}
+            }
+            parent_id = raw.get("id")
+            for index, detail in enumerate(details, start=1):
+                detail_division_code = detail.get("division_code") or detail.get("divisionCode")
+                merged = {**parent, **detail, "transaction_index": detail.get("transaction_index", index)}
+                parent_location = parent.get("estate") or parent.get("estate_code") or parent.get("division_code")
+                if detail_division_code not in (None, "") and parent_location not in (None, ""):
+                    merged.setdefault("divisioncode", detail_division_code)
+                    merged["division_code"] = parent_location
+                if parent_id not in (None, ""):
+                    merged["id"] = parent_id
+                    merged.setdefault("adjustment_id", parent_id)
+                flattened.append(merged)
+        return flattened
 
     def _normalize_adjustment_name_options(self, payload: dict[str, Any]) -> list[AutomationOption]:
         raw_options: list[Any] = []
@@ -516,13 +585,15 @@ class ManualAdjustmentApiClient:
 
         flattened: list[dict[str, Any]] = []
         premiums = employee.get("premiums", [])
-        if not isinstance(premiums, list):
+        adjustments = employee.get("adjustments", [])
+        grouped_rows = premiums if isinstance(premiums, list) and premiums else adjustments if isinstance(adjustments, list) else []
+        if not grouped_rows:
             return flattened
-        for premium in premiums:
+        for premium in grouped_rows:
             if not isinstance(premium, dict):
                 continue
-            detail_items = premium.get("detail_items", [])
-            if not isinstance(detail_items, list):
+            detail_items = metadata_detail_items(premium)
+            if not detail_items:
                 continue
             parent = {
                 key: value

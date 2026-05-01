@@ -1031,7 +1031,17 @@ class MainWindow(QMainWindow):
         self.duplicate_year = QSpinBox()
         self.duplicate_year.setRange(2000, 2100)
         self.duplicate_year.setValue(self.config.default_period_year)
-        self.duplicate_filters = QLineEdit("spsi")
+        self.duplicate_category = QComboBox()
+        for item in self.categories.categories:
+            if self._default_filter_for_category_key(item.key):
+                self.duplicate_category.addItem(item.label, item.key)
+        selected_category_index = self.duplicate_category.findData(str(self.category.currentData() or ""))
+        if selected_category_index < 0:
+            selected_category_index = self.duplicate_category.findData("spsi")
+        if selected_category_index >= 0:
+            self.duplicate_category.setCurrentIndex(selected_category_index)
+        self.duplicate_filters = QLineEdit(self._default_filter_for_category_key(str(self.duplicate_category.currentData() or "")) or "spsi")
+        self.duplicate_category.currentIndexChanged.connect(self._apply_duplicate_category_filter)
         self.duplicate_dry_run = QCheckBox("Dry run: search Plantware, do not delete")
         self.duplicate_dry_run.setChecked(True)
         self.duplicate_dry_run.setToolTip("Browser akan membuka Plantware untuk mencari DocID, tetapi tombol Delete tidak akan diklik.")
@@ -1049,7 +1059,7 @@ class MainWindow(QMainWindow):
         form.addRow("Period Month", self.duplicate_month)
         form.addRow("Period Year", self.duplicate_year)
         form.addRow("Division", QLabel("Mengikuti division di tab Config"))
-        form.addRow("Category", QLabel("Auto Buffer only: SPSI / Masa Kerja / Tunjangan Jabatan"))
+        form.addRow("Category", self.duplicate_category)
         form.addRow("Filters", self.duplicate_filters)
         form.addRow(action_row)
         layout.addWidget(controls)
@@ -1868,7 +1878,7 @@ class MainWindow(QMainWindow):
 
     def fetch_duplicate_targets(self) -> None:
         if not self._duplicate_category_supported():
-            self.duplicate_status_label.setText("Duplicate cleanup baru aktif untuk Auto Buffer.")
+            self.duplicate_status_label.setText("Pilih kategori duplicate cleanup yang valid.")
             return
         filters = self._parse_list(self.duplicate_filters.text())
         if not filters:
@@ -1919,7 +1929,7 @@ class MainWindow(QMainWindow):
             self.duplicate_status_label.setText("Runner sedang berjalan.")
             return
         if not self._duplicate_category_supported():
-            self.duplicate_status_label.setText("Duplicate cleanup baru aktif untuk Auto Buffer.")
+            self.duplicate_status_label.setText("Pilih kategori duplicate cleanup yang valid.")
             return
         selected = self._selected_duplicate_targets()
         if not selected:
@@ -1941,6 +1951,7 @@ class MainWindow(QMainWindow):
         self.duplicate_status_label.setText(f"Starting duplicate cleanup for {len(selected)} DocIDs...")
         self.append_log(f"Duplicate cleanup selected targets: {[(target.doc_id, target.master_id) for target in selected[:10]]}")
         payload = self.build_payload(mode=self.runner_mode.currentText(), records=[])
+        duplicate_category_key = str(self.duplicate_category.currentData() or payload.category_key)
         payload = RunPayload(
             period_month=self.duplicate_month.value(),
             period_year=self.duplicate_year.value(),
@@ -1949,7 +1960,7 @@ class MainWindow(QMainWindow):
             emp_code=payload.emp_code,
             adjustment_type=payload.adjustment_type,
             adjustment_name=payload.adjustment_name,
-            category_key=payload.category_key,
+            category_key=duplicate_category_key,
             runner_mode=payload.runner_mode,
             max_tabs=payload.max_tabs,
             headless=payload.headless,
@@ -1988,7 +1999,16 @@ class MainWindow(QMainWindow):
         self._append_event_row(event_name, payload, message)
 
     def _duplicate_category_supported(self) -> bool:
-        return str(self.category.currentData() or "") in {"spsi", "masa_kerja", "tunjangan_jabatan"}
+        if not hasattr(self, "duplicate_category"):
+            return False
+        return bool(self._default_filter_for_category_key(str(self.duplicate_category.currentData() or "")))
+
+    def _apply_duplicate_category_filter(self) -> None:
+        if not hasattr(self, "duplicate_filters"):
+            return
+        default_filter = self._default_filter_for_category_key(str(self.duplicate_category.currentData() or ""))
+        if default_filter:
+            self.duplicate_filters.setText(default_filter)
 
     def _update_record_from_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
         record = self._find_record(str(payload.get("emp_code", "")), str(payload.get("adjustment_name", "")), str(payload.get("detail_key", "") or ""))
@@ -2343,21 +2363,29 @@ class MainWindow(QMainWindow):
         self.verify_month.setValue(self.period_month.value())
         self.verify_year.setValue(self.period_year.value())
         category_key = str(self.category.currentData() or "")
+        default_filter = self._default_filter_for_category_key(category_key) or category_key or "spsi"
+        self.verify_filters.setText(default_filter)
+        if hasattr(self, "duplicate_filters"):
+            self.duplicate_month.setValue(self.period_month.value())
+            self.duplicate_year.setValue(self.period_year.value())
+            duplicate_index = self.duplicate_category.findData(category_key) if hasattr(self, "duplicate_category") else -1
+            if duplicate_index >= 0:
+                self.duplicate_category.setCurrentIndex(duplicate_index)
+            else:
+                self.duplicate_filters.setText(default_filter)
+
+    def _default_filter_for_category_key(self, category_key: str) -> str:
         defaults = {
             "spsi": "spsi",
             "masa_kerja": "masa kerja",
             "tunjangan_jabatan": "jabatan",
             "premi": "premi",
             "potongan_upah_kotor": "potongan",
+            "koreksi": "koreksi",
             "potongan_upah_bersih": "potongan upah bersih",
             "premi_tunjangan": "premi",
         }
-        default_filter = defaults.get(category_key, category_key or "spsi")
-        self.verify_filters.setText(default_filter)
-        if hasattr(self, "duplicate_filters"):
-            self.duplicate_month.setValue(self.period_month.value())
-            self.duplicate_year.setValue(self.period_year.value())
-            self.duplicate_filters.setText(default_filter)
+        return defaults.get(category_key, "")
 
     def _parse_list(self, value: str) -> list[str]:
         return [item.strip() for chunk in value.splitlines() for item in chunk.split(",") if item.strip()]

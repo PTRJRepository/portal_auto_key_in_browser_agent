@@ -164,6 +164,44 @@ def test_normalize_record_maps_nomor_kendaraan_to_vehicle_fields():
     assert record.vehicle_expense_code == "DRIVER"
     assert "T0020" in record.detail_key
 
+def test_normalize_record_reads_block_detail_from_metadata_json():
+    record = normalize_record({
+        "id": 77,
+        "emp_code": "b0128",
+        "gang_code": "b1t",
+        "division_code": "P1B",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "KOREKSI PANEN",
+        "amount": 300000,
+        "metadata_json": "{\"input_type\":\"blok\",\"items\":[{\"subblok\":\"P09/01\",\"field_code\":\"B 1\",\"expense_code\":\"L\",\"jumlah\":125000}]}",
+    }, "potongan_upah_kotor")
+
+    assert record.detail_type == "blok"
+    assert record.subblok == "P0901"
+    assert record.subblok_raw == "P09/01"
+    assert record.divisioncode == "B 1"
+    assert record.expense_code == "L"
+    assert record.amount == 125000
+    assert record.jumlah == 125000
+
+def test_normalize_record_reads_vehicle_detail_from_metadata_json():
+    record = normalize_record({
+        "id": 78,
+        "emp_code": "b0128",
+        "gang_code": "b1t",
+        "division_code": "P1B",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "KOREKSI ANGKUT",
+        "amount": 684355,
+        "metadata_json": "{\"input_type\":\"kendaraan\",\"items\":[{\"nomor_kendaraan\":\"T0020\",\"expense_code\":\"DRIVER\",\"jumlah\":684355}]}",
+    }, "potongan_upah_kotor")
+
+    assert record.detail_type == "kendaraan"
+    assert record.vehicle_code == "T0020"
+    assert record.expense_code == "DRIVER"
+    assert record.vehicle_expense_code == "DRIVER"
+    assert record.amount == 684355
+
 def test_get_adjustments_flattens_grouped_premium_transactions():
     registry = CategoryRegistry([
         AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
@@ -408,6 +446,64 @@ def test_get_adjustments_flattens_vehicle_based_premium_detail_items():
     assert records[0].amount == 684355
     assert records[0].adjustment_id == 91
     assert "T0020" in records[0].detail_key
+
+def test_get_adjustments_flattens_flat_koreksi_detail_items():
+    registry = CategoryRegistry([
+        AdjustmentCategory("potongan_upah_kotor", "Potongan Upah Kotor", "POTONGAN_KOTOR", ("KOREKSI",), "potongan"),
+    ])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "data": [
+            {
+                "id": 77,
+                "period_month": 4,
+                "period_year": 2026,
+                "emp_code": "B0128",
+                "emp_name": "KOREKSI TEST",
+                "gang_code": "B1T",
+                "division_code": "P1B",
+                "adjustment_type": "POTONGAN_KOTOR",
+                "adjustment_name": "KOREKSI PANEN",
+                "amount": 300000,
+                "ad_code": "DE0001",
+                "ad_code_desc": "(DE) KOREKSI PANEN",
+                "detail_items": [
+                    {
+                        "detail_type": "blok",
+                        "subblok": "P09/01",
+                        "field_code": "B 1",
+                        "expense_code": "L",
+                        "jumlah": 125000,
+                    },
+                    {
+                        "detail_type": "blok",
+                        "subblok": "P09/02",
+                        "field_code": "B 1",
+                        "expense_code": "L",
+                        "jumlah": 175000,
+                    },
+                ],
+            }
+        ],
+    }
+
+    with patch("app.core.api_client.requests.get", return_value=response):
+        records = client.get_adjustments(ManualAdjustmentQuery(
+            period_month=4,
+            period_year=2026,
+            division_code="P1B",
+            adjustment_type="POTONGAN_KOTOR",
+            adjustment_name="KOREKSI PANEN",
+        ))
+
+    assert [record.amount for record in records] == [125000, 175000]
+    assert [record.detail_type for record in records] == ["blok", "blok"]
+    assert [record.subblok for record in records] == ["P0901", "P0902"]
+    assert [record.divisioncode for record in records] == ["B 1", "B 1"]
+    assert all(record.adjustment_id == 77 for record in records)
+    assert all(record.category_key == "potongan_upah_kotor" for record in records)
 
 
 def test_category_registry_detects_auto_buffer_names():
@@ -1301,6 +1397,57 @@ def test_get_duplicate_delete_targets_extracts_only_delete_old_records():
             raw={"id": "674422", "doc_id": "ADP2A26041201", "doc_date": "2026-04-27", "doc_desc": "POTONGAN SPSI", "amount": 4000, "action": "delete_old"},
         )
     ]
+
+
+def test_get_duplicate_delete_targets_keeps_newest_per_premium_doc_desc():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "data": {
+            "duplicate_report": {
+                "duplicates": [
+                    {
+                        "emp_code": "l0073",
+                        "emp_name": "BAHARUDIN",
+                        "category": "premi",
+                        "keep_doc_id": "ADIJL26044355",
+                        "records": [
+                            {"id": "10", "doc_id": "ADIJL26044012", "doc_date": "2026-04-30", "doc_desc": "PREMI INSENTIF PANEN", "amount": 150000, "action": "DELETE_OLD"},
+                            {"id": "11", "doc_id": "ADIJL26044030", "doc_date": "2026-04-30", "doc_desc": "PREMI TBS", "amount": 1046398, "action": "DELETE_OLD"},
+                            {"id": "20", "doc_id": "ADIJL26044346", "doc_date": "2026-04-30", "doc_desc": "PREMI INSENTIF PANEN", "amount": 150000, "action": "DELETE_OLD"},
+                            {"id": "21", "doc_id": "ADIJL26044355", "doc_date": "2026-04-30", "doc_desc": "PREMI TBS", "amount": 1046398, "action": "KEEP_NEWEST"},
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+
+    with patch("app.core.api_client.requests.post", return_value=response):
+        targets = client.get_duplicate_delete_targets(4, 2026, "IJL", ["premi"])
+
+    assert [target.doc_id for target in targets] == ["ADIJL26044012", "ADIJL26044030"]
+    assert [target.keep_doc_id for target in targets] == ["ADIJL26044346", "ADIJL26044355"]
+
+
+def test_duplicate_cleanup_category_can_target_premi_filter():
+    config = AppConfig(default_division_code="IJL")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi"),
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("IJL", "Ijuk")])
+
+    index = window.duplicate_category.findData("premi")
+    assert index >= 0
+    window.duplicate_category.setCurrentIndex(index)
+
+    assert window.duplicate_filters.text() == "premi"
+    assert window._duplicate_category_supported() is True
+    window.close()
 
 
 def test_run_payload_serializes_duplicate_targets():

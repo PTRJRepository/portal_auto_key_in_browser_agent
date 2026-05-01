@@ -317,6 +317,17 @@ export interface AutocompleteFieldPlan {
   value: string;
 }
 
+export function shouldUseSingleRemainingAutocompleteFallback(field: AutocompleteFieldPlan): boolean {
+  return field.key === "subblok" || field.key === "vehicle";
+}
+
+export function singleRemainingAutocompleteOptionIndex(optionTexts: string[]): number | null {
+  const selectable = optionTexts
+    .map((text, index) => ({ index, text: normalizeText(text) }))
+    .filter((item) => Boolean(item.text));
+  return selectable.length === 1 ? selectable[0].index : null;
+}
+
 // Plantware comboboxes are generated beside hidden selects; keep values mapped to their owning select.
 export const detailFormControlSelectors = {
   empSelect: "#MainContent_ddlEmployee",
@@ -504,7 +515,12 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
     return;
   }
 
-  await typeAutocompleteAndChooseMatchingItem(locator, page, field);
+  try {
+    await typeAutocompleteAndChooseMatchingItem(locator, page, field);
+  } catch (error) {
+    if (!shouldUseSingleRemainingAutocompleteFallback(field)) throw error;
+    await typeAutocompleteSlowlyAndChooseSingleRemainingItem(locator, page, field, error);
+  }
   await page.waitForTimeout(500);
   const selectedValue = await locator.inputValue().catch(() => "");
   if (!selectedValue.trim()) {
@@ -558,4 +574,46 @@ async function typeAutocompleteAndChooseMatchingItem(
     }
   }
   throw new Error(`No autocomplete option matched ${field.key}: ${field.value}`);
+}
+
+async function typeAutocompleteSlowlyAndChooseSingleRemainingItem(
+  locator: ReturnType<Page["locator"]>,
+  page: Page,
+  field: AutocompleteFieldPlan,
+  firstError: unknown,
+): Promise<void> {
+  await locator.click();
+  await locator.clear();
+  await page.locator(".ui-menu-item:visible").first().waitFor({ state: "hidden", timeout: 1000 }).catch(() => {});
+
+  for (const character of field.value) {
+    await locator.pressSequentially(character, { delay: 250 });
+    await page.waitForTimeout(350);
+    const optionIndex = await singleRemainingVisibleAutocompleteOptionIndex(page);
+    if (optionIndex !== null) {
+      await page.locator(".ui-menu-item:visible").nth(optionIndex).click();
+      return;
+    }
+  }
+
+  await page.waitForTimeout(1000);
+  const optionIndex = await singleRemainingVisibleAutocompleteOptionIndex(page);
+  if (optionIndex !== null) {
+    await page.locator(".ui-menu-item:visible").nth(optionIndex).click();
+    return;
+  }
+
+  const message = firstError instanceof Error ? firstError.message : String(firstError);
+  throw new Error(`No unique autocomplete option remained for ${field.key}: ${field.value}; first attempt: ${message}`);
+}
+
+async function singleRemainingVisibleAutocompleteOptionIndex(page: Page): Promise<number | null> {
+  const menuItems = page.locator(".ui-menu-item:visible");
+  const count = await menuItems.count().catch(() => 0);
+  if (!count) return null;
+  const texts: string[] = [];
+  for (let index = 0; index < count; index++) {
+    texts.push(await menuItems.nth(index).textContent({ timeout: 300 }).catch(() => "") ?? "");
+  }
+  return singleRemainingAutocompleteOptionIndex(texts);
 }

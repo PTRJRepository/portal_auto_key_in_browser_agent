@@ -110,6 +110,18 @@ npx --prefix runner playwright install chromium
 10. Cek hasil di tab **Summary**.
 11. Gunakan tab **Verify db_ptrj** untuk cek data setelah input.
 
+## Duplicate Cleanup
+
+Tab **Duplicate Cleanup** mengambil rekomendasi duplicate DocID dari endpoint `check-adtrans/by-api-key` bagian `duplicate_report`.
+
+Aturan penggunaan:
+
+- Pilih periode, division di tab Config, lalu kategori di tab Duplicate Cleanup.
+- Kategori duplicate cleanup tidak terbatas SPSI; bisa pilih Premi, Koreksi/Potongan Kotor, Potongan Upah Bersih, Masa Kerja, Jabatan, atau SPSI sesuai daftar kategori app.
+- Field **Filters** otomatis diisi dari kategori, misalnya `premi` untuk kategori Premi, tetapi masih bisa diedit manual jika perlu.
+- Tombol **Fetch Duplicate Targets** hanya membaca rekomendasi `DELETE_OLD` dari API dan menampilkan DocID.
+- Biarkan **Dry run** aktif untuk scan Plantware tanpa delete. Matikan hanya setelah daftar DocID dan session sudah diverifikasi.
+
 ## Alur Khusus Premi
 
 Kategori Premi mengambil detail dari endpoint grouped:
@@ -132,6 +144,7 @@ Aturan input Premi:
 - Jika ada `subblok`, data dianggap block-based.
 - Jika ada `vehicle_code` atau metadata `nomor_kendaraan` / `NOMOR_KENDARAAN`, data dianggap vehicle-based.
 - Untuk vehicle-based seperti P1B gang B1T `PREMI ANGKUT`, `nomor_kendaraan` dari `metadata_json.items[]` harus dipetakan ke field runner `vehicle_code`, lalu `expense_code` dari metadata dipakai sebagai `vehicle_expense_code`.
+- Untuk koreksi/potongan yang punya `metadata_json`, mode input juga dibaca dari metadata: item dengan `subblok` memakai block-based dan `divisioncode`/`field_code`, sedangkan item dengan `nomor_kendaraan` memakai vehicle-based. Jangan menginput total row jika metadata memiliki beberapa detail.
 
 ### Retry Premi Setelah Ada Failed
 

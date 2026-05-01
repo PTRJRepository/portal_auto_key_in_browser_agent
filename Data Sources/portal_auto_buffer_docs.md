@@ -562,6 +562,8 @@ view=grouped&adjustment_type=PREMI&metadata_only=true
 - Jangan memakai `premiums[].amount`, `adjustments[].amount`, atau row flat `amount` sebagai detail transaksi. Field itu adalah total row di DB. Contoh `PREMI PRUNING` amount `504900` bisa berasal dari beberapa subblok di metadata.
 - Untuk metadata `input_type = "blok"`, nilai per detail diambil dari `metadata_json.items[].jumlah`, lalu endpoint menampilkannya sebagai `premium_transactions[].jumlah` dan `premium_transactions[].amount`.
 - Untuk field subblok, endpoint menormalisasi simbol: `subblok` hanya berisi huruf dan angka. Contoh `P09/01-A` menjadi `P0901A`. Jika nilai asli mengandung simbol, nilai aslinya tetap tersedia di `subblok_raw`.
+- Mode form auto key-in ditentukan dari isi metadata detail, bukan dari nama kategori saja. Jika item punya `subblok`, pakai form block-based dan isi Division/Block dari `field_code`/`divisioncode` atau turunan `gang_code`. Jika item punya `nomor_kendaraan`/`vehicle_code`, pakai form vehicle-based dan isi Vehicle Code.
+- Aturan ini juga berlaku untuk koreksi/potongan (`POTONGAN_KOTOR` / `POTONGAN_BERSIH`) yang memiliki `metadata_json` detail; jangan menginput total row tanpa membaca detail metadata.
 - Untuk data lama tanpa `metadata_json`, endpoint tidak punya subblok/detail transaksi. Pakai `metadata_only=true` supaya automation hanya memproses data detail terbaru.
 - Tree preview yang benar tidak berhenti di baris `Division | Gang | Employee | Type | Name | Amount`. Row seperti `AB1 | G1H | AHMAD DARYONO | PREMI | PREMI PRUNING | 504900` adalah total row; detail subbloknya harus dibaca dari `premium_transactions[]` atau `premiums[].detail_items[]`.
 
@@ -772,6 +774,7 @@ Aturan vehicle-based untuk agent:
 
 - Jika detail metadata punya `subblok`, form yang dipakai adalah block-based.
 - Jika detail metadata punya `vehicle_code`, `nomor_kendaraan`, `NOMOR_KENDARAAN`, `nomorKendaraan`, `no_kendaraan`, atau `vehicle_number`, form yang dipakai adalah vehicle-based.
+- Untuk block-based, nilai field/divisi Plantware berasal dari `field_code`, `fieldCode`, `fieldcode`, atau `divisioncode` jika tersedia; jika kosong, automation menurunkannya dari `gang_code`, misalnya `B1T` menjadi `B 1`.
 - Pada vehicle-based, nilai kendaraan harus dikirim ke runner sebagai `vehicle_code`; jangan dimasukkan ke employee, NIK, atau description.
 - `expense_code` dari item metadata adalah sumber `Vehicle Expense Code` Plantware jika `vehicle_expense_code` belum tersedia.
 - Contoh P1B gang B1T `PREMI ANGKUT`: `metadata_json.items[].nomor_kendaraan = "T0020"` dan `expense_code = "DRIVER"` harus menjadi `vehicle_code = "T0020"` dan `vehicle_expense_code = "DRIVER"` pada payload auto key-in.

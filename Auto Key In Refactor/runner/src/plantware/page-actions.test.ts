@@ -18,7 +18,11 @@ import {
   adcodeAutocompleteField,
   blockDivisionAutocompleteField,
   subBlockAutocompleteField,
-  blockExpenseAutocompleteField
+  blockExpenseAutocompleteField,
+  shouldUseSingleRemainingAutocompleteFallback,
+  singleRemainingAutocompleteOptionIndex,
+  vehicleAutocompleteField,
+  vehicleExpenseAutocompleteField
 } from "./page-actions.js";
 import { resolveCategory } from "../categories/registry.js";
 import type { ManualAdjustmentRecord } from "../types.js";
@@ -154,3 +158,10 @@ assert.equal(premiumDetailKind(vehicleRecord), "kendaraan");
 assert.equal(vehicleAutocompleteValue(vehicleRecord), "BE003");
 assert.equal(vehicleExpenseAutocompleteValue(vehicleRecord), "11");
 assert.equal(vehicleExpenseAutocompleteValue({ ...vehicleRecord, vehicle_expense_code: "", expense_code: "driver" }), "DRIVER");
+assert.equal(shouldUseSingleRemainingAutocompleteFallback(subBlockAutocompleteField(blockRecord)), true);
+assert.equal(shouldUseSingleRemainingAutocompleteFallback(vehicleAutocompleteField(vehicleRecord)), true);
+assert.equal(shouldUseSingleRemainingAutocompleteFallback(blockExpenseAutocompleteField(blockRecord)), false);
+assert.equal(shouldUseSingleRemainingAutocompleteFallback(vehicleExpenseAutocompleteField(vehicleRecord)), false);
+assert.equal(singleRemainingAutocompleteOptionIndex(["PM0901G1 (P09/01)"]), 0);
+assert.equal(singleRemainingAutocompleteOptionIndex(["PM0901G1", "PM0901G2"]), null);
+assert.equal(singleRemainingAutocompleteOptionIndex([]), null);

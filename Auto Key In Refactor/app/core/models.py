@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict, replace
+import json
 import re
 from typing import Any
 
 
 AD_CODE_RE = re.compile(r"\bAD\s*CODE\s*:\s*([^|\-]+)", re.IGNORECASE)
+SUBBLOK_ALIASES = ("subblok", "sub_block", "subBlock", "SUBBLOK")
+VEHICLE_CODE_ALIASES = (
+    "vehicle_code",
+    "vehicleCode",
+    "veh_code",
+    "vehCode",
+    "kendaraan",
+    "vehicle",
+    "nomor_kendaraan",
+    "NOMOR_KENDARAAN",
+    "nomorKendaraan",
+    "no_kendaraan",
+    "NoKendaraan",
+    "vehicle_number",
+    "vehicleNumber",
+)
 
 def extract_ad_code_from_remarks(remarks: str) -> str:
     match = AD_CODE_RE.search(remarks or "")
@@ -22,6 +39,10 @@ def normalize_subblok_code(value: str) -> str:
 
 def normalize_detail_type(value: str, *, subblok: str = "", vehicle_code: str = "") -> str:
     normalized = (value or "").strip().lower()
+    if subblok:
+        return "blok"
+    if vehicle_code:
+        return "kendaraan"
     aliases = {
         "block": "blok",
         "subblok": "blok",
@@ -30,11 +51,68 @@ def normalize_detail_type(value: str, *, subblok: str = "", vehicle_code: str = 
         "veh": "kendaraan",
     }
     normalized = aliases.get(normalized, normalized)
-    if not normalized and subblok:
-        return "blok"
-    if not normalized and vehicle_code:
-        return "kendaraan"
     return normalized
+
+def metadata_detail_items(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    direct_items = raw.get("detail_items")
+    if isinstance(direct_items, list):
+        return [_normalize_metadata_detail_item(item, "", index) for index, item in enumerate(direct_items, start=1) if isinstance(item, dict)]
+
+    metadata = raw.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata_json = raw.get("metadata_json")
+        if isinstance(metadata_json, str) and metadata_json.strip():
+            try:
+                parsed = json.loads(metadata_json)
+                metadata = parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                metadata = {}
+        else:
+            metadata = {}
+    if not metadata:
+        return []
+
+    input_type = str(metadata.get("input_type") or metadata.get("detail_type") or "").strip()
+    details: list[dict[str, Any]] = []
+    for collection_name in ("items", "detail_items", "blok_items", "block_items", "vehicle_items", "kendaraan_items"):
+        collection = metadata.get(collection_name)
+        if not isinstance(collection, list):
+            continue
+        for index, item in enumerate(collection, start=1):
+            if isinstance(item, dict):
+                details.append(_normalize_metadata_detail_item(item, input_type, index))
+
+    for object_name in ("expense", "exp"):
+        item = metadata.get(object_name)
+        if isinstance(item, dict):
+            details.append(_normalize_metadata_detail_item(item, "exp", len(details) + 1))
+    return details
+
+def _normalize_metadata_detail_item(item: dict[str, Any], input_type: str, index: int) -> dict[str, Any]:
+    detail = dict(item)
+    detail_type = normalize_detail_type(
+        str(detail.get("detail_type") or detail.get("detailType") or input_type or ""),
+        subblok=_first_text(detail, *SUBBLOK_ALIASES),
+        vehicle_code=_first_text(detail, *VEHICLE_CODE_ALIASES),
+    )
+    if detail_type:
+        detail.setdefault("detail_type", detail_type)
+    raw_subblok = _first_text(detail, *SUBBLOK_ALIASES)
+    if raw_subblok and "subblok_raw" not in detail:
+        detail["subblok_raw"] = raw_subblok
+    if "amount" not in detail and detail.get("jumlah") not in (None, ""):
+        detail["amount"] = detail.get("jumlah")
+    if "jumlah" not in detail and detail.get("amount") not in (None, ""):
+        detail["jumlah"] = detail.get("amount")
+    detail.setdefault("transaction_index", index)
+    return detail
+
+def _first_text(raw: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = raw.get(name)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
 
 @dataclass(frozen=True)
 class AutomationOption:
@@ -119,6 +197,30 @@ class ManualAdjustmentRecord:
 
 
 def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> ManualAdjustmentRecord:
+    original_raw = raw
+    details = metadata_detail_items(raw)
+    if details:
+        parent_id = raw.get("id")
+        parent_division_code = raw.get("division_code")
+        parent_division_code_alt = raw.get("divisionCode")
+        parent_estate = raw.get("estate")
+        parent_estate_code = raw.get("estate_code")
+        detail_division_code = details[0].get("division_code") or details[0].get("divisionCode")
+        raw = {**raw, **details[0]}
+        if parent_division_code not in (None, ""):
+            raw["division_code"] = parent_division_code
+        if parent_division_code_alt not in (None, ""):
+            raw["divisionCode"] = parent_division_code_alt
+        if parent_estate not in (None, ""):
+            raw["estate"] = parent_estate
+        if parent_estate_code not in (None, ""):
+            raw["estate_code"] = parent_estate_code
+        if detail_division_code not in (None, ""):
+            raw.setdefault("divisioncode", detail_division_code)
+        if parent_id not in (None, ""):
+            raw["id"] = parent_id
+            raw.setdefault("adjustment_id", parent_id)
+
     def text(*names: str) -> str:
         for name in names:
             value = raw.get(name)
@@ -160,29 +262,15 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
     estate = text("estate", "estate_code", "estateCode", "Estate").upper()
     raw_division_code = text("division_code", "divisionCode", "DivisionCode").upper()
     division_code = estate or raw_division_code
-    divisioncode = text("divisioncode", "Divisioncode", "field_division_code", "fieldDivisionCode").upper()
+    divisioncode = text("divisioncode", "Divisioncode", "field_division_code", "fieldDivisionCode", "field_code", "fieldCode", "fieldcode", "FieldCode").upper()
     if not divisioncode and estate and raw_division_code and raw_division_code != estate:
         divisioncode = raw_division_code
     if not divisioncode:
         divisioncode = divisioncode_from_gang(gang_code)
     subblok_raw = text("subblok_raw", "subblokRaw", "sub_block_raw", "subBlockRaw")
-    subblok = normalize_subblok_code(text("subblok", "sub_block", "subBlock") or subblok_raw)
+    subblok = normalize_subblok_code(text(*SUBBLOK_ALIASES) or subblok_raw)
     expense_code = text("expense_code", "expenseCode", "exp_code", "expCode").upper()
-    vehicle_code = text(
-        "vehicle_code",
-        "vehicleCode",
-        "veh_code",
-        "vehCode",
-        "kendaraan",
-        "vehicle",
-        "nomor_kendaraan",
-        "NOMOR_KENDARAAN",
-        "nomorKendaraan",
-        "no_kendaraan",
-        "NoKendaraan",
-        "vehicle_number",
-        "vehicleNumber",
-    ).upper()
+    vehicle_code = text(*VEHICLE_CODE_ALIASES).upper()
     vehicle_expense_code = text(
         "vehicle_expense_code",
         "vehicleExpenseCode",
@@ -200,8 +288,8 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
     transaction_index = integer_or_none("transaction_index", "transactionIndex")
     adjustment_id = integer_or_none("adjustment_id", "adjustmentId", "id")
     detail_key_parts = [
-        str(raw.get("period_month") or ""),
-        str(raw.get("period_year") or ""),
+        str(original_raw.get("period_month") or raw.get("period_month") or ""),
+        str(original_raw.get("period_year") or raw.get("period_year") or ""),
         text("emp_code").upper(),
         adjustment_name.upper(),
         str(adjustment_id or ""),

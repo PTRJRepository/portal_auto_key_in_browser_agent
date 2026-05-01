@@ -31,6 +31,13 @@ For hidden combobox selects, the actual typed field is the adjacent generated in
 
 Do not detect mode by searching the whole document for text like `Vehicle` or `SubBlock`; those words also appear in the left navigation. Only inspect controls under `#MainContent_MultiDimAcc_tbAccount`.
 
+Autocomplete retry rule for sub block and vehicle code:
+
+- First try the hidden select / normal autocomplete match.
+- If `subblok` or `vehicle` is not found, retry by clearing the input and typing the value more slowly.
+- During the slow retry, only click the top autocomplete item when the visible option list has exactly one selectable item.
+- Do not apply this single-option fallback to expense fields, employee, or AD Code because choosing a single remaining option there can create the wrong mapping.
+
 ## Block-Based Pattern
 
 Block-based rows are identified by the presence of the Sub Block control after AD Code postback.
