@@ -39,7 +39,7 @@ from app.core.category_registry import CategoryRegistry
 from app.core.config import AppConfig, DivisionOption
 from app.core.models import DuplicateDocIdTarget, ManualAdjustmentRecord, RunPayload, enrich_records_with_automation_options, extract_ad_code_from_remarks
 from app.core.run_artifacts import RunArtifactPaths, RunArtifactStore
-from app.core.run_service import apply_row_limit, filter_by_category
+from app.core.run_service import apply_row_limit, division_mismatch_warning, filter_by_category, filter_records_by_division_prefix
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
@@ -624,6 +624,22 @@ class DuplicateFetchWorker(QObject):
             self.failed.emit(str(exc))
 
 
+class ResetDocIdFetchWorker(QObject):
+    completed = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, client: ManualAdjustmentApiClient, request: dict[str, Any]) -> None:
+        super().__init__()
+        self.client = client
+        self.request = request
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self.client.get_adtrans_doc_id_delete_targets(**self.request))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class SessionRefreshWorker(QObject):
     event_received = Signal(str, object)
     completed = Signal(str, object)
@@ -669,6 +685,10 @@ class MainWindow(QMainWindow):
         self.duplicate_fetch_worker: DuplicateFetchWorker | None = None
         self.duplicate_targets: list[DuplicateDocIdTarget] = []
         self.duplicate_target_rows: dict[str, int] = {}
+        self.reset_docid_fetch_thread: QThread | None = None
+        self.reset_docid_fetch_worker: ResetDocIdFetchWorker | None = None
+        self.reset_docid_targets: list[DuplicateDocIdTarget] = []
+        self.reset_docid_target_rows: dict[str, int] = {}
         self.runner_bridge: RunnerBridge | None = None
         self.session_refresh_threads: dict[str, QThread] = {}
         self.session_refresh_workers: dict[str, SessionRefreshWorker] = {}
@@ -723,6 +743,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_summary_tab(), "Summary")
         self.tabs.addTab(self._build_verify_tab(), "Verify db_ptrj")
         self.tabs.addTab(self._build_duplicate_cleanup_tab(), "Duplicate Cleanup")
+        self.tabs.addTab(self._build_reset_docid_tab(), "Reset/Delete DocID")
         self.division_monitor = DivisionMonitorWidget(self._api_client, self.categories, self.divisions)
         self.division_monitor.run_division_category.connect(self._on_division_monitor_run)
         self.tabs.addTab(self.division_monitor, "Division Monitor")
@@ -1072,6 +1093,38 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.duplicate_table, 1)
         return tab
 
+    def _build_reset_docid_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        controls = QGroupBox("Reset/delete DocID berdasarkan Config aktif")
+        form = QFormLayout(controls)
+        self.reset_docid_scope_label = QLabel("Mengikuti Period, Division, Employee, Category, Adjustment Type, dan Adjustment Name di tab Config.")
+        self.reset_docid_dry_run = QCheckBox("Dry run: search Plantware, do not delete")
+        self.reset_docid_dry_run.setChecked(True)
+        self.reset_docid_dry_run.setToolTip("Browser akan mencari DocID dari endpoint adtrans-doc-ids, tetapi tombol Delete tidak akan diklik.")
+        self.fetch_reset_docid_button = QPushButton("Fetch DocID Targets")
+        self.run_reset_docid_delete_button = QPushButton()
+        self.run_reset_docid_delete_button.setEnabled(False)
+        self.reset_docid_status_label = QLabel("Belum dicek.")
+        self.fetch_reset_docid_button.clicked.connect(self.fetch_reset_docid_targets)
+        self.run_reset_docid_delete_button.clicked.connect(self.run_reset_docid_delete)
+        self.reset_docid_dry_run.toggled.connect(self._sync_reset_docid_button_text)
+        self._sync_reset_docid_button_text()
+        action_row = QHBoxLayout()
+        action_row.addWidget(self.fetch_reset_docid_button)
+        action_row.addWidget(self.run_reset_docid_delete_button)
+        action_row.addWidget(self.reset_docid_dry_run)
+        action_row.addWidget(self.reset_docid_status_label, 1)
+        form.addRow("Scope", self.reset_docid_scope_label)
+        form.addRow(action_row)
+        layout.addWidget(controls)
+
+        self.reset_docid_table = QTableWidget(0, 8)
+        self.reset_docid_table.setHorizontalHeaderLabels(["Select", "Action", "DocID", "Division", "Category", "Filter", "Status", "Message"])
+        self.reset_docid_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.reset_docid_table, 1)
+        return tab
+
     def apply_category_preset(self) -> None:
         category_key = str(self.category.currentData() or "")
         self._suppress_adjustment_name_refresh = True
@@ -1260,7 +1313,7 @@ class MainWindow(QMainWindow):
         self.append_log(f"Selected jobs ready: {len(jobs)}. Eksekusi queue akan ditambahkan setelah fetch per job.")
 
     def fetch_records(self) -> None:
-        self.test_get_data_button.setEnabled(False)
+        self._prepare_fetch_state()
         self.append_log("Fetching manual adjustment data...")
         client = self._api_client()
         query = ManualAdjustmentQuery(
@@ -1282,6 +1335,20 @@ class MainWindow(QMainWindow):
         self.fetch_worker.failed.connect(self.fetch_thread.quit)
         self.fetch_thread.finished.connect(self.fetch_thread.deleteLater)
         self.fetch_thread.start()
+
+    def _prepare_fetch_state(self) -> None:
+        self.test_get_data_button.setEnabled(False)
+        self.run_button.setEnabled(False)
+        self.run_selected_jobs_button.setEnabled(False)
+        self.records = []
+        self.last_successful_records = []
+        self.fetch_verification_status = {}
+        self.premium_retry_record_keys = set()
+        self.premium_retry_held_groups = {}
+        self.record_status = {}
+        self.records_table.setRowCount(0)
+        self.process_context_label.setText("Fetching latest data...")
+        self._refresh_summary()
 
     def _handle_fetch_completed(self, records: list[ManualAdjustmentRecord], verification: FetchVerificationStatus | None = None) -> None:
         self.fetch_verification_status = verification or {}
@@ -1308,10 +1375,19 @@ class MainWindow(QMainWindow):
         category_key = str(self.category.currentData() or "")
         row_limit = self.row_limit.value() or None
         filtered_records = filter_by_category(records, category_key)
+        filtered_records, division_rejected_records = filter_records_by_division_prefix(filtered_records, self._selected_division_code())
+        category_count_after_division_guard = len(filtered_records)
+        if division_rejected_records:
+            examples = ", ".join(record.emp_code for record in division_rejected_records[:10])
+            self.append_log(
+                f"Division prefix guard skipped {len(division_rejected_records)} records for {self._selected_division_code()}: "
+                f"{examples}. {division_mismatch_warning(division_rejected_records[0], self._selected_division_code())}"
+            )
         manual_preview = category_key in MANUAL_PREVIEW_CATEGORY_KEYS
         premium_preview = category_key in PREMI_CATEGORY_KEYS
         self.premium_retry_record_keys = set()
         self.premium_retry_held_groups = {}
+        miss_filter_applied = False
         if premium_preview and self.fetch_verification_status:
             if self.fetch_verification_status.get("source") == "sync-status":
                 self.premium_retry_record_keys = set(self.fetch_verification_status.get("retry_record_keys", set()))
@@ -1324,6 +1400,7 @@ class MainWindow(QMainWindow):
         if self.process_only_miss.isChecked() and premium_preview and self.fetch_verification_status:
             before_miss_filter = len(filtered_records)
             filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
+            miss_filter_applied = True
             self.append_log(
                 "Premi retry-safe filter active: "
                 f"{len(filtered_records)} verified missing records will be previewed/run; "
@@ -1339,19 +1416,28 @@ class MainWindow(QMainWindow):
         elif self.process_only_miss.isChecked() and not manual_preview:
             before_miss_filter = len(filtered_records)
             filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
+            miss_filter_applied = True
             self.append_log(f"MISS-only filter active: {len(filtered_records)} of {before_miss_filter} category records will be previewed/run.")
         elif self.process_only_miss.isChecked() and manual_preview:
             self.append_log(f"Manual category preview: showing all {len(filtered_records)} category records; MISS-only filter is ignored for {category_key}.")
         self.records = apply_row_limit(filtered_records, row_limit)
         self.set_records(self.records)
-        self.append_log(f"Fetched {len(records)} raw records; category {category_key or '-'} has {len(filtered_records)} records; previewing {len(self.records)} records.")
+        filter_suffix = " after MISS-only filter" if miss_filter_applied else ""
+        self.append_log(
+            f"Fetched {len(records)} raw records; category {category_key or '-'} after division guard has "
+            f"{category_count_after_division_guard} records; previewing {len(self.records)} records{filter_suffix}."
+        )
         self.test_get_data_button.setEnabled(True)
+        self.run_button.setEnabled(bool(self.records))
+        self.run_selected_jobs_button.setEnabled(True)
         self.tabs.setCurrentIndex(1)
 
     def _handle_fetch_failed(self, message: str) -> None:
         self.append_log(f"Fetch failed: {message}")
         self.process_context_label.setText("Fetch failed. Check logs.")
         self.test_get_data_button.setEnabled(True)
+        self.run_button.setEnabled(bool(self.records))
+        self.run_selected_jobs_button.setEnabled(True)
 
     def get_session(self) -> None:
         self.run_session_command("get_session")
@@ -1417,6 +1503,16 @@ class MainWindow(QMainWindow):
             self.runner_mode.setCurrentText("multi_tab_shared_session")
             mode = "multi_tab_shared_session"
             self.append_log("SPSI preset enforced: AUTO_BUFFER / AUTO SPSI / only missing rows / multi-tab shared session.")
+        _, division_rejected_records = filter_records_by_division_prefix(self.records, self._selected_division_code())
+        if division_rejected_records:
+            message = (
+                f"Run blocked: {len(division_rejected_records)} records do not match selected division "
+                f"{self._selected_division_code()}. {division_mismatch_warning(division_rejected_records[0], self._selected_division_code())}"
+            )
+            self.append_log(message)
+            self.process_context_label.setText(message)
+            self.tabs.setCurrentIndex(1)
+            return
         self._reset_record_status()
         payload = self.build_payload(mode=mode, records=self.records)
         self.start_runner(payload, f"Starting runner for {len(self.records)} records...")
@@ -1878,6 +1974,133 @@ class MainWindow(QMainWindow):
             for column, value in enumerate(values):
                 self.verify_table.setItem(row, column, QTableWidgetItem(value))
 
+    def _reset_docid_request(self) -> dict[str, Any]:
+        category_key = str(self.category.currentData() or "")
+        default_filter = self._default_filter_for_category_key(category_key)
+        filters = [default_filter] if default_filter else []
+        adjustment_type = self.adjustment_type.currentText().strip().upper() or None
+        adjustment_name = self.adjustment_name.text().strip() or None
+        if adjustment_type == "AUTO_BUFFER":
+            adjustment_type = None
+            adjustment_name = None
+        return {
+            "period_month": self.period_month.value(),
+            "period_year": self.period_year.value(),
+            "division_code": self._selected_division_code(),
+            "emp_code": self.emp_code.text().strip().upper() or None,
+            "filters": filters,
+            "adjustment_type": adjustment_type,
+            "adjustment_name": adjustment_name,
+            "category_key": category_key,
+        }
+
+    def fetch_reset_docid_targets(self) -> None:
+        if self.gang_code.text().strip() and not self.emp_code.text().strip():
+            message = "Reset DocID endpoint belum mendukung filter gang. Kosongkan Gang atau isi Employee untuk scope lebih sempit."
+            self.reset_docid_status_label.setText(message)
+            self.append_log(message)
+            return
+        request = self._reset_docid_request()
+        if not request["filters"] and not request["adjustment_type"] and not request["adjustment_name"]:
+            self.reset_docid_status_label.setText("Config filter masih kosong.")
+            return
+        self.fetch_reset_docid_button.setEnabled(False)
+        self.run_reset_docid_delete_button.setEnabled(False)
+        self.reset_docid_status_label.setText("Fetching DocID targets from db_ptrj...")
+        self.reset_docid_fetch_thread = QThread(self)
+        self.reset_docid_fetch_worker = ResetDocIdFetchWorker(self._api_client(), request)
+        self.reset_docid_fetch_worker.moveToThread(self.reset_docid_fetch_thread)
+        self.reset_docid_fetch_thread.started.connect(self.reset_docid_fetch_worker.run)
+        self.reset_docid_fetch_worker.completed.connect(self._handle_reset_docid_fetch_completed)
+        self.reset_docid_fetch_worker.failed.connect(self._handle_reset_docid_fetch_failed)
+        self.reset_docid_fetch_worker.completed.connect(self.reset_docid_fetch_thread.quit)
+        self.reset_docid_fetch_worker.failed.connect(self.reset_docid_fetch_thread.quit)
+        self.reset_docid_fetch_thread.finished.connect(self.reset_docid_fetch_thread.deleteLater)
+        self.reset_docid_fetch_thread.start()
+
+    def _handle_reset_docid_fetch_completed(self, targets: list[DuplicateDocIdTarget]) -> None:
+        self.fetch_reset_docid_button.setEnabled(True)
+        self.reset_docid_targets = targets
+        self._render_reset_docid_targets(targets)
+        self.run_reset_docid_delete_button.setEnabled(bool(targets))
+        self.reset_docid_status_label.setText(f"Loaded {len(targets)} DELETE_RECORD DocID targets.")
+
+    def _handle_reset_docid_fetch_failed(self, message: str) -> None:
+        self.fetch_reset_docid_button.setEnabled(True)
+        self.run_reset_docid_delete_button.setEnabled(False)
+        self.reset_docid_status_label.setText(f"Fetch failed: {message}")
+        self.append_log(f"Reset DocID target fetch failed: {message}")
+
+    def _render_reset_docid_targets(self, targets: list[DuplicateDocIdTarget]) -> None:
+        self.reset_docid_target_rows = {}
+        self.reset_docid_table.setRowCount(len(targets))
+        division_code = self._selected_division_code()
+        for row, target in enumerate(targets):
+            self.reset_docid_target_rows[target.doc_id] = row
+            select_item = QTableWidgetItem("")
+            select_item.setFlags(select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            select_item.setCheckState(Qt.CheckState.Checked if target.action == "DELETE_RECORD" else Qt.CheckState.Unchecked)
+            self.reset_docid_table.setItem(row, 0, select_item)
+            values = [target.action, target.doc_id, division_code, target.category, target.doc_desc, "Pending", ""]
+            for column, value in enumerate(values, start=1):
+                self.reset_docid_table.setItem(row, column, QTableWidgetItem(str(value)))
+
+    def run_reset_docid_delete(self) -> None:
+        if self._runner_is_active():
+            self.reset_docid_status_label.setText("Runner sedang berjalan.")
+            return
+        selected = self._selected_reset_docid_targets()
+        if not selected:
+            self.reset_docid_status_label.setText("Tidak ada DocID target yang dipilih.")
+            return
+        if not self.reset_docid_dry_run.isChecked() and self.runner_mode.currentText() != "fresh_login_single" and not self._selected_session_active():
+            division_code = self._selected_division_code()
+            message = f"Session aktif untuk {division_code} belum ada. Jalankan Get Session dulu atau pilih runner mode fresh_login_single."
+            self.reset_docid_status_label.setText(message)
+            self.append_log(f"Reset DocID delete blocked: {message}")
+            QMessageBox.warning(self, "Session belum aktif", message)
+            self.tabs.setCurrentIndex(0)
+            return
+        if not self.reset_docid_dry_run.isChecked():
+            answer = QMessageBox.question(self, "Confirm Reset/Delete DocID", f"Delete {len(selected)} DocIDs that match current Config from {self._selected_division_code()}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                self.reset_docid_status_label.setText("Actual delete dibatalkan.")
+                return
+        dry_run = self.reset_docid_dry_run.isChecked()
+        action_label = "dry-run scan" if dry_run else "delete"
+        self.reset_docid_status_label.setText(f"Starting reset {action_label} for {len(selected)} DocIDs...")
+        self.append_log(f"Reset DocID selected targets: {[target.doc_id for target in selected[:20]]}; dry_run={dry_run}")
+        base_payload = self.build_payload(mode=self.runner_mode.currentText(), records=[])
+        payload = RunPayload(
+            period_month=self.period_month.value(),
+            period_year=self.period_year.value(),
+            division_code=self._selected_division_code(),
+            gang_code=base_payload.gang_code,
+            emp_code=base_payload.emp_code,
+            adjustment_type=base_payload.adjustment_type,
+            adjustment_name=base_payload.adjustment_name,
+            category_key=str(self.category.currentData() or base_payload.category_key),
+            runner_mode=base_payload.runner_mode,
+            max_tabs=base_payload.max_tabs,
+            headless=base_payload.headless,
+            only_missing_rows=base_payload.only_missing_rows,
+            row_limit=base_payload.row_limit,
+            records=[],
+            operation="delete_duplicates",
+            duplicate_targets=selected,
+            delete_dry_run=dry_run,
+        )
+        self.start_runner(payload, f"Starting reset {action_label} for {len(selected)} DocIDs...")
+        self.tabs.setCurrentIndex(1)
+
+    def _selected_reset_docid_targets(self) -> list[DuplicateDocIdTarget]:
+        selected: list[DuplicateDocIdTarget] = []
+        for row, target in enumerate(self.reset_docid_targets):
+            item = self.reset_docid_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked and target.action == "DELETE_RECORD":
+                selected.append(target)
+        return selected
+
     def fetch_duplicate_targets(self) -> None:
         if not self._duplicate_category_supported():
             self.duplicate_status_label.setText("Pilih kategori duplicate cleanup yang valid.")
@@ -1993,6 +2216,11 @@ class MainWindow(QMainWindow):
             status = str(payload.get("status") or event_name.rsplit(".", 1)[-1])
             self.duplicate_table.setItem(row, 7, QTableWidgetItem(status))
             self.duplicate_table.setItem(row, 8, QTableWidgetItem(message))
+        reset_row = self.reset_docid_target_rows.get(doc_id)
+        if reset_row is not None:
+            status = str(payload.get("status") or event_name.rsplit(".", 1)[-1])
+            self.reset_docid_table.setItem(reset_row, 6, QTableWidgetItem(status))
+            self.reset_docid_table.setItem(reset_row, 7, QTableWidgetItem(message))
         counts = {"deleted": 0, "dry_run": 0, "not_found": 0, "failed": 0}
         for row_index in range(self.duplicate_table.rowCount()):
             status_item = self.duplicate_table.item(row_index, 7)
@@ -2000,6 +2228,14 @@ class MainWindow(QMainWindow):
             if status in counts:
                 counts[status] += 1
         self.duplicate_status_label.setText(f"Deleted: {counts['deleted']} | Dry-run: {counts['dry_run']} | Not found: {counts['not_found']} | Failed: {counts['failed']}")
+        reset_counts = {"deleted": 0, "dry_run": 0, "not_found": 0, "failed": 0}
+        for row_index in range(self.reset_docid_table.rowCount()):
+            status_item = self.reset_docid_table.item(row_index, 6)
+            status = status_item.text() if status_item else ""
+            if status in reset_counts:
+                reset_counts[status] += 1
+        if reset_row is not None:
+            self.reset_docid_status_label.setText(f"Deleted: {reset_counts['deleted']} | Dry-run: {reset_counts['dry_run']} | Not found: {reset_counts['not_found']} | Failed: {reset_counts['failed']}")
         self._append_event_row(event_name, payload, message)
 
     def _duplicate_category_supported(self) -> bool:
@@ -2021,6 +2257,14 @@ class MainWindow(QMainWindow):
             self.delete_duplicates_button.setText("Scan Selected Duplicates (Dry Run)")
         else:
             self.delete_duplicates_button.setText("Delete Selected Duplicates")
+
+    def _sync_reset_docid_button_text(self) -> None:
+        if not hasattr(self, "run_reset_docid_delete_button") or not hasattr(self, "reset_docid_dry_run"):
+            return
+        if self.reset_docid_dry_run.isChecked():
+            self.run_reset_docid_delete_button.setText("Scan Selected DocIDs (Dry Run)")
+        else:
+            self.run_reset_docid_delete_button.setText("Delete Selected DocIDs")
 
     def _update_record_from_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
         record = self._find_record(str(payload.get("emp_code", "")), str(payload.get("adjustment_name", "")), str(payload.get("detail_key", "") or ""))
@@ -2357,6 +2601,10 @@ class MainWindow(QMainWindow):
             self.fetch_duplicates_button.setEnabled(enabled)
         if hasattr(self, "delete_duplicates_button"):
             self.delete_duplicates_button.setEnabled(enabled and bool(self.duplicate_targets))
+        if hasattr(self, "fetch_reset_docid_button"):
+            self.fetch_reset_docid_button.setEnabled(enabled)
+        if hasattr(self, "run_reset_docid_delete_button"):
+            self.run_reset_docid_delete_button.setEnabled(enabled and bool(self.reset_docid_targets))
         self.stop_button.setEnabled(not enabled)
         if enabled and hasattr(self, "progress_bar"):
             self.progress_bar.setVisible(False)

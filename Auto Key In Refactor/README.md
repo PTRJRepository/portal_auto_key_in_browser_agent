@@ -122,6 +122,18 @@ Aturan penggunaan:
 - Tombol **Fetch Duplicate Targets** hanya membaca rekomendasi `DELETE_OLD` dari API dan menampilkan DocID.
 - Biarkan **Dry run** aktif untuk scan Plantware tanpa delete. Matikan hanya setelah daftar DocID dan session sudah diverifikasi.
 
+## Reset/Delete DocID
+
+Tab **Reset/Delete DocID** mengambil list DocID dari endpoint `adtrans-doc-ids/by-api-key`. Endpoint ini hanya membaca `db_ptrj.PR_ADTRANS` / archive dan tidak menghapus apa pun.
+
+Aturan penggunaan:
+
+- Scope mengikuti tab **Config**: period, division, employee jika diisi, category, adjustment type, dan adjustment name.
+- Untuk SPSI, masa kerja, dan jabatan, app memakai filter category seperti `spsi`, `masa kerja`, atau `jabatan`.
+- Untuk premi/koreksi/potongan spesifik, pilih category lalu isi **Adjustment Name** supaya endpoint hanya mengembalikan DocID yang match, misalnya `PREMI TBS`.
+- Jika field **Gang** diisi tanpa Employee, fetch reset diblokir karena endpoint reset DocID tidak menyediakan filter gang. Kosongkan Gang atau isi Employee untuk scope yang lebih sempit.
+- Biarkan **Dry run** aktif untuk scan Plantware tanpa delete. Matikan hanya setelah daftar DocID sudah benar dan session divisi aktif.
+
 ## Alur Khusus Premi
 
 Kategori Premi mengambil detail dari endpoint grouped:
@@ -144,7 +156,7 @@ Aturan input Premi:
 - Jika ada `subblok`, data dianggap block-based.
 - Jika ada `vehicle_code` atau metadata `nomor_kendaraan` / `NOMOR_KENDARAAN`, data dianggap vehicle-based.
 - Untuk vehicle-based seperti P1B gang B1T `PREMI ANGKUT`, `nomor_kendaraan` dari `metadata_json.items[]` harus dipetakan ke field runner `vehicle_code`, lalu `expense_code` dari metadata dipakai sebagai `vehicle_expense_code`.
-- Untuk koreksi/potongan yang punya `metadata_json`, mode input juga dibaca dari metadata: item dengan `subblok` memakai block-based dan `divisioncode`/`field_code`, sedangkan item dengan `nomor_kendaraan` memakai vehicle-based. Jangan menginput total row jika metadata memiliki beberapa detail.
+- Untuk koreksi/potongan yang punya `metadata_json`, mode input juga dibaca dari metadata: item block-based memakai `divisioncode`/turunan gang untuk Plantware Division Code dan `subblok` atau `fieldcode`/`field_code` untuk Plantware Field No Code/SubBlk, sedangkan item dengan `nomor_kendaraan` memakai vehicle-based. Jangan menginput total row jika metadata memiliki beberapa detail.
 
 ### Retry Premi Setelah Ada Failed
 

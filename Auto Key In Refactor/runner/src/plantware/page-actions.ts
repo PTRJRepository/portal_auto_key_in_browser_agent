@@ -104,7 +104,9 @@ export async function fillAdjustmentRow(
     await page.waitForTimeout(3000);
   }
 
-  const detailKind = premiumDetailKind(record);
+  await fillDescriptionField(page, record, category);
+
+  const detailKind = await resolvePremiumDetailKindAfterAdCode(page, record);
   if (detailKind === "blok") {
     await fillBlockBasedMonthlyAllowanceDetails(page, record);
   } else if (detailKind === "kendaraan") {
@@ -113,15 +115,7 @@ export async function fillAdjustmentRow(
     await selectGangAutocompleteAfterAdCode(page, record, autocompleteCountBeforeAdCode);
   }
 
-  const descField = page.locator("#MainContent_txtDocDesc");
-  if (await descField.isVisible({ timeout: 15000 }).catch(() => false)) {
-    const description = category.description(record);
-    const currentDescription = await descField.inputValue().catch(() => "");
-    if (shouldFillAutocompleteValue(currentDescription, description)) {
-      await descField.fill(description);
-      await descField.press("Tab").catch(() => {});
-    }
-  }
+  await fillDescriptionField(page, record, category);
 
   await form.amountField.waitFor({ state: "visible", timeout: 15000 });
   await form.amountField.clear();
@@ -141,7 +135,7 @@ export async function fillAdjustmentRow(
 
   await form.addButton.waitFor({ state: "visible", timeout: 5000 });
   await form.addButton.click({ noWaitAfter: true });
-  await waitForAddCompleted(page, record, category);
+  await waitForAddCompleted(page, record, category, detailKind);
 }
 
 export async function submitTab(page: Page): Promise<void> {
@@ -271,14 +265,14 @@ export function blockDivisionAutocompleteValue(record: ManualAdjustmentRecord): 
   const explicit = (record.divisioncode ?? "").trim().toUpperCase();
   if (explicit) return explicit;
   const gang = compactCode(record.gang_code ?? "");
-  if (gang.length < 2) throw new Error(`Gang code is required for block-based PREMI row: ${record.emp_code}`);
+  if (gang.length < 2) throw new Error(`Gang code is required for block-based adjustment row: ${record.emp_code}`);
   return `${gang[0]} ${gang[1]}`;
 }
 
 export function subBlockAutocompleteValue(record: ManualAdjustmentRecord): string {
   const raw = (record.subblok ?? record.subblok_raw ?? "").trim();
   const normalized = raw.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
-  if (!normalized) throw new Error(`Sub block is required for block-based PREMI row: ${record.emp_code}`);
+  if (!normalized) throw new Error(`Sub block is required for block-based adjustment row: ${record.emp_code}`);
 
   const divisionSuffix = compactCode(blockDivisionAutocompleteValue(record));
   const withDivision = (code: string): string => {
@@ -310,11 +304,80 @@ export function vehicleExpenseAutocompleteValue(record: ManualAdjustmentRecord):
   return value;
 }
 
+function hasSubBlockAutocompleteValue(record: ManualAdjustmentRecord): boolean {
+  return Boolean((record.subblok ?? record.subblok_raw ?? "").trim().replace(/[^0-9A-Za-z]/g, ""));
+}
+
+function hasVehicleAutocompleteValue(record: ManualAdjustmentRecord): boolean {
+  return Boolean((record.vehicle_code ?? "").trim());
+}
+
+function optionalVehicleExpenseAutocompleteValue(record: ManualAdjustmentRecord): string {
+  return [record.vehicle_expense_code, record.expense_code]
+    .map((candidate) => (candidate ?? "").trim().toUpperCase())
+    .find(Boolean) ?? "";
+}
+
 export interface AutocompleteFieldPlan {
   key: string;
   selectSelector: string;
   inputSelector: string;
   value: string;
+  waitForNetworkIdle?: boolean;
+}
+
+export const monthlyAllowanceInputMappings = {
+  blockDivision: {
+    label: "Division Code",
+    metadataAliases: ["divisioncode", "field_division_code", "fieldDivisionCode"],
+    selectSelector: "#MainContent_MultiDimAcc_ddlBlock",
+    inputSelector: "#MainContent_MultiDimAcc_ddlBlock + input.ui-autocomplete-input"
+  },
+  subblok: {
+    label: "Field No Code",
+    metadataAliases: ["subblok", "sub_blok", "sub_block", "fieldcode", "field_code"],
+    selectSelector: "#MainContent_MultiDimAcc_ddlSubBlk",
+    inputSelector: "#MainContent_MultiDimAcc_ddlSubBlk + input.ui-autocomplete-input"
+  },
+  blockExpense: {
+    label: "Expense Code",
+    metadataAliases: ["expense_code", "expenseCode", "exp_code", "expCode"],
+    selectSelector: "#MainContent_MultiDimAcc_ddlExpCode",
+    inputSelector: "#MainContent_MultiDimAcc_ddlExpCode + input.ui-autocomplete-input"
+  },
+  vehicle: {
+    label: "Vehicle Code",
+    metadataAliases: ["vehicle_code", "vehicleCode", "nomor_kendaraan", "NOMOR_KENDARAAN", "vehicle_number"],
+    selectSelector: "#MainContent_MultiDimAcc_ddlVehCode",
+    inputSelector: "#MainContent_MultiDimAcc_ddlVehCode + input.ui-autocomplete-input"
+  },
+  vehicleExpense: {
+    label: "Vehicle Expense Code",
+    metadataAliases: ["vehicle_expense_code", "vehicleExpenseCode", "expense_code", "expenseCode"],
+    selectSelector: "#MainContent_MultiDimAcc_ddlVehExpCode",
+    inputSelector: "#MainContent_MultiDimAcc_ddlVehExpCode + input.ui-autocomplete-input"
+  }
+} as const;
+
+export function monthlyAllowanceDetailKindFromDomSnapshot(controlIds: string[], labels: string[]): PremiumDetailKind {
+  const idText = controlIds.join(" ").toLowerCase();
+  const labelText = normalizeText(labels.join(" "));
+  if (
+    idText.includes("ddlsubblk") ||
+    idText.includes("trsubblkcode") ||
+    labelText.includes("FIELD NO CODE") ||
+    labelText.includes("SUB BLOCK")
+  ) {
+    return "blok";
+  }
+  if (
+    idText.includes("ddlvehcode") ||
+    idText.includes("trvehcode") ||
+    labelText.includes("VEHICLE CODE")
+  ) {
+    return "kendaraan";
+  }
+  return "";
 }
 
 export function shouldUseSingleRemainingAutocompleteFallback(field: AutocompleteFieldPlan): boolean {
@@ -357,45 +420,80 @@ export function adcodeAutocompleteField(record: ManualAdjustmentRecord, category
 export function blockDivisionAutocompleteField(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
   return {
     key: "block",
-    selectSelector: "#MainContent_MultiDimAcc_ddlBlock",
-    inputSelector: "#MainContent_MultiDimAcc_ddlBlock + input.ui-autocomplete-input",
-    value: compactCode(blockDivisionAutocompleteValue(record))
+    selectSelector: monthlyAllowanceInputMappings.blockDivision.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.blockDivision.inputSelector,
+    value: compactCode(blockDivisionAutocompleteValue(record)),
+    waitForNetworkIdle: false
   };
 }
 
 export function subBlockAutocompleteField(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
   return {
     key: "subblok",
-    selectSelector: "#MainContent_MultiDimAcc_ddlSubBlk",
-    inputSelector: "#MainContent_MultiDimAcc_ddlSubBlk + input.ui-autocomplete-input",
-    value: subBlockAutocompleteValue(record)
+    selectSelector: monthlyAllowanceInputMappings.subblok.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.subblok.inputSelector,
+    value: subBlockAutocompleteValue(record),
+    waitForNetworkIdle: false
   };
 }
 
 export function blockExpenseAutocompleteField(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
   return {
     key: "expense",
-    selectSelector: "#MainContent_MultiDimAcc_ddlExpCode",
-    inputSelector: "#MainContent_MultiDimAcc_ddlExpCode + input.ui-autocomplete-input",
-    value: blockExpenseAutocompleteValue(record)
+    selectSelector: monthlyAllowanceInputMappings.blockExpense.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.blockExpense.inputSelector,
+    value: blockExpenseAutocompleteValue(record),
+    waitForNetworkIdle: false
   };
 }
 
 export function vehicleAutocompleteField(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
   return {
     key: "vehicle",
-    selectSelector: "#MainContent_MultiDimAcc_ddlVehCode",
-    inputSelector: "#MainContent_MultiDimAcc_ddlVehCode + input.ui-autocomplete-input",
-    value: vehicleAutocompleteValue(record)
+    selectSelector: monthlyAllowanceInputMappings.vehicle.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.vehicle.inputSelector,
+    value: vehicleAutocompleteValue(record),
+    waitForNetworkIdle: false
   };
 }
 
 export function vehicleExpenseAutocompleteField(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
   return {
     key: "vehicle_expense",
-    selectSelector: "#MainContent_MultiDimAcc_ddlVehExpCode",
-    inputSelector: "#MainContent_MultiDimAcc_ddlVehExpCode + input.ui-autocomplete-input",
-    value: vehicleExpenseAutocompleteValue(record)
+    selectSelector: monthlyAllowanceInputMappings.vehicleExpense.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.vehicleExpense.inputSelector,
+    value: vehicleExpenseAutocompleteValue(record),
+    waitForNetworkIdle: false
+  };
+}
+
+function subBlockAutocompleteFieldOrAnyAvailable(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
+  return {
+    key: "subblok",
+    selectSelector: monthlyAllowanceInputMappings.subblok.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.subblok.inputSelector,
+    value: hasSubBlockAutocompleteValue(record) ? subBlockAutocompleteValue(record) : "",
+    waitForNetworkIdle: false
+  };
+}
+
+function vehicleAutocompleteFieldOrAnyAvailable(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
+  return {
+    key: "vehicle",
+    selectSelector: monthlyAllowanceInputMappings.vehicle.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.vehicle.inputSelector,
+    value: hasVehicleAutocompleteValue(record) ? vehicleAutocompleteValue(record) : "",
+    waitForNetworkIdle: false
+  };
+}
+
+function vehicleExpenseAutocompleteFieldOrAnyAvailable(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
+  return {
+    key: "vehicle_expense",
+    selectSelector: monthlyAllowanceInputMappings.vehicleExpense.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.vehicleExpense.inputSelector,
+    value: optionalVehicleExpenseAutocompleteValue(record),
+    waitForNetworkIdle: false
   };
 }
 
@@ -409,22 +507,60 @@ function getDetailFormControls(page: Page) {
 }
 
 async function fillBlockBasedMonthlyAllowanceDetails(page: Page, record: ManualAdjustmentRecord): Promise<void> {
+  const blockField = blockDivisionAutocompleteField(record);
+  const subBlockField = subBlockAutocompleteFieldOrAnyAvailable(record);
+  const expenseField = blockExpenseAutocompleteField(record);
+
   await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlSubBlk, #MainContent_MultiDimAcc_trSubBlkCode", "block/sub block");
-  await selectAutocompleteField(page, blockDivisionAutocompleteField(record), 2000);
-  await page.waitForLoadState("networkidle").catch(() => {});
+  await selectAutocompleteField(page, blockField, 2000);
   await page.waitForTimeout(1000);
-  await selectAutocompleteField(page, subBlockAutocompleteField(record), 2000);
-  await page.waitForLoadState("networkidle").catch(() => {});
+  await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlSubBlk, #MainContent_MultiDimAcc_trSubBlkCode", "block/sub block after division");
+  await selectAutocompleteFieldAfterOptionsReady(page, subBlockField, 2000, "sub block after division");
   await page.waitForTimeout(1000);
-  await selectAutocompleteField(page, blockExpenseAutocompleteField(record), 1000);
+  await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlExpCode, #MainContent_MultiDimAcc_trExpCode", "block expense after sub block");
+  await waitForAutocompleteOptionReady(page, expenseField, "block expense after sub block");
+  await selectAutocompleteField(page, expenseField, 1000);
+}
+
+async function fillDescriptionField(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
+  const descField = page.locator("#MainContent_txtDocDesc");
+  if (await descField.isVisible({ timeout: 15000 }).catch(() => false)) {
+    const description = category.description(record);
+    const currentDescription = await descField.inputValue().catch(() => "");
+    if (shouldFillAutocompleteValue(currentDescription, description)) {
+      await descField.fill(description);
+      await descField.press("Tab").catch(() => {});
+    }
+  }
 }
 
 async function fillVehicleBasedMonthlyAllowanceDetails(page: Page, record: ManualAdjustmentRecord): Promise<void> {
   await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlVehCode, #MainContent_MultiDimAcc_trVehCode", "vehicle");
-  await selectAutocompleteField(page, vehicleAutocompleteField(record), 2000);
+  await selectAutocompleteField(page, vehicleAutocompleteFieldOrAnyAvailable(record), 2000);
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(1000);
-  await selectAutocompleteField(page, vehicleExpenseAutocompleteField(record), 1000);
+  await selectAutocompleteField(page, vehicleExpenseAutocompleteFieldOrAnyAvailable(record), 1000);
+}
+
+async function resolvePremiumDetailKindAfterAdCode(page: Page, record: ManualAdjustmentRecord): Promise<PremiumDetailKind> {
+  const metadataKind = premiumDetailKind(record);
+  if (metadataKind) return metadataKind;
+
+  return detectMonthlyAllowanceDetailKind(page);
+}
+
+async function detectMonthlyAllowanceDetailKind(page: Page): Promise<PremiumDetailKind> {
+  if (await page.locator("#MainContent_MultiDimAcc_ddlSubBlk, #MainContent_MultiDimAcc_trSubBlkCode").first().isVisible({ timeout: 1000 }).catch(() => false)) {
+    return "blok";
+  }
+  if (await page.locator("#MainContent_MultiDimAcc_ddlVehCode, #MainContent_MultiDimAcc_trVehCode").first().isVisible({ timeout: 1000 }).catch(() => false)) {
+    return "kendaraan";
+  }
+  const labels = await Promise.all([
+    page.locator("#MainContent_MultiDimAcc_lblSubBlk").textContent({ timeout: 500 }).catch(() => ""),
+    page.locator("#MainContent_MultiDimAcc_lblVehCode").textContent({ timeout: 500 }).catch(() => "")
+  ]);
+  return monthlyAllowanceDetailKindFromDomSnapshot([], labels.map((label) => label ?? ""));
 }
 
 function comboboxInputForSelect(page: Page, selectSelector: string) {
@@ -438,6 +574,61 @@ async function waitForMonthlyAllowanceSelector(page: Page, selector: string, lab
     ).catch(() => []);
     throw new Error(`Monthly allowance ${label} controls not found after AD code; available controls: ${available.join(", ") || "-"}`);
   });
+}
+
+async function waitForAutocompleteOptionReady(page: Page, field: AutocompleteFieldPlan, label: string): Promise<void> {
+  const deadline = Date.now() + 10000;
+  const optionLocator = page.locator(`${field.selectSelector} option`);
+  let options: string[] = [];
+  while (Date.now() < deadline) {
+    options = [];
+    const count = await optionLocator.count().catch(() => 0);
+    for (let index = 0; index < count; index++) {
+      const option = optionLocator.nth(index);
+      const optionValue = await option.getAttribute("value", { timeout: 200 }).catch(() => "") ?? "";
+      const optionText = await option.textContent({ timeout: 200 }).catch(() => "") ?? "";
+      options.push(`${optionValue}:${optionText}`);
+      if (autocompleteOptionMatches(field.value, optionValue, optionText)) return;
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`Monthly allowance ${label} option not ready for ${field.value}; available options: ${options.slice(0, 20).join(", ") || "-"}`);
+}
+
+async function selectAutocompleteFieldAfterOptionsReady(
+  page: Page,
+  field: AutocompleteFieldPlan,
+  waitMs: number,
+  label: string
+): Promise<void> {
+  if (!field.value.trim()) {
+    await selectAnyAvailableAutocompleteField(page, field, waitMs);
+    return;
+  }
+  try {
+    await waitForAutocompleteOptionReady(page, field, label);
+    await selectAutocompleteField(page, field, waitMs);
+  } catch (error) {
+    if (!shouldUseAnyAvailableAutocompleteFallback(field)) throw error;
+    await selectAnyAvailableAutocompleteField(page, field, waitMs, error);
+  }
+}
+
+function autocompleteOptionMatches(value: string, optionValue: string, optionText: string): boolean {
+  const compact = (text: string) => normalizeText(text).replace(/[^0-9A-Z]/g, "");
+  const wanted = normalizeText(value);
+  const wantedCompact = compact(value);
+  const normalizedValue = normalizeText(optionValue);
+  const normalizedText = normalizeText(optionText);
+  const compactValue = compact(optionValue);
+  const compactText = compact(optionText);
+  return Boolean(
+    normalizedValue === wanted ||
+    normalizedText === wanted ||
+    normalizedValue.includes(wanted) ||
+    normalizedText.includes(wanted) ||
+    (wantedCompact && (compactValue === wantedCompact || compactText.includes(wantedCompact)))
+  );
 }
 
 async function selectGangAutocompleteAfterAdCode(page: Page, record: ManualAdjustmentRecord, countBeforeAdCode: number): Promise<void> {
@@ -460,7 +651,12 @@ async function selectGangAutocompleteAfterAdCode(page: Page, record: ManualAdjus
   await selectAutocomplete(gangInput, page, gangPrefix, 2000);
 }
 
-async function waitForAddCompleted(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
+async function waitForAddCompleted(
+  page: Page,
+  record: ManualAdjustmentRecord,
+  category: CategoryStrategy,
+  submittedDetailKind: PremiumDetailKind = ""
+): Promise<void> {
   await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
   await page.waitForTimeout(1000);
   const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span:has-text('required'), span[style*='color: red']").textContent().catch(() => null);
@@ -470,7 +666,7 @@ async function waitForAddCompleted(page: Page, record: ManualAdjustmentRecord, c
   if (amountNum === 0 || !amountValue) return;
   if (amountNum !== record.amount) return;
   if (await rowAlreadyExists(page, record, category)) return;
-  if (premiumDetailKind(record)) return;
+  if (premiumDetailKind(record) || submittedDetailKind) return;
   if (category.requiresGangAfterAdCode) return;
   throw new Error(`Add not confirmed for ${record.emp_code} / ${category.adcode(record)}`);
 }
@@ -502,11 +698,22 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
   const locator = page.locator(field.inputSelector).first();
   await locator.waitFor({ state: "visible", timeout: 15000 });
   const currentValue = await locator.inputValue().catch(() => "");
+  if (!field.value.trim()) {
+    if (!shouldUseAnyAvailableAutocompleteFallback(field)) {
+      throw new Error(`Autocomplete value is required for ${field.key}`);
+    }
+    await selectAnyAvailableAutocompleteField(page, field, waitMs);
+    return;
+  }
   if (!shouldFillAutocompleteValue(currentValue, field.value)) return;
 
   const selectedBySelect = await selectPairedHiddenSelect(page, field);
   if (selectedBySelect) {
-    await page.waitForLoadState("networkidle").catch(() => {});
+    if (field.waitForNetworkIdle === false) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    } else {
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    }
     await page.waitForTimeout(waitMs);
     const selectedValue = await locator.inputValue().catch(() => "");
     if (!selectedValue.trim()) {
@@ -518,13 +725,60 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
   try {
     await typeAutocompleteAndChooseMatchingItem(locator, page, field);
   } catch (error) {
-    if (!shouldUseSingleRemainingAutocompleteFallback(field)) throw error;
-    await typeAutocompleteSlowlyAndChooseSingleRemainingItem(locator, page, field, error);
+    if (shouldUseSingleRemainingAutocompleteFallback(field)) {
+      try {
+        await typeAutocompleteSlowlyAndChooseSingleRemainingItem(locator, page, field, error);
+      } catch (fallbackError) {
+        await selectAnyAvailableAutocompleteField(page, field, waitMs, fallbackError);
+      }
+    } else if (shouldUseAnyAvailableAutocompleteFallback(field)) {
+      await selectAnyAvailableAutocompleteField(page, field, waitMs, error);
+    } else {
+      throw error;
+    }
   }
   await page.waitForTimeout(500);
   const selectedValue = await locator.inputValue().catch(() => "");
   if (!selectedValue.trim()) {
     throw new Error(`Autocomplete selection failed for ${field.key}: ${field.value}`);
+  }
+}
+
+function shouldUseAnyAvailableAutocompleteFallback(field: AutocompleteFieldPlan): boolean {
+  return field.key === "subblok" || field.key === "vehicle" || field.key === "vehicle_expense";
+}
+
+async function selectAnyAvailableAutocompleteField(
+  page: Page,
+  field: AutocompleteFieldPlan,
+  waitMs: number,
+  cause?: unknown
+): Promise<void> {
+  const locator = page.locator(field.inputSelector).first();
+  await locator.waitFor({ state: "visible", timeout: 15000 });
+  await locator.click();
+  await locator.clear();
+  await page.locator(".ui-menu-item:visible").first().waitFor({ state: "hidden", timeout: 1000 }).catch(() => {});
+  await locator.pressSequentially(" ", { delay: 100 });
+  await page.waitForTimeout(Math.max(1000, waitMs));
+
+  const menuItems = page.locator(".ui-menu-item:visible");
+  await menuItems.first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  const count = await menuItems.count().catch(() => 0);
+  if (count > 0) {
+    const randomIndex = count === 1 ? 0 : Math.floor(Math.random() * count);
+    await menuItems.nth(randomIndex).click();
+  } else {
+    await locator.press("ArrowDown");
+    await page.waitForTimeout(200);
+    await locator.press("Enter");
+  }
+
+  await page.waitForTimeout(500);
+  const selectedValue = await locator.inputValue().catch(() => "");
+  if (!selectedValue.trim()) {
+    const reason = cause instanceof Error ? `; fallback cause: ${cause.message}` : "";
+    throw new Error(`Autocomplete fallback failed for ${field.key} at ${field.inputSelector}${reason}`);
   }
 }
 

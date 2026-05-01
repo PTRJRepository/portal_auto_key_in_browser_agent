@@ -397,6 +397,76 @@ class ManualAdjustmentApiClient:
             raise RuntimeError("Sync status API returned invalid payload shape")
         return payload
 
+    def get_adtrans_doc_id_delete_targets(
+        self,
+        period_month: int,
+        period_year: int,
+        division_code: str | None = None,
+        filters: list[str] | None = None,
+        adjustment_type: str | None = None,
+        adjustment_name: str | None = None,
+        category_key: str = "",
+        emp_code: str | None = None,
+        doc_desc: str | None = None,
+    ) -> list[DuplicateDocIdTarget]:
+        url = f"{self.base_url}/payroll/manual-adjustment/adtrans-doc-ids/by-api-key"
+        body: dict[str, Any] = {
+            "period_month": period_month,
+            "period_year": period_year,
+        }
+        if emp_code and emp_code.strip():
+            body["emp_codes"] = [emp_code.strip().upper()]
+        elif division_code and division_code.strip():
+            body["division_code"] = division_code.strip().upper()
+        clean_filters = [item.strip() for item in filters or [] if item.strip()]
+        if clean_filters:
+            body["filters"] = clean_filters
+        if adjustment_type and adjustment_type.strip():
+            body["adjustment_type"] = adjustment_type.strip().upper()
+        if adjustment_name and adjustment_name.strip():
+            body["adjustment_name"] = adjustment_name.strip()
+        if doc_desc and doc_desc.strip():
+            body["doc_desc"] = doc_desc.strip()
+        response = requests.post(
+            url,
+            json=body,
+            headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("success", False):
+            message = payload.get("message") or payload.get("error") or "ADTRANS DocID API returned success=false"
+            raise RuntimeError(str(message))
+        doc_ids = payload.get("doc_ids")
+        if not isinstance(doc_ids, list):
+            data = payload.get("data", {})
+            doc_ids = data.get("doc_ids", []) if isinstance(data, dict) else []
+        if not isinstance(doc_ids, list):
+            raise RuntimeError("ADTRANS DocID API returned invalid doc_ids shape")
+        label = (doc_desc or adjustment_name or ", ".join(clean_filters) or adjustment_type or "ADTRANS").strip()
+        targets: list[DuplicateDocIdTarget] = []
+        seen: set[str] = set()
+        for value in doc_ids:
+            doc_id = str(value or "").strip()
+            if not doc_id or doc_id.upper() in seen:
+                continue
+            seen.add(doc_id.upper())
+            targets.append(DuplicateDocIdTarget(
+                master_id="",
+                doc_id=doc_id,
+                doc_date="",
+                emp_code=(emp_code or "").strip().upper(),
+                emp_name="",
+                doc_desc=label,
+                amount=None,
+                action="DELETE_RECORD",
+                keep_doc_id="",
+                category=category_key,
+                raw={"source": "adtrans-doc-ids", "doc_id": doc_id, "action": "DELETE_RECORD"},
+            ))
+        return targets
+
     def get_duplicate_delete_targets(self, period_month: int, period_year: int, division_code: str, filters: list[str]) -> list[DuplicateDocIdTarget]:
         payload = self.check_adtrans_report(period_month, period_year, filters, division_code=division_code)
         data = payload.get("data", {})

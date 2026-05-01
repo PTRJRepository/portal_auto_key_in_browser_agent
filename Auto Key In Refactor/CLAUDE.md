@@ -89,7 +89,7 @@ The runner is a Node/TypeScript CLI. `runner/src/cli.ts` routes by `runner_mode`
 
 Sessions are saved per division as `runner/data/sessions/session-<DIVISION>.json`. The UI treats a session as active when the saved division matches and its age is under 240 minutes. Real runs for session-reuse modes should use the same division code in the payload and session file.
 
-Monthly allowance AD Code forms can be block-based or vehicle-based after the AD Code postback. See `docs/MONTHLY-ALLOWANCE-DOM-PATTERNS.md` before changing runner form-fill logic for block/sub-block or vehicle expense rows. In manual adjustment metadata, `subblok` means block-based and uses `field_code`/`divisioncode` or derived gang division; `nomor_kendaraan`/`vehicle_code` means vehicle-based, and metadata `expense_code` maps to the Plantware Vehicle Expense Code.
+Monthly allowance AD Code forms can be block-based or vehicle-based after the AD Code postback. See `docs/MONTHLY-ALLOWANCE-DOM-PATTERNS.md` before changing runner form-fill logic for block/sub-block or vehicle expense rows. In manual adjustment metadata, `subblok` means block-based; `fieldcode`/`field_code` maps to Plantware Field No Code/SubBlk, while Plantware Division Code uses `divisioncode` or the derived gang division. `nomor_kendaraan`/`vehicle_code` means vehicle-based, and metadata `expense_code` maps to the Plantware Vehicle Expense Code.
 
 ## Local Configuration and Generated Files
 

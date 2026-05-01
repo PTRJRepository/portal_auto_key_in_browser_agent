@@ -7,7 +7,21 @@ from typing import Any
 
 
 AD_CODE_RE = re.compile(r"\bAD\s*CODE\s*:\s*([^|\-]+)", re.IGNORECASE)
-SUBBLOK_ALIASES = ("subblok", "sub_block", "subBlock", "SUBBLOK")
+SUBBLOK_ALIASES = (
+    "subblok",
+    "sub_blok",
+    "sub_block",
+    "subBlok",
+    "subBlock",
+    "fieldcode",
+    "field_code",
+    "fieldCode",
+    "FieldCode",
+    "field_no_code",
+    "fieldNoCode",
+    "SUBBLOK",
+    "SUB_BLOK",
+)
 VEHICLE_CODE_ALIASES = (
     "vehicle_code",
     "vehicleCode",
@@ -262,12 +276,12 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
     estate = text("estate", "estate_code", "estateCode", "Estate").upper()
     raw_division_code = text("division_code", "divisionCode", "DivisionCode").upper()
     division_code = estate or raw_division_code
-    divisioncode = text("divisioncode", "Divisioncode", "field_division_code", "fieldDivisionCode", "field_code", "fieldCode", "fieldcode", "FieldCode").upper()
+    divisioncode = text("divisioncode", "Divisioncode", "field_division_code", "fieldDivisionCode").upper()
     if not divisioncode and estate and raw_division_code and raw_division_code != estate:
         divisioncode = raw_division_code
     if not divisioncode:
         divisioncode = divisioncode_from_gang(gang_code)
-    subblok_raw = text("subblok_raw", "subblokRaw", "sub_block_raw", "subBlockRaw")
+    subblok_raw = text("subblok_raw", "subblokRaw", "sub_block_raw", "subBlockRaw", *SUBBLOK_ALIASES)
     subblok = normalize_subblok_code(text(*SUBBLOK_ALIASES) or subblok_raw)
     expense_code = text("expense_code", "expenseCode", "exp_code", "expCode").upper()
     vehicle_code = text(*VEHICLE_CODE_ALIASES).upper()

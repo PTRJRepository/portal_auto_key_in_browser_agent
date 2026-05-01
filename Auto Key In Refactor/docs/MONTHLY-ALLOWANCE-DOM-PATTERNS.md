@@ -206,6 +206,7 @@ Endpoint field mapping used by the refactor:
 | `estate` / `estate_code` | `estate` and `division_code` | Plantware top-level Charge To, for example `AB1` or `P1B`. |
 | transaction `division_code` | `divisioncode` | Block division code derived from gang, two characters separated by a space, for example `G 1` from `G1H` or `C 2` from `C2H`. |
 | `detail_type: "blok"` with `subblok` | block-based monthly allowance | Fill `ddlBlock`, `ddlSubBlk`, then `ddlExpCode`. |
+| `fieldcode` / `field_code` on block metadata | `subblok` | Plantware labels `ddlSubBlk` as `Field No Code`; this value must fill SubBlk, not Division Code. |
 | `detail_type: "kendaraan"` with vehicle fields | vehicle-based monthly allowance | Fill `ddlVehCode`, then `ddlVehExpCode`. |
 | `ad_code` / `ad_code_desc` | AD Code / task description | Prefer `ad_code_desc` / `task_desc` display text like `(AL) ...` for Plantware ADCode autocomplete. Keep raw `ad_code` / `task_code` only for trace. |
 

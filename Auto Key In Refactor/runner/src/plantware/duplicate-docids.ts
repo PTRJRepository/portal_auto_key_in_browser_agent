@@ -77,6 +77,20 @@ export async function findVisibleTarget(page: Page, targets: Set<string>): Promi
   return (await findVisibleTargets(page, targets))[0] ?? null;
 }
 
+export async function searchVisibleTargetByDocId(page: Page, target: DuplicateDocIdTarget): Promise<VisibleTargetMatch | null> {
+  const searchInput = page.locator("#MainContent_txtDocID");
+  const searchVisible = await searchInput.isVisible({ timeout: 1000 }).catch(() => false);
+  if (!searchVisible) return null;
+  await searchInput.fill(target.doc_id);
+  await Promise.all([
+    page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {}),
+    page.locator("#MainContent_btnSearch").click({ noWaitAfter: true })
+  ]);
+  await assertListPage(page);
+  const keys = new Set([targetKey(target), `DOC:${normalizeDocId(target.doc_id)}`]);
+  return (await findVisibleTargetMatches(page, keys))[0] ?? null;
+}
+
 export async function goToNextListPage(page: Page): Promise<boolean> {
   const beforeSignature = await listPageSignature(page);
   const nextButton = page.locator("#MainContent_btnNext");
