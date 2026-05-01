@@ -89,6 +89,8 @@ The runner is a Node/TypeScript CLI. `runner/src/cli.ts` routes by `runner_mode`
 
 Sessions are saved per division as `runner/data/sessions/session-<DIVISION>.json`. The UI treats a session as active when the saved division matches and its age is under 240 minutes. Real runs for session-reuse modes should use the same division code in the payload and session file.
 
+Monthly allowance AD Code forms can be block-based or vehicle-based after the AD Code postback. See `docs/MONTHLY-ALLOWANCE-DOM-PATTERNS.md` before changing runner form-fill logic for block/sub-block or vehicle expense rows.
+
 ## Local Configuration and Generated Files
 
 Runtime configuration comes primarily from `.env`; `configs/app.json` is local override data and may contain secrets. Do not rely on committed values for credentials.

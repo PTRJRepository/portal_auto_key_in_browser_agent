@@ -57,7 +57,7 @@ class AppConfig:
     runner_command: str = "node runner/dist/cli.js"
     default_period_month: int = 4
     default_period_year: int = 2026
-    default_division_code: str = "P1B"
+    default_division_code: str = "AB1"
     default_runner_mode: str = "multi_tab_shared_session"
     default_max_tabs: int = 5
     headless: bool = False
@@ -95,7 +95,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         runner_command=str(os.getenv("AUTO_KEY_IN_RUNNER_COMMAND") or data.get("runner_command", "node runner/dist/cli.js")),
         default_period_month=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_MONTH", int(data.get("default_period_month", 4))),
         default_period_year=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_YEAR", int(data.get("default_period_year", 2026))),
-        default_division_code=str(os.getenv("AUTO_KEY_IN_DEFAULT_DIVISION_CODE") or data.get("default_division_code", "P1B")),
+        default_division_code=str(os.getenv("AUTO_KEY_IN_DEFAULT_DIVISION_CODE") or data.get("default_division_code", "AB1")),
         default_runner_mode=str(os.getenv("AUTO_KEY_IN_DEFAULT_RUNNER_MODE") or data.get("default_runner_mode", "multi_tab_shared_session")),
         default_max_tabs=env_int("AUTO_KEY_IN_DEFAULT_MAX_TABS", int(data.get("default_max_tabs", 5))),
         headless=env_bool("AUTO_KEY_IN_HEADLESS", bool(data.get("headless", False))),

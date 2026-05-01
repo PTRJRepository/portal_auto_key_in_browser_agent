@@ -22,10 +22,23 @@ from PySide6.QtWidgets import (
 from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
 from app.core.category_registry import CategoryRegistry
 from app.core.config import AppConfig
-from app.core.models import ManualAdjustmentRecord, RunPayload
+from app.core.models import ManualAdjustmentRecord, RunPayload, enrich_records_with_automation_options
 from app.core.run_service import filter_by_category
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 from app.ui.themes import AppTheme
+
+def automation_option_categories_for_records(records: list[ManualAdjustmentRecord]) -> list[str]:
+    category_by_type = {
+        "PREMI": "premi",
+        "POTONGAN_KOTOR": "koreksi",
+        "POTONGAN_BERSIH": "potongan_upah_bersih",
+    }
+    categories: list[str] = []
+    for record in records:
+        category = category_by_type.get(record.adjustment_type)
+        if category and category not in categories:
+            categories.append(category)
+    return categories
 
 
 class DivisionFetchWorker:
@@ -57,8 +70,37 @@ class DivisionFetchWorker:
             adjustment_type=self.adjustment_type,
             adjustment_name=self.adjustment_name,
         )
+        if self.category_key in {"premi", "premi_tunjangan"} or query.requests_premium():
+            query = query.with_grouped_premium_details()
         records = self.client.get_adjustments(query)
+        records = self._enrich_manual_automation_details(records, query)
         return filter_by_category(records, self.category_key)
+
+    def _enrich_manual_automation_details(
+        self,
+        records: list[ManualAdjustmentRecord],
+        query: ManualAdjustmentQuery,
+    ) -> list[ManualAdjustmentRecord]:
+        needs_detail = [
+            record for record in records
+            if record.adjustment_type in {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"} and not (record.ad_code and record.task_code and record.task_desc)
+        ]
+        if not needs_detail:
+            return records
+        try:
+            categories = automation_option_categories_for_records(needs_detail)
+            if not categories:
+                return records
+            options = self.client.get_automation_options(
+                division_code=self.division_code,
+                categories=categories,
+                limit=200,
+            )
+            if not isinstance(options, list):
+                return records
+            return enrich_records_with_automation_options(records, options)
+        except Exception:
+            return records
 
 
 class DivisionRunDialog(QDialog):

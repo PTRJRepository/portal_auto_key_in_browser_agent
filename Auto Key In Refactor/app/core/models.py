@@ -11,6 +11,31 @@ def extract_ad_code_from_remarks(remarks: str) -> str:
     match = AD_CODE_RE.search(remarks or "")
     return match.group(1).strip().upper() if match else ""
 
+def divisioncode_from_gang(gang_code: str) -> str:
+    compact = re.sub(r"\s+", "", gang_code or "").upper()
+    if len(compact) < 2:
+        return ""
+    return f"{compact[0]} {compact[1]}"
+
+def normalize_subblok_code(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z]", "", value or "").upper()
+
+def normalize_detail_type(value: str, *, subblok: str = "", vehicle_code: str = "") -> str:
+    normalized = (value or "").strip().lower()
+    aliases = {
+        "block": "blok",
+        "subblok": "blok",
+        "sub_block": "blok",
+        "vehicle": "kendaraan",
+        "veh": "kendaraan",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if not normalized and subblok:
+        return "blok"
+    if not normalized and vehicle_code:
+        return "kendaraan"
+    return normalized
+
 @dataclass(frozen=True)
 class AutomationOption:
     category: str
@@ -31,7 +56,7 @@ def normalize_automation_option(raw: dict[str, Any]) -> AutomationOption:
                 return str(value).strip()
         return ""
 
-    description = text("description", "doc_desc", "docDesc", "DocDesc")
+    description = text("description", "doc_desc", "docDesc", "DocDesc", "ad_code_desc", "adCodeDesc", "ADCodeDesc")
     adjustment_name = text("adjustment_name") or description
     return AutomationOption(
         category=text("category").lower(),
@@ -58,18 +83,36 @@ class ManualAdjustmentRecord:
     adjustment_name: str
     amount: float
     remarks: str
+    emp_name: str = ""
+    nik: str = ""
     category_key: str | None = None
     ad_code: str = ""
+    ad_code_desc: str = ""
     description: str = ""
     task_code: str = ""
     task_desc: str = ""
     base_task_code: str = ""
     loc_code: str = ""
     automation_category: str = ""
+    estate: str = ""
+    divisioncode: str = ""
+    detail_type: str = ""
+    subblok: str = ""
+    subblok_raw: str = ""
+    jumlah: float = 0.0
+    expense_code: str = ""
+    vehicle_code: str = ""
+    vehicle_expense_code: str = ""
+    transaction_index: int | None = None
+    adjustment_id: int | None = None
+    detail_key: str = ""
 
     @property
     def record_key(self) -> str:
-        return f"{self.period_month}:{self.period_year}:{self.emp_code}:{self.adjustment_name}"
+        if self.detail_key:
+            return self.detail_key
+        detail = self.subblok or self.vehicle_code or str(self.transaction_index or "")
+        return f"{self.period_month}:{self.period_year}:{self.emp_code}:{self.adjustment_name}:{detail}:{self.amount:g}"
 
     def to_runner_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,45 +126,108 @@ def normalize_record(raw: dict[str, Any], category_key: str | None = None) -> Ma
                 return str(value).strip()
         return ""
 
-    def number(name: str) -> float:
-        value = raw.get(name, 0)
-        try:
-            return float(value or 0)
-        except (TypeError, ValueError):
-            return 0.0
+    def number(*names: str) -> float:
+        for name in names:
+            value = raw.get(name)
+            if value in (None, ""):
+                continue
+            try:
+                return float(value or 0)
+            except (TypeError, ValueError):
+                return 0.0
+        return 0.0
 
-    def integer_or_none(name: str) -> int | None:
-        value = raw.get(name)
-        if value in (None, ""):
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+    def integer_or_none(*names: str) -> int | None:
+        for name in names:
+            value = raw.get(name)
+            if value in (None, ""):
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+        return None
 
     remarks = text("remarks")
     adjustment_name = text("adjustment_name")
-    description = text("description", "doc_desc", "docDesc", "DocDesc")
+    description = text("description", "doc_desc", "docDesc", "DocDesc", "ad_code_desc", "adCodeDesc", "ADCodeDesc")
+    ad_code_desc = text("ad_code_desc", "adCodeDesc", "ADCodeDesc")
+    adjustment_type = text("adjustment_type").upper()
+    if adjustment_type == "PREMI" and adjustment_name:
+        description = adjustment_name
     ad_code = text("ad_code", "adCode", "ADCode").upper() or extract_ad_code_from_remarks(remarks)
+    gang_code = text("gang_code").upper()
+    estate = text("estate", "estate_code", "estateCode", "Estate").upper()
+    raw_division_code = text("division_code", "divisionCode", "DivisionCode").upper()
+    division_code = estate or raw_division_code
+    divisioncode = text("divisioncode", "Divisioncode", "field_division_code", "fieldDivisionCode").upper()
+    if not divisioncode and estate and raw_division_code and raw_division_code != estate:
+        divisioncode = raw_division_code
+    if not divisioncode:
+        divisioncode = divisioncode_from_gang(gang_code)
+    subblok_raw = text("subblok_raw", "subblokRaw", "sub_block_raw", "subBlockRaw")
+    subblok = normalize_subblok_code(text("subblok", "sub_block", "subBlock") or subblok_raw)
+    vehicle_code = text("vehicle_code", "vehicleCode", "veh_code", "vehCode", "kendaraan", "vehicle").upper()
+    vehicle_expense_code = text(
+        "vehicle_expense_code",
+        "vehicleExpenseCode",
+        "veh_expense_code",
+        "vehExpenseCode",
+        "veh_exp_code",
+        "vehExpCode",
+        "kendaraan_expense_code",
+    ).upper()
+    detail_type = normalize_detail_type(text("detail_type", "detailType", "input_type", "inputType"), subblok=subblok, vehicle_code=vehicle_code)
+    amount = number("amount", "jumlah")
+    jumlah = number("jumlah", "amount")
+    transaction_index = integer_or_none("transaction_index", "transactionIndex")
+    adjustment_id = integer_or_none("adjustment_id", "adjustmentId", "id")
+    detail_key_parts = [
+        str(raw.get("period_month") or ""),
+        str(raw.get("period_year") or ""),
+        text("emp_code").upper(),
+        adjustment_name.upper(),
+        str(adjustment_id or ""),
+        str(transaction_index or ""),
+        detail_type,
+        subblok or vehicle_code,
+        f"{amount:g}",
+    ]
+    detail_key = "|".join(part for part in detail_key_parts if part)
     return ManualAdjustmentRecord(
         id=integer_or_none("id"),
         period_month=integer_or_none("period_month"),
         period_year=integer_or_none("period_year"),
         emp_code=text("emp_code").upper(),
-        gang_code=text("gang_code").upper(),
-        division_code=text("division_code").upper(),
-        adjustment_type=text("adjustment_type").upper(),
+        gang_code=gang_code,
+        division_code=division_code,
+        adjustment_type=adjustment_type,
         adjustment_name=adjustment_name,
-        amount=number("amount"),
+        amount=amount,
         remarks=remarks,
+        emp_name=text("emp_name", "empName", "EmpName", "employee_name", "employeeName", "EmployeeName"),
+        nik=text("nik", "NIK", "new_ic_no", "newICNo", "NewICNo", "NewIcNo"),
         category_key=category_key,
         ad_code=ad_code,
+        ad_code_desc=ad_code_desc,
         description=description,
         task_code=text("task_code", "taskCode", "TaskCode"),
-        task_desc=text("task_desc", "taskDesc", "TaskDesc"),
+        task_desc=text("task_desc", "taskDesc", "TaskDesc", "ad_code_desc", "adCodeDesc", "ADCodeDesc"),
         base_task_code=text("base_task_code", "baseTaskCode", "BaseTaskCode"),
         loc_code=text("loc_code", "locCode", "LocCode").upper(),
         automation_category=text("category").lower(),
+        estate=estate or division_code,
+        divisioncode=divisioncode,
+        detail_type=detail_type,
+        subblok=subblok,
+        subblok_raw=subblok_raw,
+        jumlah=jumlah,
+        expense_code=text("expense_code", "expenseCode", "exp_code", "expCode").upper(),
+        vehicle_code=vehicle_code,
+        vehicle_expense_code=vehicle_expense_code,
+        transaction_index=transaction_index,
+        adjustment_id=adjustment_id,
+        detail_key=detail_key,
     )
 
 
@@ -150,6 +256,7 @@ def enrich_records_with_automation_options(
             replace(
                 record,
                 ad_code=record.ad_code or option.ad_code,
+                ad_code_desc=record.ad_code_desc or option.task_desc,
                 description=record.description or option.description,
                 task_code=record.task_code or option.task_code,
                 task_desc=record.task_desc or option.task_desc,

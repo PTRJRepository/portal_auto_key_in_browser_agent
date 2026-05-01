@@ -11,8 +11,8 @@ from app.core.config import AppConfig, DivisionOption, load_app_config, load_div
 from PySide6.QtWidgets import QApplication
 
 from app.ui.division_monitor import CategoryStatus, DetailDialog, DivisionCard, DivisionMonitorWorker, MissDetail
-from app.ui.division_run_dialog import DivisionRunDialog
-from app.ui.main_window import FetchWorker, MainWindow
+from app.ui.division_run_dialog import DivisionFetchWorker, DivisionRunDialog
+from app.ui.main_window import FetchWorker, MainWindow, build_premium_retry_plan, build_premium_retry_plan_from_sync_status, sync_status_ids_for_records, verified_sync_status_ids
 from app.core.models import AutomationOption, DuplicateDocIdTarget, RunPayload, normalize_record
 from app.core.run_service import DbVerificationDecision, apply_row_limit, evaluate_db_ptrj_status, filter_by_category
 
@@ -20,7 +20,22 @@ from app.core.run_service import DbVerificationDecision, apply_row_limit, evalua
 def test_app_config_fallback_uses_api_division_alias(tmp_path):
     missing_config = tmp_path / "missing.json"
     config = load_app_config(missing_config)
-    assert config.default_division_code == "P1B"
+    assert config.default_division_code == "AB1"
+
+
+def test_main_window_defaults_to_ab1_premi_category():
+    config = AppConfig()
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi"),
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate AB1"), DivisionOption("P1B", "Estate P1B")])
+
+    assert window._selected_division_code() == "AB1"
+    assert window.category.currentData() == "premi"
+    assert window.adjustment_type.currentText() == "PREMI"
+    window.close()
 
 
 def test_manual_adjustment_query_omits_empty_optional_filters():
@@ -38,6 +53,25 @@ def test_manual_adjustment_query_maps_pg_division_alias_for_manual_types_only():
     assert comma_query.params()["division_code"] == "PG1B"
     assert comma_query.params()["adjustment_type"] == "PREMI,POTONGAN_KOTOR"
     assert auto_query.params()["division_code"] == "P1B"
+
+def test_manual_adjustment_query_supports_grouped_metadata_filters():
+    query = ManualAdjustmentQuery(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        adjustment_type="PREMI",
+        view="grouped",
+        metadata_only=True,
+    )
+
+    assert query.params() == {
+        "period_month": "4",
+        "period_year": "2026",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "view": "grouped",
+        "metadata_only": "true",
+    }
 
 
 def test_main_window_adjustment_type_includes_manual_alias():
@@ -82,6 +116,284 @@ def test_normalize_record_uppercases_codes_and_preserves_name():
     assert record.adjustment_name == "AUTO SPSI"
     assert record.amount == 4000
     assert record.category_key == "spsi"
+
+
+def test_normalize_record_preserves_employee_identity_fields():
+    record = normalize_record({
+        "emp_code": "1902054607770001",
+        "emp_name": "SURYANTI",
+        "nik": "1902054607770001",
+        "adjustment_name": "AUTO MASA KERJA",
+    }, "masa_kerja")
+
+    assert record.emp_code == "1902054607770001"
+    assert record.emp_name == "SURYANTI"
+    assert record.nik == "1902054607770001"
+    assert record.to_runner_dict()["emp_name"] == "SURYANTI"
+    assert record.to_runner_dict()["nik"] == "1902054607770001"
+
+def test_normalize_record_maps_nomor_kendaraan_to_vehicle_fields():
+    record = normalize_record({
+        "emp_code": "b0128",
+        "gang_code": "b1t",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI ANGKUT",
+        "detail_type": "kendaraan",
+        "NOMOR_KENDARAAN": "t0020",
+        "expense_code": "driver",
+        "jumlah": 684355,
+    }, "premi")
+
+    assert record.detail_type == "kendaraan"
+    assert record.vehicle_code == "T0020"
+    assert record.expense_code == "DRIVER"
+    assert record.vehicle_expense_code == "DRIVER"
+    assert "T0020" in record.detail_key
+
+def test_get_adjustments_flattens_grouped_premium_transactions():
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "view": "grouped",
+        "metadata_only": True,
+        "data": [
+            {
+                "division_code": "AB1",
+                "gangs": [
+                    {
+                        "gang_code": "G1H",
+                        "employees": [
+                            {
+                                "emp_code": "A0001",
+                                "nik": "1902050504860001",
+                                "emp_name": "AHMAD DARYONO",
+                                "gang_code": "G1H",
+                                "estate": "AB1",
+                                "estate_code": "AB1",
+                                "division_code": "AB1",
+                                "premium_transactions": [
+                                    {
+                                        "transaction_index": 1,
+                                        "adjustment_id": 7,
+                                        "adjustment_type": "PREMI",
+                                        "adjustment_name": "PREMI PRUNING",
+                                        "estate": "AB1",
+                                        "estate_code": "AB1",
+                                        "division_code": "G 1",
+                                        "detail_type": "blok",
+                                        "subblok": "P0901",
+                                        "subblok_raw": "P09/01",
+                                        "jumlah": 304000,
+                                        "amount": 304000,
+                                        "ad_code": "AL3PM2201",
+                                        "ad_code_desc": "(AL) TUNJANGAN PREMI ((PM) HARVESTING)",
+                                        "task_code": "AL3PM2201AB1",
+                                    },
+                                    {
+                                        "transaction_index": 2,
+                                        "adjustment_id": 7,
+                                        "adjustment_type": "PREMI",
+                                        "adjustment_name": "PREMI PRUNING",
+                                        "detail_type": "blok",
+                                        "subblok": "P0902",
+                                        "subblok_raw": "P09/02",
+                                        "jumlah": 200900,
+                                        "amount": 200900,
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with patch("app.core.api_client.requests.get", return_value=response) as get:
+        records = client.get_adjustments(ManualAdjustmentQuery(
+            period_month=4,
+            period_year=2026,
+            division_code="AB1",
+            adjustment_type="PREMI",
+            view="grouped",
+            metadata_only=True,
+        ))
+
+    get.assert_called_once_with(
+        "http://localhost:8002/payroll/manual-adjustment/by-api-key",
+        params={
+            "period_month": "4",
+            "period_year": "2026",
+            "division_code": "AB1",
+            "adjustment_type": "PREMI",
+            "view": "grouped",
+            "metadata_only": "true",
+        },
+        headers={"X-API-Key": "secret"},
+        timeout=30,
+    )
+    response.raise_for_status.assert_called_once()
+    assert [record.amount for record in records] == [304000, 200900]
+    assert records[0].emp_code == "A0001"
+    assert records[0].emp_name == "AHMAD DARYONO"
+    assert records[0].nik == "1902050504860001"
+    assert records[0].gang_code == "G1H"
+    assert records[0].division_code == "AB1"
+    assert records[0].estate == "AB1"
+    assert records[0].divisioncode == "G 1"
+    assert records[0].detail_type == "blok"
+    assert records[0].subblok == "P0901"
+    assert records[0].subblok_raw == "P09/01"
+    assert records[0].jumlah == 304000
+    assert records[0].transaction_index == 1
+    assert records[0].adjustment_id == 7
+    assert records[0].ad_code == "AL3PM2201"
+    assert records[0].ad_code_desc == "(AL) TUNJANGAN PREMI ((PM) HARVESTING)"
+    assert records[0].description == "PREMI PRUNING"
+    assert records[0].task_desc == "(AL) TUNJANGAN PREMI ((PM) HARVESTING)"
+    assert records[0].task_code == "AL3PM2201AB1"
+    assert records[0].to_runner_dict()["ad_code_desc"] == "(AL) TUNJANGAN PREMI ((PM) HARVESTING)"
+    assert records[0].to_runner_dict()["description"] == "PREMI PRUNING"
+    assert records[0].category_key == "premi"
+
+def test_grouped_premium_derives_plantware_divisioncode_from_gang_when_transaction_division_is_estate():
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "view": "grouped",
+        "data": [
+            {
+                "division_code": "AB1",
+                "gangs": [
+                    {
+                        "gang_code": "G1H",
+                        "employees": [
+                            {
+                                "emp_code": "G0597",
+                                "emp_name": "ABDURRAHMAN",
+                                "gang_code": "G1H",
+                                "estate": "AB1",
+                                "premium_transactions": [
+                                    {
+                                        "transaction_index": 1,
+                                        "adjustment_id": 42258,
+                                        "adjustment_type": "PREMI",
+                                        "adjustment_name": "PREMI PRUNING",
+                                        "division_code": "AB1",
+                                        "detail_type": "blok",
+                                        "subblok": "P08/06",
+                                        "amount": 304000,
+                                        "ad_code": "AL3PM0601",
+                                        "ad_code_desc": "(AL) TUNJANGAN PREMI ((PM) PRUNING)",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with patch("app.core.api_client.requests.get", return_value=response):
+        records = client.get_adjustments(ManualAdjustmentQuery(
+            period_month=4,
+            period_year=2026,
+            division_code="AB1",
+            adjustment_type="PREMI",
+            view="grouped",
+            metadata_only=True,
+        ))
+
+    assert records[0].division_code == "AB1"
+    assert records[0].divisioncode == "G 1"
+    assert records[0].subblok == "P0806"
+    assert records[0].description == "PREMI PRUNING"
+
+
+def test_get_adjustments_flattens_vehicle_based_premium_detail_items():
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "view": "grouped",
+        "metadata_only": True,
+        "data": [
+            {
+                "division_code": "PG1B",
+                "estate": "P1B",
+                "gangs": [
+                    {
+                        "gang_code": "B1T",
+                        "employees": [
+                            {
+                                "emp_code": "B0128",
+                                "emp_name": "DRIVER TEST",
+                                "gang_code": "B1T",
+                                "estate": "P1B",
+                                "premiums": [
+                                    {
+                                        "id": 91,
+                                        "adjustment_type": "PREMI",
+                                        "adjustment_name": "PREMI ANGKUT",
+                                        "amount": 684355,
+                                        "ad_code": "AL3PT2304",
+                                        "ad_code_desc": "(AL) TUNJANGAN PREMI ((PM) DRIVER - ANGKUT TBK)",
+                                        "metadata_json": "{\"input_type\":\"kendaraan\",\"items\":[{\"nomor_kendaraan\":\"T0020\",\"expense_code\":\"DRIVER\",\"jumlah\":684355}],\"total_amount\":684355}",
+                                        "detail_items": [
+                                            {
+                                                "detail_type": "kendaraan",
+                                                "nomor_kendaraan": "T0020",
+                                                "expense_code": "DRIVER",
+                                                "jumlah": 684355,
+                                                "amount": 684355,
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    with patch("app.core.api_client.requests.get", return_value=response):
+        records = client.get_adjustments(ManualAdjustmentQuery(
+            period_month=4,
+            period_year=2026,
+            division_code="P1B",
+            adjustment_type="PREMI",
+            adjustment_name="PREMI ANGKUT",
+            view="grouped",
+            metadata_only=True,
+        ))
+
+    assert len(records) == 1
+    assert records[0].emp_code == "B0128"
+    assert records[0].gang_code == "B1T"
+    assert records[0].division_code == "P1B"
+    assert records[0].divisioncode == "B 1"
+    assert records[0].adjustment_name == "PREMI ANGKUT"
+    assert records[0].detail_type == "kendaraan"
+    assert records[0].vehicle_code == "T0020"
+    assert records[0].expense_code == "DRIVER"
+    assert records[0].vehicle_expense_code == "DRIVER"
+    assert records[0].amount == 684355
+    assert records[0].adjustment_id == 91
+    assert "T0020" in records[0].detail_key
 
 
 def test_category_registry_detects_auto_buffer_names():
@@ -352,7 +664,58 @@ def test_get_automation_options_calls_latest_endpoint_and_normalizes_fields():
         )
     ]
 
-def test_fetch_worker_enriches_manual_records_with_automation_options():
+def test_get_adjustment_name_options_calls_new_endpoint_and_normalizes_by_type():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "count": 2,
+        "adjustment_names_by_type": {
+            "PREMI": ["PREMI PRUNING"],
+            "POTONGAN_KOTOR": ["KOREKSI PANEN"],
+        },
+        "by_type": {
+            "PREMI": [
+                {
+                    "adjustment_type": "PREMI",
+                    "adjustment_name": "PREMI PRUNING",
+                }
+            ],
+            "POTONGAN_KOTOR": [
+                {
+                    "adjustment_type": "POTONGAN_KOTOR",
+                    "adjustment_name": "KOREKSI PANEN",
+                }
+            ],
+        },
+    }
+
+    with patch("app.core.api_client.requests.get", return_value=response) as get:
+        options = client.get_adjustment_name_options(
+            period_month=4,
+            period_year=2026,
+            division_code="ab1",
+            gang_code="g1h",
+            emp_code="g0597",
+            adjustment_type="PREMI,POTONGAN_KOTOR",
+            metadata_only=True,
+            search="premi",
+            limit=200,
+        )
+
+    get.assert_called_once_with(
+        "http://localhost:8002/payroll/manual-adjustment/adjustment-name-options/by-api-key",
+        params={"period_month": "4", "period_year": "2026", "division_code": "AB1", "gang_code": "G1H", "emp_code": "G0597", "adjustment_type": "PREMI,POTONGAN_KOTOR", "metadata_only": "true", "search": "premi", "limit": "200"},
+        headers={"X-API-Key": "secret"},
+        timeout=30,
+    )
+    assert [option.adjustment_name for option in options] == ["PREMI PRUNING", "KOREKSI PANEN"]
+    assert options[0].ad_code == ""
+    assert options[0].task_desc == ""
+    assert options[1].category == ""
+
+def test_fetch_worker_enriches_manual_records_with_automation_options_not_adjustment_name_options():
     record = normalize_record({
         "emp_code": "a0001",
         "division_code": "p1a",
@@ -374,7 +737,7 @@ def test_fetch_worker_enriches_manual_records_with_automation_options():
     client = Mock()
     client.get_adjustments.return_value = [record]
     client.get_automation_options.return_value = [option]
-    worker = FetchWorker(client, ManualAdjustmentQuery(period_month=4, period_year=2026, division_code="P1A", adjustment_type="PREMI"))
+    worker = FetchWorker(client, ManualAdjustmentQuery(period_month=4, period_year=2026, division_code="P1A", gang_code="G1H", emp_code="G0597", adjustment_type="PREMI"))
     completed = []
     worker.completed.connect(lambda records, verification: completed.append((records, verification)))
 
@@ -385,9 +748,10 @@ def test_fetch_worker_enriches_manual_records_with_automation_options():
     assert enriched.description == "INSENTIF PANEN"
     assert enriched.task_code == "A100P1A"
     assert enriched.task_desc == "(AL) INSENTIF PANEN"
+    client.get_adjustment_name_options.assert_not_called()
     client.get_automation_options.assert_called_once_with(
         division_code="P1A",
-        categories=["premi", "koreksi", "potongan_upah_bersih"],
+        categories=["premi"],
         limit=200,
     )
 
@@ -401,7 +765,7 @@ def test_fetch_worker_keeps_manual_records_when_automation_options_endpoint_miss
     }, "premi")
     client = Mock()
     client.get_adjustments.return_value = [record]
-    client.get_automation_options.side_effect = RuntimeError("404 Not Found")
+    client.get_adjustment_name_options.side_effect = RuntimeError("404 Not Found")
     worker = FetchWorker(client, ManualAdjustmentQuery(period_month=4, period_year=2026, division_code="P1B", adjustment_type="PREMI"))
     completed = []
     failed = []
@@ -412,6 +776,153 @@ def test_fetch_worker_keeps_manual_records_when_automation_options_endpoint_miss
 
     assert failed == []
     assert completed[0][0] == [record]
+
+def test_main_window_refreshes_adjustment_names_for_premi_category():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate AB1")])
+    window.gang_code.setText("g1h")
+    window.emp_code.setText("g0597")
+    option = AutomationOption(
+        category="premi",
+        adjustment_type="PREMI",
+        adjustment_name="PREMI PRUNING",
+        ad_code="AL0001",
+        description="PREMI PRUNING",
+        task_code="AL0001AB1",
+        task_desc="(AL) PREMI PRUNING",
+        base_task_code="AL0001",
+        loc_code="AB1",
+    )
+
+    with patch.object(ManualAdjustmentApiClient, "get_adjustment_name_options", return_value=[option]) as get_options:
+        window.apply_category_preset()
+
+    get_options.assert_called_once_with(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        gang_code="G1H",
+        emp_code="G0597",
+        adjustment_type="PREMI",
+        metadata_only=True,
+        search=None,
+        limit=200,
+    )
+    assert window.adjustment_name.count() == 1
+    assert window.adjustment_name.itemText(0) == "PREMI PRUNING"
+    window.close()
+
+def test_main_window_premi_refresh_ignores_stale_adjustment_name_text():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate AB1")])
+    window.gang_code.setText("g1h")
+    window.adjustment_name.setText("PREMI LAMA")
+
+    with patch.object(ManualAdjustmentApiClient, "get_adjustment_name_options", return_value=[]) as get_options:
+        window._refresh_adjustment_name_options()
+
+    get_options.assert_called_once_with(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        gang_code="G1H",
+        emp_code=None,
+        adjustment_type="PREMI",
+        metadata_only=True,
+        search=None,
+        limit=200,
+    )
+    window.close()
+
+def test_main_window_shows_loading_while_refreshing_adjustment_names():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate AB1")])
+    observed = []
+
+    def fake_options(*args, **kwargs):
+        observed.append((window.adjustment_name.text(), window.refresh_adjustment_names_button.isEnabled()))
+        return []
+
+    with patch.object(ManualAdjustmentApiClient, "get_adjustment_name_options", side_effect=fake_options):
+        window.apply_category_preset()
+
+    assert observed == [("Loading adjustment names...", False)]
+    assert window.refresh_adjustment_names_button.isEnabled() is True
+    window.close()
+
+
+def test_main_window_refreshes_adjustment_names_when_category_changes():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+        AdjustmentCategory("potongan_upah_bersih", "Potongan Upah Bersih", "POTONGAN_BERSIH", ("POTONGAN_BERSIH",), "potongan_upah_bersih"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate AB1")])
+    option = AutomationOption(
+        category="potongan_upah_bersih",
+        adjustment_type="POTONGAN_BERSIH",
+        adjustment_name="POTONGAN PINJAMAN",
+        ad_code="AL0002",
+        description="POTONGAN PINJAMAN",
+        task_code="AL0002AB1",
+        task_desc="(AL) POTONGAN PINJAMAN",
+        base_task_code="AL0002",
+        loc_code="AB1",
+    )
+
+    with patch.object(ManualAdjustmentApiClient, "get_adjustment_name_options", return_value=[option]) as get_options:
+        window.category.setCurrentIndex(1)
+
+    get_options.assert_called_with(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        gang_code=None,
+        emp_code=None,
+        adjustment_type="POTONGAN_BERSIH",
+        metadata_only=None,
+        search=None,
+        limit=200,
+    )
+    assert window.adjustment_name.itemText(0) == "POTONGAN PINJAMAN"
+    window.close()
+
+
+def test_main_window_adcode_preview_prefers_task_desc_display_for_premium_details():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate AB1")])
+    record = normalize_record({
+        "emp_code": "G0597",
+        "division_code": "AB1",
+        "gang_code": "G1H",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 100000,
+        "ad_code": "AL3PM0601",
+        "ad_code_desc": "(AL) TUNJANGAN PREMI ((PM) PRUNING)",
+        "detail_type": "blok",
+        "subblok": "P0801",
+    }, "premi")
+
+    assert window._adcode_for_record(record) == "(AL) TUNJANGAN PREMI ((PM) PRUNING)"
+    window.close()
 
 def test_check_adtrans_raises_on_success_false():
     registry = CategoryRegistry([])
@@ -460,6 +971,43 @@ def test_sync_adtrans_posts_sync_mode_payload():
     )
     assert result == payload
 
+
+def test_sync_status_posts_verification_payload():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
+    payload = {"success": True, "data": {"updated_count": 2, "partial_count": 0, "rows": []}}
+    response = Mock()
+    response.json.return_value = payload
+
+    with patch("app.core.api_client.requests.post", return_value=response) as post:
+        result = client.sync_status(
+            period_month=4,
+            period_year=2026,
+            division_code="ab1",
+            adjustment_type="PREMI",
+            ids=[10, 11],
+            dry_run=True,
+            only_if_adtrans_exists=True,
+            updated_by="browser_automation",
+        )
+
+    post.assert_called_once_with(
+        "http://localhost:8002/payroll/manual-adjustment/sync-status/by-api-key",
+        json={
+            "period_month": 4,
+            "period_year": 2026,
+            "division_code": "AB1",
+            "adjustment_type": "PREMI",
+            "ids": [10, 11],
+            "sync_status": "SYNC",
+            "only_if_adtrans_exists": True,
+            "dry_run": True,
+            "updated_by": "browser_automation",
+        },
+        headers={"Content-Type": "application/json", "X-API-Key": "secret"},
+        timeout=30,
+    )
+    assert result == payload
 
 def test_reverse_compare_adtrans_posts_division_payload():
     registry = CategoryRegistry([])
@@ -615,6 +1163,40 @@ def test_division_run_dialog_filters_fetched_records_to_extra_details():
     assert dialog._filter_extra_records([extra, unrelated]) == [extra]
     dialog.close()
 
+def test_division_fetch_worker_enriches_manual_records_with_automation_options():
+    record = normalize_record({
+        "emp_code": "a0001",
+        "division_code": "ab1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 100000,
+    }, "premi")
+    option = AutomationOption(
+        category="premi",
+        adjustment_type="PREMI",
+        adjustment_name="PREMI PRUNING",
+        ad_code="AL0001",
+        description="PREMI PRUNING",
+        task_code="AL0001AB1",
+        task_desc="(AL) PREMI PRUNING",
+        base_task_code="AL0001",
+        loc_code="AB1",
+    )
+    client = Mock()
+    client.get_adjustments.return_value = [record]
+    client.get_automation_options.return_value = [option]
+    worker = DivisionFetchWorker(client, 4, 2026, "AB1", "premi", "PREMI", None)
+
+    records = worker.run()
+
+    assert records[0].ad_code == "AL0001"
+    client.get_adjustment_name_options.assert_not_called()
+    client.get_automation_options.assert_called_once_with(
+        division_code="AB1",
+        categories=["premi"],
+        limit=200,
+    )
+
 
 def test_detail_dialog_shows_db_ptrj_extend_amounts_docdesc_and_remarks():
     QApplication.instance() or QApplication([])
@@ -747,16 +1329,16 @@ def test_premi_preset_fetches_all_premi_names():
     assert window.adjustment_type.currentText() == "PREMI"
     assert window.adjustment_name.text() == ""
     assert window.only_missing.isChecked() is False
-    assert window.process_only_miss.isChecked() is False
+    assert window.process_only_miss.isChecked() is True
     window.close()
 
 
-def test_manual_fetch_preview_ignores_miss_only_filter():
+def test_non_premium_manual_fetch_preview_ignores_miss_only_filter():
     config = AppConfig(default_division_code="P1B")
     QApplication.instance() or QApplication([])
     registry = CategoryRegistry([
         AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi"),
-        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+        AdjustmentCategory("potongan_upah_kotor", "Potongan Upah Kotor", "POTONGAN_KOTOR", ("POTONGAN",), "potongan"),
     ])
     window = MainWindow(config, registry, [DivisionOption("P1B", "Estate")])
     window.category.setCurrentIndex(1)
@@ -765,18 +1347,213 @@ def test_manual_fetch_preview_ignores_miss_only_filter():
         "emp_code": "B0732",
         "gang_code": "B1H",
         "division_code": "PG1B",
-        "adjustment_type": "PREMI",
-        "adjustment_name": "PREMI PANEN",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "POTONGAN LAIN",
         "amount": 0,
         "remarks": "INIT_COLUMN - Kolom ditambahkan tanpa nilai",
-    }, "premi")
+    }, "potongan_upah_kotor")
 
     window._handle_fetch_completed([record], {})
 
     assert window.records_table.rowCount() == 1
     assert window.records_table.item(0, 4).text() == "B0732"
-    assert window.records_table.item(0, 7).text() == "PREMI PANEN"
+    assert window.records_table.item(0, 7).text() == "POTONGAN LAIN"
     window.close()
+
+def test_premi_fetch_preview_filters_verified_match_in_retry_safe_mode():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate")])
+    window.process_only_miss.setChecked(True)
+    matched = normalize_record({
+        "emp_code": "G0597",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 100000,
+    }, "premi")
+    missing = normalize_record({
+        "emp_code": "G0600",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 200000,
+    }, "premi")
+
+    window._handle_fetch_completed([matched, missing], {
+        ("G0597", "premi"): {"status": "VERIFIED_MATCH", "expected": 100000, "actual": 100000},
+        ("G0600", "premi"): {"status": "VERIFIED_NOT_FOUND", "expected": 200000, "actual": 0},
+    })
+
+    assert window.records_table.rowCount() == 1
+    assert window.records_table.item(0, 4).text() == "G0600"
+    window.close()
+
+def test_premi_fetch_preview_marks_verified_match_as_already_in_db_when_not_filtered():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate")])
+    window.process_only_miss.setChecked(False)
+    matched = normalize_record({
+        "emp_code": "G0597",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 100000,
+    }, "premi")
+    missing = normalize_record({
+        "emp_code": "G0600",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 200000,
+    }, "premi")
+
+    window._handle_fetch_completed([matched, missing], {
+        ("G0597", "premi"): {"status": "VERIFIED_MATCH", "expected": 100000, "actual": 100000},
+        ("G0600", "premi"): {"status": "VERIFIED_NOT_FOUND", "expected": 200000, "actual": 0},
+    })
+
+    assert window.records_table.rowCount() == 2
+    assert window.records_table.item(0, 1).text() == "Already in DB"
+    assert window.records_table.item(1, 1).text() == "Missing in DB"
+    window.close()
+
+def test_premi_fetch_preview_keeps_only_missing_complement_for_unique_partial_match():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate")])
+    window.process_only_miss.setChecked(True)
+    already_1 = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "G0597",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 100000,
+        "transaction_index": 1,
+    }, "premi")
+    already_2 = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "G0597",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 250000,
+        "transaction_index": 2,
+    }, "premi")
+    missing = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "G0597",
+        "gang_code": "G1H",
+        "division_code": "AB1",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI TBS",
+        "amount": 400000,
+        "transaction_index": 3,
+    }, "premi")
+
+    window._handle_fetch_completed([already_1, already_2, missing], {
+        ("G0597", "premi"): {"status": "VERIFIED_MISMATCH", "expected": 750000, "actual": 350000},
+    })
+
+    assert window.records_table.rowCount() == 1
+    assert window.records_table.item(0, 7).text() == "PREMI TBS"
+    assert window.records_table.item(0, 11).text() == "400000"
+    window.close()
+
+def test_premium_retry_plan_holds_ambiguous_partial_match():
+    records = [
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI A", "amount": 100000, "transaction_index": 1}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI B", "amount": 200000, "transaction_index": 2}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI C", "amount": 300000, "transaction_index": 3}, "premi"),
+    ]
+
+    allowed, held = build_premium_retry_plan(records, {
+        ("G0597", "premi"): {"status": "VERIFIED_MISMATCH", "expected": 600000, "actual": 300000},
+    })
+
+    assert allowed == set()
+    assert held == {("G0597", "premi"): "ambiguous partial match"}
+
+def test_premium_retry_plan_uses_sync_status_per_adjustment_row():
+    records = [
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 100000, "adjustment_id": 10, "transaction_index": 1}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 200000, "adjustment_id": 10, "transaction_index": 2}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI TBS", "amount": 400000, "adjustment_id": 11, "transaction_index": 1}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI TBS", "amount": 500000, "adjustment_id": 11, "transaction_index": 2}, "premi"),
+    ]
+
+    allowed, held = build_premium_retry_plan_from_sync_status(records, {
+        "data": {
+            "rows": [
+                {"id": 10, "status": "SKIPPED", "skip_reason": "UNCHANGED", "target_amount": 300000, "adtrans_amount": 300000},
+                {"id": 11, "status": "SKIPPED", "skip_reason": "ADTRANS_AMOUNT_PARTIAL", "target_amount": 900000, "adtrans_amount": 400000},
+            ]
+        }
+    })
+
+    assert allowed == {records[3].record_key}
+    assert held == {}
+
+def test_premium_retry_plan_holds_ambiguous_sync_status_partial_row():
+    records = [
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI TBS", "amount": 100000, "adjustment_id": 11, "transaction_index": 1}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI TBS", "amount": 200000, "adjustment_id": 11, "transaction_index": 2}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI TBS", "amount": 300000, "adjustment_id": 11, "transaction_index": 3}, "premi"),
+    ]
+
+    allowed, held = build_premium_retry_plan_from_sync_status(records, {
+        "data": {
+            "rows": [
+                {"id": 11, "status": "SKIPPED", "skip_reason": "ADTRANS_AMOUNT_PARTIAL", "target_amount": 600000, "adtrans_amount": 300000},
+            ]
+        }
+    })
+
+    assert allowed == set()
+    assert held == {("G0597", "premi", "11"): "ambiguous partial match"}
+
+def test_verified_sync_status_ids_excludes_partial_and_not_found_rows():
+    payload = {
+        "data": {
+            "rows": [
+                {"id": 10, "status": "UPDATED", "target_amount": 300000, "adtrans_amount": 300000},
+                {"id": 11, "status": "SKIPPED", "skip_reason": "ADTRANS_AMOUNT_PARTIAL", "target_amount": 900000, "adtrans_amount": 400000},
+                {"id": 12, "status": "SKIPPED", "skip_reason": "ADTRANS_NOT_FOUND", "target_amount": 100000, "adtrans_amount": 0},
+                {"id": 13, "status": "UNCHANGED", "target_amount": 250000, "adtrans_amount": 250000},
+            ]
+        }
+    }
+
+    assert verified_sync_status_ids(payload) == [10, 13]
+
+def test_sync_status_ids_for_records_uses_unique_manual_adjustment_ids():
+    records = [
+        normalize_record({"id": 10, "adjustment_id": 10, "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 100000, "transaction_index": 1}, "premi"),
+        normalize_record({"id": 10, "adjustment_id": 10, "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 200000, "transaction_index": 2}, "premi"),
+        normalize_record({"id": 11, "adjustment_id": 11, "adjustment_type": "PREMI", "adjustment_name": "PREMI TBS", "amount": 400000, "transaction_index": 1}, "premi"),
+    ]
+
+    assert sync_status_ids_for_records(records) == [10, 11]
 
 def test_selected_jobs_create_payloads_from_saved_config():
     config = AppConfig(default_division_code="P1B")
@@ -824,6 +1601,77 @@ def test_row_success_marks_input_done_green():
 
     assert window.records_table.item(0, 0).text() == "Input Done"
     assert window.record_status[window._record_key(record)]["input_status"] == "Input Done"
+    window.close()
+
+def test_row_success_queues_sync_status_verification_for_manual_adjustment_id(monkeypatch):
+    QApplication.instance() or QApplication([])
+    window = MainWindow(AppConfig(default_division_code="AB1"), CategoryRegistry([]), [DivisionOption("AB1", "Estate")])
+    record = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "G0597",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 100000,
+        "adjustment_id": 10,
+    }, "premi")
+    drain = Mock()
+    monkeypatch.setattr(window, "_drain_sync_status_queue", drain, raising=False)
+    window.set_records([record])
+
+    window._update_record_from_event("row.success", {"emp_code": "G0597", "adjustment_name": "PREMI PRUNING", "detail_key": record.detail_key, "tab_index": 0}, "row add confirmed")
+
+    assert window.records_table.item(0, 0).text() == "Input Done"
+    assert window.records_table.item(0, 2).text() == "QUEUED"
+    assert window.summary_table.item(0, 2).text() == "QUEUED"
+    assert getattr(window, "pending_sync_status_ids", set()) == {10}
+    drain.assert_called_once()
+    window.close()
+
+def test_sync_status_completed_updates_all_detail_rows_for_adjustment_id():
+    QApplication.instance() or QApplication([])
+    window = MainWindow(AppConfig(default_division_code="AB1"), CategoryRegistry([]), [DivisionOption("AB1", "Estate")])
+    records = [
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 100000, "adjustment_id": 10, "transaction_index": 1}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 200000, "adjustment_id": 10, "transaction_index": 2}, "premi"),
+    ]
+    window.set_records(records)
+
+    window._handle_sync_status_completed({
+        "dry_run": {"data": {"rows": [{"id": 10, "status": "UPDATED", "target_amount": 300000, "adtrans_amount": 300000, "new_sync_status": "SYNC"}]}},
+        "apply": {"data": {"updated_count": 1, "rows": [{"id": 10, "status": "UPDATED", "target_amount": 300000, "adtrans_amount": 300000, "new_sync_status": "SYNC"}]}},
+        "verified_ids": [10],
+    })
+
+    assert window.records_table.item(0, 2).text() == "SYNC"
+    assert window.records_table.item(1, 2).text() == "SYNC"
+    assert window.records_table.item(0, 3).text() == "UPDATED 300000/300000"
+    assert window.summary_table.item(1, 2).text() == "SYNC"
+    window.close()
+
+def test_sync_status_completed_marks_partial_rows_without_syncing():
+    QApplication.instance() or QApplication([])
+    window = MainWindow(AppConfig(default_division_code="AB1"), CategoryRegistry([]), [DivisionOption("AB1", "Estate")])
+    record = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "G0597",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 500000,
+        "adjustment_id": 14,
+    }, "premi")
+    window.set_records([record])
+
+    window._handle_sync_status_completed({
+        "dry_run": {"data": {"rows": [{"id": 14, "status": "SKIPPED", "skip_reason": "ADTRANS_AMOUNT_PARTIAL", "target_amount": 500000, "adtrans_amount": 350000}]}},
+        "apply": None,
+        "verified_ids": [],
+    })
+
+    assert window.records_table.item(0, 2).text() == "PARTIAL"
+    assert window.records_table.item(0, 3).text() == "ADTRANS_AMOUNT_PARTIAL 350000/500000"
+    assert window.summary_table.item(0, 2).text() == "PARTIAL"
     window.close()
 
 
@@ -894,6 +1742,75 @@ def test_fetch_worker_verifies_stale_missing_records_against_db_ptrj():
     assert completed[0][1][("B0065", "spsi")]["status"] == "VERIFIED_MATCH"
     client.check_adtrans.assert_called_once_with(4, 2026, ["B0065"], ["spsi"])
 
+
+def test_fetch_worker_verifies_premium_records_even_without_stale_remarks():
+    record = normalize_record({
+        "emp_code": "G0597",
+        "adjustment_name": "PREMI PRUNING",
+        "adjustment_type": "PREMI",
+        "amount": 100000,
+        "remarks": "",
+    }, "premi")
+    client = Mock()
+    client.get_adjustments.return_value = [record]
+    client.check_adtrans.return_value = [{"emp_code": "G0597", "premi": 100000}]
+    worker = FetchWorker(client, ManualAdjustmentQuery(period_month=4, period_year=2026, adjustment_type="PREMI"))
+    completed = []
+    worker.completed.connect(lambda records, verification: completed.append((records, verification)))
+
+    worker.run()
+
+    assert completed[0][1][("G0597", "premi")]["status"] == "VERIFIED_MATCH"
+    client.check_adtrans.assert_called_once_with(4, 2026, ["G0597"], ["premi"])
+
+def test_fetch_worker_prefers_sync_status_for_premium_retry_plan():
+    records = [
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 100000, "adjustment_id": 10, "transaction_index": 1}, "premi"),
+        normalize_record({"period_month": 4, "period_year": 2026, "emp_code": "G0597", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 200000, "adjustment_id": 10, "transaction_index": 2}, "premi"),
+    ]
+    client = Mock()
+    client.get_adjustments.return_value = records
+    client.sync_status.return_value = {
+        "data": {
+            "rows": [
+                {"id": 10, "status": "SKIPPED", "skip_reason": "ADTRANS_AMOUNT_PARTIAL", "target_amount": 300000, "adtrans_amount": 100000},
+            ]
+        }
+    }
+    worker = FetchWorker(client, ManualAdjustmentQuery(period_month=4, period_year=2026, division_code="AB1", adjustment_type="PREMI"))
+    completed = []
+    worker.completed.connect(lambda records, verification: completed.append((records, verification)))
+
+    worker.run()
+
+    assert completed[0][1]["source"] == "sync-status"
+    assert completed[0][1]["retry_record_keys"] == {records[1].record_key}
+    client.sync_status.assert_called_once()
+    client.check_adtrans.assert_not_called()
+
+def test_fetch_worker_does_not_reverify_premium_records_already_sync_in_remarks():
+    record = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "G0597",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 493350,
+        "adjustment_id": 10,
+        "remarks": "PREMI PRUNING | AL3PM0601 - (AL) TUNJANGAN PREMI ((PM) PRUNING) | 493350 | sync:SYNC | match:MANUAL | SEED_IMPORT_AB1",
+    }, "premi")
+    client = Mock()
+    client.get_adjustments.return_value = [record]
+    worker = FetchWorker(client, ManualAdjustmentQuery(period_month=4, period_year=2026, division_code="AB1", adjustment_type="PREMI"))
+    completed = []
+    worker.completed.connect(lambda records, verification: completed.append((records, verification)))
+
+    worker.run()
+
+    assert completed[0][0] == [record]
+    assert completed[0][1] == {}
+    client.sync_status.assert_not_called()
+    client.check_adtrans.assert_not_called()
 
 def test_fetch_worker_sums_duplicate_emp_filter_before_verification():
     records = [

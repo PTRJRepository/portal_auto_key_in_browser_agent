@@ -3,20 +3,35 @@ export interface ManualAdjustmentRecord {
   period_month?: number | null;
   period_year?: number | null;
   emp_code: string;
+  emp_name?: string | null;
+  nik?: string | null;
   gang_code: string;
   division_code: string;
+  estate?: string | null;
+  divisioncode?: string | null;
   adjustment_type: string;
   adjustment_name: string;
   amount: number;
   remarks: string;
   category_key?: string | null;
   ad_code?: string | null;
+  ad_code_desc?: string | null;
   description?: string | null;
   task_code?: string | null;
   task_desc?: string | null;
   base_task_code?: string | null;
   loc_code?: string | null;
   automation_category?: string | null;
+  detail_type?: string | null;
+  subblok?: string | null;
+  subblok_raw?: string | null;
+  jumlah?: number | null;
+  expense_code?: string | null;
+  vehicle_code?: string | null;
+  vehicle_expense_code?: string | null;
+  transaction_index?: number | null;
+  adjustment_id?: number | null;
+  detail_key?: string | null;
 }
 
 export interface DuplicateDocIdTarget {
@@ -56,6 +71,7 @@ export interface RunPayload {
 export interface RowResult {
   emp_code: string;
   adjustment_name: string;
+  detail_key?: string | null;
   category_key?: string | null;
   status: "success" | "skipped" | "failed";
   message: string;

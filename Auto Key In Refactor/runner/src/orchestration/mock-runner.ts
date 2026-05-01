@@ -18,6 +18,7 @@ export async function runMock(payload: RunPayload, emit: EmitEvent): Promise<Run
     const result: RowResult = {
       emp_code: record.emp_code,
       adjustment_name: record.adjustment_name,
+      detail_key: record.detail_key ?? null,
       category_key: category.key,
       status: "success",
       message: `mock input using adcode ${category.adcode(record)}`,

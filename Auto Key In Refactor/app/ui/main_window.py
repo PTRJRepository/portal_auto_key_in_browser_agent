@@ -8,6 +8,7 @@ from typing import Any
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -42,9 +43,90 @@ from app.core.run_service import apply_row_limit, filter_by_category
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
-AUTOMATION_OPTION_CATEGORIES = ["premi", "koreksi", "potongan_upah_bersih"]
 AUTOMATION_OPTION_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
+SYNC_STATUS_ADJUSTMENT_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
+PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan"}
 MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
+MANUAL_ADJUSTMENT_OPTION_TYPES = "PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH"
+
+def sync_status_payload_rows(payload: object) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data", {})
+    rows = data.get("rows", []) if isinstance(data, dict) else []
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+def sync_status_rows_by_id(payload: object) -> dict[int, dict[str, Any]]:
+    rows_by_id: dict[int, dict[str, Any]] = {}
+    for row in sync_status_payload_rows(payload):
+        row_id = str(row.get("id") or "").strip()
+        if row_id.isdigit():
+            rows_by_id[int(row_id)] = row
+    return rows_by_id
+
+def compact_sync_amount(value: object) -> str:
+    try:
+        return f"{float(value or 0):g}"
+    except (TypeError, ValueError):
+        return "0"
+
+def sync_status_amount_suffix(row: dict[str, Any]) -> str:
+    if "adtrans_amount" not in row and "target_amount" not in row:
+        return ""
+    return f" {compact_sync_amount(row.get('adtrans_amount'))}/{compact_sync_amount(row.get('target_amount'))}"
+
+def sync_status_display_from_row(row: dict[str, Any]) -> tuple[str, str]:
+    status = str(row.get("status") or "").upper().strip()
+    skip_reason = str(row.get("skip_reason") or "").upper().strip()
+    amount_suffix = sync_status_amount_suffix(row)
+
+    if skip_reason == "ADTRANS_AMOUNT_PARTIAL":
+        return "PARTIAL", f"{skip_reason}{amount_suffix}"
+    if skip_reason == "ADTRANS_NOT_FOUND":
+        return "NOT_FOUND", f"{skip_reason}{amount_suffix}"
+    if skip_reason == "SYNC_SEGMENT_NOT_FOUND":
+        return "NO_SYNC_SEGMENT", skip_reason
+
+    target_units = amount_units(row.get("target_amount", 0))
+    adtrans_units = amount_units(row.get("adtrans_amount", 0))
+    verified_by_amount = target_units > 0 and adtrans_units >= target_units
+    if status in {"UPDATED", "UNCHANGED"} or verified_by_amount:
+        return str(row.get("new_sync_status") or "SYNC").upper().strip(), f"{status or 'VERIFIED'}{amount_suffix}".strip()
+    if status == "SKIPPED" and skip_reason == "UNCHANGED":
+        return str(row.get("new_sync_status") or "SYNC").upper().strip(), f"UNCHANGED{amount_suffix}".strip()
+    if status:
+        return status, f"{skip_reason or status}{amount_suffix}".strip()
+    return "CHECKED", amount_suffix.strip()
+
+def automation_option_categories_for_records(records: list[ManualAdjustmentRecord]) -> list[str]:
+    category_by_type = {
+        "PREMI": "premi",
+        "POTONGAN_KOTOR": "koreksi",
+        "POTONGAN_BERSIH": "potongan_upah_bersih",
+    }
+    categories: list[str] = []
+    for record in records:
+        category = category_by_type.get(record.adjustment_type)
+        if category and category not in categories:
+            categories.append(category)
+    return categories
+
+class EditableTextComboBox(QComboBox):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+
+    def text(self) -> str:
+        return self.currentText()
+
+    def setText(self, value: str) -> None:
+        self.setCurrentText(value)
+
+    def clear(self) -> None:
+        self.setCurrentText("")
 
 
 def remarks_parts(record: ManualAdjustmentRecord) -> list[str]:
@@ -83,8 +165,14 @@ def match_status_from_remarks(record: ManualAdjustmentRecord) -> str:
     return sync_status_from_remarks(record)
 
 
+def record_is_synced(record: ManualAdjustmentRecord) -> bool:
+    return sync_status_from_remarks(record).upper() == "SYNC"
+
+
 def record_is_stale_miss(record: ManualAdjustmentRecord) -> bool:
     sync_status = sync_status_from_remarks(record).upper()
+    if sync_status == "SYNC":
+        return False
     match_status = match_status_from_remarks(record).upper()
     return sync_status in {"MISS", "MISSING"} or match_status in {"MISMATCH", "MISS", "MISSING"}
 
@@ -109,12 +197,26 @@ def filter_for_record(record: ManualAdjustmentRecord) -> str:
     return (name[5:] if name.upper().startswith("AUTO ") else name).lower()
 
 
+def records_requiring_fetch_verification(records: list[ManualAdjustmentRecord]) -> list[ManualAdjustmentRecord]:
+    return [
+        record for record in records
+        if not record_is_synced(record) and (record.category_key in PREMI_CATEGORY_KEYS or record_is_stale_miss(record))
+    ]
+
+def is_task_desc_adcode(value: str) -> bool:
+    return value.strip().upper().startswith(("(AL) ", "(DE) "))
+
+
+def display_adcode_for_record(record: ManualAdjustmentRecord) -> str:
+    for value in (record.ad_code_desc, record.task_desc, record.description, record.ad_code):
+        text = (value or "").strip()
+        if is_task_desc_adcode(text):
+            return text
+    return ""
+
+
 def build_fetch_verification_status(records: list[ManualAdjustmentRecord], data: list[dict[str, Any]]) -> FetchVerificationStatus:
-    expected: dict[tuple[str, str], float] = {}
-    for record in records:
-        if record_is_stale_miss(record):
-            key = (record.emp_code, filter_for_record(record))
-            expected[key] = expected.get(key, 0.0) + record.amount
+    expected = expected_amounts_by_emp_filter(records)
     actual_by_key: dict[tuple[str, str], float] = {}
     for item in data:
         emp_code = str(item.get("emp_code") or item.get("EmpCode") or "").upper().strip()
@@ -134,6 +236,198 @@ def build_fetch_verification_status(records: list[ManualAdjustmentRecord], data:
     return statuses
 
 
+def build_fetch_verification_error(records: list[ManualAdjustmentRecord], error: Exception) -> FetchVerificationStatus:
+    return {
+        key: {"status": "VERIFY_ERROR", "expected": expected_amount, "actual": 0.0, "message": str(error)}
+        for key, expected_amount in expected_amounts_by_emp_filter(records).items()
+    }
+
+def expected_amounts_by_emp_filter(records: list[ManualAdjustmentRecord]) -> dict[tuple[str, str], float]:
+    expected: dict[tuple[str, str], float] = {}
+    for record in records:
+        key = (record.emp_code, filter_for_record(record))
+        expected[key] = expected.get(key, 0.0) + record.amount
+    return expected
+
+def build_premium_retry_plan(
+    records: list[ManualAdjustmentRecord],
+    verification: FetchVerificationStatus,
+) -> tuple[set[str], dict[tuple[str, str], str]]:
+    retry_record_keys: set[str] = set()
+    held_groups: dict[tuple[str, str], str] = {}
+    records_by_filter: dict[tuple[str, str], list[ManualAdjustmentRecord]] = {}
+    for record in records:
+        if record.category_key not in PREMI_CATEGORY_KEYS:
+            continue
+        key = (record.emp_code, filter_for_record(record))
+        records_by_filter.setdefault(key, []).append(record)
+
+    for key, group_records in records_by_filter.items():
+        status_info = verification.get(key, {})
+        status = str(status_info.get("status") or "").upper()
+        actual_units = amount_units(status_info.get("actual", 0))
+        expected_units = amount_units(status_info.get("expected", sum(record.amount for record in group_records)))
+        payload_units = sum(amount_units(record.amount) for record in group_records)
+
+        if status == "VERIFIED_NOT_FOUND" or actual_units <= 0:
+            retry_record_keys.update(record.record_key for record in group_records)
+            continue
+        if status == "VERIFIED_MATCH" or actual_units == payload_units or actual_units == expected_units:
+            continue
+        if status == "VERIFY_ERROR":
+            held_groups[key] = "verification error"
+            continue
+        if status != "VERIFIED_MISMATCH":
+            held_groups[key] = "missing verification status"
+            continue
+        if actual_units > payload_units:
+            held_groups[key] = "db amount exceeds payload"
+            continue
+
+        entered_indices, hold_reason = unique_subset_indices_for_amount(group_records, actual_units)
+        if entered_indices is None:
+            held_groups[key] = hold_reason or "ambiguous partial match"
+            continue
+        for index, record in enumerate(group_records):
+            if index not in entered_indices:
+                retry_record_keys.add(record.record_key)
+    return retry_record_keys, held_groups
+
+def build_premium_retry_plan_from_sync_status(
+    records: list[ManualAdjustmentRecord],
+    payload: dict[str, Any],
+) -> tuple[set[str], dict[tuple[str, str, str], str]]:
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    data = payload.get("data", {})
+    rows = data.get("rows", []) if isinstance(data, dict) else []
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_id = str(row.get("id") or "").strip()
+            if row_id:
+                rows_by_id[row_id] = row
+
+    records_by_adjustment_id: dict[str, list[ManualAdjustmentRecord]] = {}
+    for record in records:
+        if record.category_key not in PREMI_CATEGORY_KEYS:
+            continue
+        adjustment_id = premium_adjustment_row_id(record)
+        if not adjustment_id:
+            continue
+        records_by_adjustment_id.setdefault(adjustment_id, []).append(record)
+
+    retry_record_keys: set[str] = set()
+    held_groups: dict[tuple[str, str, str], str] = {}
+    for adjustment_id, group_records in records_by_adjustment_id.items():
+        row = rows_by_id.get(adjustment_id)
+        hold_key = (group_records[0].emp_code, filter_for_record(group_records[0]), adjustment_id)
+        if not row:
+            held_groups[hold_key] = "missing sync-status row"
+            continue
+
+        skip_reason = str(row.get("skip_reason") or "").upper().strip()
+        status = str(row.get("status") or "").upper().strip()
+        target_units = amount_units(row.get("target_amount", sum(record.amount for record in group_records)))
+        adtrans_units = amount_units(row.get("adtrans_amount", 0))
+        payload_units = sum(amount_units(record.amount) for record in group_records)
+        expected_units = target_units or payload_units
+
+        if skip_reason == "ADTRANS_NOT_FOUND" or adtrans_units <= 0:
+            retry_record_keys.update(record.record_key for record in group_records)
+            continue
+        if skip_reason != "ADTRANS_AMOUNT_PARTIAL" and (
+            status in {"UPDATED", "UNCHANGED", "SKIPPED"} or adtrans_units >= expected_units
+        ):
+            continue
+        if skip_reason != "ADTRANS_AMOUNT_PARTIAL":
+            held_groups[hold_key] = skip_reason.lower() or status.lower() or "unhandled sync-status row"
+            continue
+
+        entered_indices, hold_reason = unique_subset_indices_for_amount(group_records, adtrans_units)
+        if entered_indices is None:
+            held_groups[hold_key] = hold_reason or "ambiguous partial match"
+            continue
+        for index, record in enumerate(group_records):
+            if index not in entered_indices:
+                retry_record_keys.add(record.record_key)
+    return retry_record_keys, held_groups
+
+def premium_adjustment_row_id(record: ManualAdjustmentRecord) -> str:
+    if record.adjustment_id is not None:
+        return str(record.adjustment_id)
+    if record.id is not None:
+        return str(record.id)
+    return ""
+
+def sync_status_ids_for_records(records: list[ManualAdjustmentRecord]) -> list[int]:
+    ids: set[int] = set()
+    for record in records:
+        row_id = premium_adjustment_row_id(record)
+        if row_id.isdigit():
+            ids.add(int(row_id))
+    return sorted(ids)
+
+def verified_sync_status_ids(payload: dict[str, Any]) -> list[int]:
+    data = payload.get("data", {})
+    rows = data.get("rows", []) if isinstance(data, dict) else []
+    verified: set[int] = set()
+    if not isinstance(rows, list):
+        return []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_id = str(row.get("id") or "").strip()
+        if not row_id.isdigit():
+            continue
+        skip_reason = str(row.get("skip_reason") or "").upper().strip()
+        if skip_reason in {"ADTRANS_AMOUNT_PARTIAL", "ADTRANS_NOT_FOUND", "SYNC_SEGMENT_NOT_FOUND"}:
+            continue
+        status = str(row.get("status") or "").upper().strip()
+        target_units = amount_units(row.get("target_amount", 0))
+        adtrans_units = amount_units(row.get("adtrans_amount", 0))
+        if status in {"UPDATED", "UNCHANGED"} or (target_units > 0 and adtrans_units >= target_units):
+            verified.add(int(row_id))
+    return sorted(verified)
+
+def amount_units(value: object) -> int:
+    try:
+        return int(round(float(value or 0) * 100))
+    except (TypeError, ValueError):
+        return 0
+
+def unique_subset_indices_for_amount(
+    records: list[ManualAdjustmentRecord],
+    target_units: int,
+) -> tuple[set[int] | None, str | None]:
+    if target_units <= 0:
+        return set(), None
+    solutions_by_sum: dict[int, list[tuple[int, ...]]] = {0: [()]}
+    for index, record in enumerate(records):
+        record_units = amount_units(record.amount)
+        if record_units <= 0:
+            continue
+        snapshot = list(solutions_by_sum.items())
+        for current_sum, solutions in snapshot:
+            next_sum = current_sum + record_units
+            if next_sum > target_units:
+                continue
+            bucket = solutions_by_sum.setdefault(next_sum, [])
+            for solution in solutions:
+                candidate = solution + (index,)
+                if candidate not in bucket:
+                    bucket.append(candidate)
+                if len(bucket) > 1:
+                    bucket[:] = bucket[:2]
+                    break
+
+    solutions = solutions_by_sum.get(target_units, [])
+    if not solutions:
+        return None, "no matching subset"
+    if len(solutions) > 1:
+        return None, "ambiguous partial match"
+    return set(solutions[0]), None
+
 class FetchWorker(QObject):
     completed = Signal(object, object)
     failed = Signal(str)
@@ -145,21 +439,49 @@ class FetchWorker(QObject):
 
     def run(self) -> None:
         try:
-            records = self.client.get_adjustments(self.query)
+            fetch_query = self.query.with_grouped_premium_details() if self.query.requests_premium() and not self.query.uses_grouped_view() else self.query
+            records = self.client.get_adjustments(fetch_query)
             records = self._enrich_manual_automation_details(records)
-            suspect_records = [record for record in records if record_is_stale_miss(record)]
+            suspect_records = records_requiring_fetch_verification(records)
             verification: FetchVerificationStatus = {}
             if suspect_records:
-                emp_codes = sorted({record.emp_code for record in suspect_records if record.emp_code})
-                filters = sorted({filter_name for record in suspect_records if (filter_name := filter_for_record(record))})
-                try:
-                    data = self.client.check_adtrans(self.query.period_month, self.query.period_year, emp_codes, filters)
-                    verification = build_fetch_verification_status(suspect_records, data)
-                except Exception as exc:
-                    verification = {
-                        (record.emp_code, filter_for_record(record)): {"status": "VERIFY_ERROR", "expected": record.amount, "actual": 0.0, "message": str(exc)}
-                        for record in suspect_records
-                    }
+                premium_records = [record for record in suspect_records if record.category_key in PREMI_CATEGORY_KEYS]
+                premium_ids = sorted({
+                    int(row_id)
+                    for record in premium_records
+                    if (row_id := premium_adjustment_row_id(record)).isdigit()
+                })
+                if premium_records and premium_ids and self.query.division_code:
+                    try:
+                        sync_payload = self.client.sync_status(
+                            period_month=self.query.period_month,
+                            period_year=self.query.period_year,
+                            division_code=self.query.division_code,
+                            gang_code=self.query.gang_code,
+                            emp_code=self.query.emp_code,
+                            adjustment_type="PREMI",
+                            ids=premium_ids,
+                            dry_run=True,
+                            only_if_adtrans_exists=True,
+                            updated_by="browser_automation",
+                        )
+                        retry_keys, held_groups = build_premium_retry_plan_from_sync_status(premium_records, sync_payload)
+                        verification = {
+                            "source": "sync-status",
+                            "retry_record_keys": retry_keys,
+                            "held_groups": held_groups,
+                            "sync_status_payload": sync_payload,
+                        }
+                    except Exception:
+                        verification = {}
+                if not verification:
+                    emp_codes = sorted({record.emp_code for record in suspect_records if record.emp_code})
+                    filters = sorted({filter_name for record in suspect_records if (filter_name := filter_for_record(record))})
+                    try:
+                        data = self.client.check_adtrans(self.query.period_month, self.query.period_year, emp_codes, filters)
+                        verification = build_fetch_verification_status(suspect_records, data)
+                    except Exception as exc:
+                        verification = build_fetch_verification_error(suspect_records, exc)
             self.completed.emit(records, verification)
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -174,14 +496,19 @@ class FetchWorker(QObject):
         if not needs_detail:
             return records
         try:
+            categories = automation_option_categories_for_records(needs_detail)
+            if not categories:
+                return records
             options = self.client.get_automation_options(
                 division_code=self.query.division_code,
-                categories=AUTOMATION_OPTION_CATEGORIES,
+                categories=categories,
                 limit=200,
             )
+            if not isinstance(options, list):
+                return records
+            return enrich_records_with_automation_options(records, options)
         except Exception:
             return records
-        return enrich_records_with_automation_options(records, options)
 
 
 class RunWorker(QObject):
@@ -223,6 +550,60 @@ class VerifyWorker(QObject):
         except Exception as exc:
             self.failed.emit(str(exc))
 
+
+class SyncStatusWorker(QObject):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        client: ManualAdjustmentApiClient,
+        period_month: int,
+        period_year: int,
+        division_code: str,
+        ids: list[int],
+        adjustment_type: str | None,
+    ) -> None:
+        super().__init__()
+        self.client = client
+        self.period_month = period_month
+        self.period_year = period_year
+        self.division_code = division_code
+        self.ids = ids
+        self.adjustment_type = adjustment_type
+
+    def run(self) -> None:
+        try:
+            dry_run_payload = self.client.sync_status(
+                period_month=self.period_month,
+                period_year=self.period_year,
+                division_code=self.division_code,
+                adjustment_type=self.adjustment_type,
+                ids=self.ids,
+                dry_run=True,
+                only_if_adtrans_exists=True,
+                updated_by="browser_automation",
+            )
+            verified_ids = verified_sync_status_ids(dry_run_payload)
+            apply_payload: dict[str, Any] | None = None
+            if verified_ids:
+                apply_payload = self.client.sync_status(
+                    period_month=self.period_month,
+                    period_year=self.period_year,
+                    division_code=self.division_code,
+                    adjustment_type=self.adjustment_type,
+                    ids=verified_ids,
+                    dry_run=False,
+                    only_if_adtrans_exists=True,
+                    updated_by="browser_automation",
+                )
+            self.completed.emit({
+                "dry_run": dry_run_payload,
+                "apply": apply_payload,
+                "verified_ids": verified_ids,
+            })
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 class DuplicateFetchWorker(QObject):
     completed = Signal(list)
@@ -279,6 +660,11 @@ class MainWindow(QMainWindow):
         self.run_worker: RunWorker | None = None
         self.verify_thread: QThread | None = None
         self.verify_worker: VerifyWorker | None = None
+        self.sync_status_thread: QThread | None = None
+        self.sync_status_worker: SyncStatusWorker | None = None
+        self.pending_sync_status_ids: set[int] = set()
+        self.inflight_sync_status_ids: set[int] = set()
+        self.sync_status_unavailable_message = ""
         self.duplicate_fetch_thread: QThread | None = None
         self.duplicate_fetch_worker: DuplicateFetchWorker | None = None
         self.duplicate_targets: list[DuplicateDocIdTarget] = []
@@ -294,9 +680,12 @@ class MainWindow(QMainWindow):
         self.tab_progress: dict[int, dict[str, object]] = {}
         self.record_status: dict[str, dict[str, Any]] = {}
         self.fetch_verification_status: FetchVerificationStatus = {}
+        self.premium_retry_record_keys: set[str] = set()
+        self.premium_retry_held_groups: dict[tuple[str, str], str] = {}
         self.last_run_result: dict[str, Any] | None = None
         self.last_successful_records: list[ManualAdjustmentRecord] = []
         self.division_run_dialogs: list[QDialog] = []
+        self._suppress_adjustment_name_refresh = False
         self.setWindowTitle("Auto Key In Refactor")
         self.resize(1500, 920)
         self._build_ui()
@@ -376,11 +765,22 @@ class MainWindow(QMainWindow):
         self.adjustment_type = QComboBox()
         self.adjustment_type.addItems(["", "AUTO_BUFFER", "MANUAL", "PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "PENDAPATAN_LAINNYA"])
         self.adjustment_type.setToolTip("MANUAL = PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH,PENDAPATAN_LAINNYA; comma-separated values are supported by the API.")
-        self.adjustment_name = QLineEdit()
+        self.adjustment_name = EditableTextComboBox()
+        self.adjustment_name.setToolTip("Ketik nama/ADCode/task lalu klik Refresh Adjustment Names untuk filter dari API.")
+        self.refresh_adjustment_names_button = QPushButton("Refresh Adjustment Names")
+        self.refresh_adjustment_names_button.clicked.connect(self._refresh_adjustment_name_options)
         self.category = QComboBox()
         for item in self.categories.categories:
             self.category.addItem(item.label, item.key)
+        default_category_index = self.category.findData("premi")
+        if default_category_index >= 0:
+            self.category.setCurrentIndex(default_category_index)
         self.category.currentIndexChanged.connect(self.apply_category_preset)
+        self.adjustment_type.currentIndexChanged.connect(self._refresh_adjustment_name_options)
+        self.period_month.valueChanged.connect(self._refresh_adjustment_name_options)
+        self.period_year.valueChanged.connect(self._refresh_adjustment_name_options)
+        self.gang_code.editingFinished.connect(self._refresh_adjustment_name_options)
+        self.emp_code.editingFinished.connect(self._refresh_adjustment_name_options)
         filter_form.addRow("Period Month", self.period_month)
         filter_form.addRow("Period Year", self.period_year)
         filter_form.addRow("Division", self.division_code)
@@ -388,10 +788,12 @@ class MainWindow(QMainWindow):
         filter_form.addRow("Employee", self.emp_code)
         filter_form.addRow("Adjustment Type", self.adjustment_type)
         filter_form.addRow("Adjustment Name", self.adjustment_name)
+        filter_form.addRow("", self.refresh_adjustment_names_button)
         filter_form.addRow("Category", self.category)
         self.session_status_label = QLabel("")
         filter_form.addRow("Selected Session", self.session_status_label)
         self.division_code.currentIndexChanged.connect(self._refresh_session_status)
+        self.division_code.currentIndexChanged.connect(self._refresh_adjustment_name_options)
 
         runner_group = QGroupBox("Runner Settings")
         runner_form = QFormLayout(runner_group)
@@ -503,8 +905,8 @@ class MainWindow(QMainWindow):
         job_layout.addWidget(self.job_table)
         layout.addWidget(job_group)
 
-        self.records_table = QTableWidget(0, 13)
-        self.records_table.setHorizontalHeaderLabels(["Input Status", "DB Status", "API Sync", "API Match", "Emp Code", "Gang", "Division", "Adjustment", "Description", "ADCode", "Remarks ADCode", "Amount", "Remarks"])
+        self.records_table = QTableWidget(0, 17)
+        self.records_table.setHorizontalHeaderLabels(["Input Status", "DB Status", "API Sync", "API Match", "Emp Code", "Gang", "Division", "Adjustment", "Description", "ADCode", "Remarks ADCode", "Amount", "Remarks", "Estate", "DivisionCode", "Detail Type", "Subblok/Vehicle"])
         self.records_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.records_table, 3)
 
@@ -660,41 +1062,112 @@ class MainWindow(QMainWindow):
 
     def apply_category_preset(self) -> None:
         category_key = str(self.category.currentData() or "")
-        if category_key == "spsi":
-            self.adjustment_type.setCurrentText("AUTO_BUFFER")
-            self.adjustment_name.setText("AUTO SPSI")
-            self.only_missing.setChecked(True)
-            self.runner_mode.setCurrentText("multi_tab_shared_session")
-        elif category_key == "masa_kerja":
-            self.adjustment_type.setCurrentText("AUTO_BUFFER")
-            self.adjustment_name.setText("MASA KERJA")
-            self.only_missing.setChecked(True)
-        elif category_key == "tunjangan_jabatan":
-            self.adjustment_type.setCurrentText("AUTO_BUFFER")
-            self.adjustment_name.setText("TUNJANGAN JABATAN")
-            self.only_missing.setChecked(True)
-        elif category_key == "premi_tunjangan":
-            self.adjustment_type.setCurrentText("PREMI")
-            self.adjustment_name.setText("TUNJANGAN PREMI")
-            self.only_missing.setChecked(False)
-            self.process_only_miss.setChecked(False)
-        elif category_key == "premi":
-            self.adjustment_type.setCurrentText("PREMI")
-            self.adjustment_name.clear()
-            self.only_missing.setChecked(False)
-            self.process_only_miss.setChecked(False)
-        elif category_key == "potongan_upah_kotor":
-            self.adjustment_type.setCurrentText("POTONGAN_KOTOR")
-            self.adjustment_name.clear()
-            self.only_missing.setChecked(False)
-            self.process_only_miss.setChecked(False)
-        elif category_key == "potongan_upah_bersih":
-            self.adjustment_type.setCurrentText("POTONGAN_BERSIH")
-            self.adjustment_name.clear()
-            self.only_missing.setChecked(False)
-            self.process_only_miss.setChecked(False)
+        self._suppress_adjustment_name_refresh = True
+        try:
+            if category_key == "spsi":
+                self.adjustment_type.setCurrentText("AUTO_BUFFER")
+                self._set_adjustment_name_options(["AUTO SPSI"], "AUTO SPSI")
+                self.only_missing.setChecked(True)
+                self.runner_mode.setCurrentText("multi_tab_shared_session")
+            elif category_key == "masa_kerja":
+                self.adjustment_type.setCurrentText("AUTO_BUFFER")
+                self._set_adjustment_name_options(["MASA KERJA"], "MASA KERJA")
+                self.only_missing.setChecked(True)
+            elif category_key == "tunjangan_jabatan":
+                self.adjustment_type.setCurrentText("AUTO_BUFFER")
+                self._set_adjustment_name_options(["TUNJANGAN JABATAN"], "TUNJANGAN JABATAN")
+                self.only_missing.setChecked(True)
+            elif category_key == "premi_tunjangan":
+                self.adjustment_type.setCurrentText("PREMI")
+                self.adjustment_name.setText("TUNJANGAN PREMI")
+                self.only_missing.setChecked(False)
+                self.process_only_miss.setChecked(True)
+            elif category_key == "premi":
+                self.adjustment_type.setCurrentText("PREMI")
+                self.adjustment_name.clear()
+                self.only_missing.setChecked(False)
+                self.process_only_miss.setChecked(True)
+            elif category_key == "potongan_upah_kotor":
+                self.adjustment_type.setCurrentText("POTONGAN_KOTOR")
+                self.adjustment_name.clear()
+                self.only_missing.setChecked(False)
+                self.process_only_miss.setChecked(False)
+            elif category_key == "potongan_upah_bersih":
+                self.adjustment_type.setCurrentText("POTONGAN_BERSIH")
+                self.adjustment_name.clear()
+                self.only_missing.setChecked(False)
+                self.process_only_miss.setChecked(False)
+        finally:
+            self._suppress_adjustment_name_refresh = False
+        self._refresh_adjustment_name_options()
         self._sync_verify_defaults()
         self._update_process_context()
+
+    def _refresh_adjustment_name_options(self) -> None:
+        if getattr(self, "_suppress_adjustment_name_refresh", False):
+            return
+        if not hasattr(self, "adjustment_name"):
+            return
+        adjustment_type = self._adjustment_name_option_type()
+        if not adjustment_type:
+            return
+        current_text = self.adjustment_name.text().strip()
+        search = None
+        self._set_adjustment_name_options([], "Loading adjustment names...")
+        self.adjustment_name.setEnabled(False)
+        self.refresh_adjustment_names_button.setEnabled(False)
+        QApplication.processEvents()
+        try:
+            options = self._api_client().get_adjustment_name_options(
+                period_month=self.period_month.value(),
+                period_year=self.period_year.value(),
+                division_code=self._selected_division_code() or None,
+                gang_code=self.gang_code.text().strip().upper() or None,
+                emp_code=self.emp_code.text().strip().upper() or None,
+                adjustment_type=adjustment_type,
+                metadata_only=self._adjustment_name_metadata_only(),
+                search=search,
+                limit=200,
+            )
+        except Exception as exc:
+            self.append_log(f"Adjustment name options refresh failed: {exc}")
+            options = []
+        finally:
+            self.adjustment_name.setEnabled(True)
+            self.refresh_adjustment_names_button.setEnabled(True)
+        names = list(dict.fromkeys(option.adjustment_name for option in options if option.adjustment_name))
+        self._set_adjustment_name_options(names, current_text)
+        self.append_log(f"Loaded {len(names)} adjustment name options for {adjustment_type}.")
+
+    def _adjustment_name_metadata_only(self) -> bool | None:
+        category_key = str(self.category.currentData() or "")
+        if category_key in {"premi", "premi_tunjangan"}:
+            return True
+        return None
+
+    def _adjustment_name_option_type(self) -> str | None:
+        category_key = str(self.category.currentData() or "")
+        if category_key in {"spsi", "masa_kerja", "tunjangan_jabatan"}:
+            return None
+        if category_key in {"premi", "premi_tunjangan"}:
+            return "PREMI"
+        if category_key in {"potongan_upah_kotor", "koreksi"}:
+            return "POTONGAN_KOTOR"
+        if category_key == "potongan_upah_bersih":
+            return "POTONGAN_BERSIH"
+        current_type = self.adjustment_type.currentText().strip().upper()
+        if current_type == "MANUAL":
+            return MANUAL_ADJUSTMENT_OPTION_TYPES
+        return current_type or None
+
+    def _set_adjustment_name_options(self, names: list[str], preferred: str = "") -> None:
+        was_blocked = self.adjustment_name.blockSignals(True)
+        try:
+            QComboBox.clear(self.adjustment_name)
+            self.adjustment_name.addItems(names)
+            self.adjustment_name.setCurrentText(preferred)
+        finally:
+            self.adjustment_name.blockSignals(was_blocked)
 
     def add_job_from_current_config(self) -> None:
         job = {
@@ -801,16 +1274,57 @@ class MainWindow(QMainWindow):
     def _handle_fetch_completed(self, records: list[ManualAdjustmentRecord], verification: FetchVerificationStatus | None = None) -> None:
         self.fetch_verification_status = verification or {}
         if self.fetch_verification_status:
-            counts: dict[str, int] = {}
-            for item in self.fetch_verification_status.values():
-                status = str(item.get("status") or "")
-                counts[status] = counts.get(status, 0) + 1
-            self.append_log(f"db_ptrj fetch verification: {len(self.fetch_verification_status)} checked, {counts.get('VERIFIED_MATCH', 0)} match, {counts.get('VERIFIED_MISMATCH', 0)} mismatch, {counts.get('VERIFIED_NOT_FOUND', 0)} not found, {counts.get('VERIFY_ERROR', 0)} error.")
+            if self.fetch_verification_status.get("source") == "sync-status":
+                sync_payload = self.fetch_verification_status.get("sync_status_payload", {})
+                data = sync_payload.get("data", {}) if isinstance(sync_payload, dict) else {}
+                self.append_log(
+                    "sync-status dry-run: "
+                    f"matched={data.get('matched_count', 0)}, "
+                    f"adtrans={data.get('adtrans_matched_count', 0)}, "
+                    f"updated={data.get('updated_count', 0)}, "
+                    f"partial={data.get('partial_count', 0)}, "
+                    f"skipped={data.get('skipped_count', 0)}."
+                )
+            else:
+                counts: dict[str, int] = {}
+                for item in self.fetch_verification_status.values():
+                    if not isinstance(item, dict):
+                        continue
+                    status = str(item.get("status") or "")
+                    counts[status] = counts.get(status, 0) + 1
+                self.append_log(f"db_ptrj fetch verification: {len(self.fetch_verification_status)} checked, {counts.get('VERIFIED_MATCH', 0)} match, {counts.get('VERIFIED_MISMATCH', 0)} mismatch, {counts.get('VERIFIED_NOT_FOUND', 0)} not found, {counts.get('VERIFY_ERROR', 0)} error.")
         category_key = str(self.category.currentData() or "")
         row_limit = self.row_limit.value() or None
         filtered_records = filter_by_category(records, category_key)
         manual_preview = category_key in MANUAL_PREVIEW_CATEGORY_KEYS
-        if self.process_only_miss.isChecked() and not manual_preview:
+        premium_preview = category_key in PREMI_CATEGORY_KEYS
+        self.premium_retry_record_keys = set()
+        self.premium_retry_held_groups = {}
+        if premium_preview and self.fetch_verification_status:
+            if self.fetch_verification_status.get("source") == "sync-status":
+                self.premium_retry_record_keys = set(self.fetch_verification_status.get("retry_record_keys", set()))
+                self.premium_retry_held_groups = dict(self.fetch_verification_status.get("held_groups", {}))
+            else:
+                self.premium_retry_record_keys, self.premium_retry_held_groups = build_premium_retry_plan(
+                    filtered_records,
+                    self.fetch_verification_status,
+                )
+        if self.process_only_miss.isChecked() and premium_preview and self.fetch_verification_status:
+            before_miss_filter = len(filtered_records)
+            filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
+            self.append_log(
+                "Premi retry-safe filter active: "
+                f"{len(filtered_records)} verified missing records will be previewed/run; "
+                f"{before_miss_filter - len(filtered_records)} matched/mismatch/already-in-db records skipped."
+            )
+            if self.premium_retry_held_groups:
+                self.append_log(
+                    "Premi partial hold: "
+                    f"{len(self.premium_retry_held_groups)} employee/filter groups need manual check because entered rows could not be identified safely."
+                )
+        elif self.process_only_miss.isChecked() and premium_preview:
+            self.append_log("Premi retry-safe filter skipped: no db_ptrj verification status returned.")
+        elif self.process_only_miss.isChecked() and not manual_preview:
             before_miss_filter = len(filtered_records)
             filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
             self.append_log(f"MISS-only filter active: {len(filtered_records)} of {before_miss_filter} category records will be previewed/run.")
@@ -1058,7 +1572,9 @@ class MainWindow(QMainWindow):
             progress["state"] = "Submitting"
         elif event_name == "tab.submit.completed":
             progress["state"] = "Submitted"
-        elif event_name in {"tab.open.failed", "row.failed"}:
+        elif event_name == "tab.stopped":
+            progress["state"] = "Stopped"
+        elif event_name in {"tab.open.failed", "tab.submit.failed", "row.failed"}:
             progress["state"] = "Failed"
         self.render_agent_progress()
 
@@ -1085,6 +1601,8 @@ class MainWindow(QMainWindow):
         self._set_run_buttons_enabled(True)
         self._refresh_session_status()
         self._refresh_summary()
+        if isinstance(result, dict) and int(result.get("inserted_rows") or 0) > 0:
+            self._start_sync_status_update_for_successful_records()
         self.use_last_run_employees()
         self.tabs.setCurrentIndex(2)
 
@@ -1097,17 +1615,191 @@ class MainWindow(QMainWindow):
         self._refresh_session_status()
         self._refresh_summary()
 
+    def _start_sync_status_update_for_successful_records(self) -> None:
+        records = [
+            record for record in self.last_successful_records
+            if record.adjustment_type in SYNC_STATUS_ADJUSTMENT_TYPES
+        ]
+        ids = sync_status_ids_for_records(records)
+        if not ids:
+            self.append_log("sync-status skipped: no manual adjustment ids found in successful rows.")
+            return
+        self.append_log(f"sync-status final verification queued for {len(ids)} successful manual adjustment rows.")
+        self._queue_sync_status_ids(ids, "QUEUED", "final verification after submit")
+
+    def _sync_status_id_for_record(self, record: ManualAdjustmentRecord) -> int | None:
+        if record.adjustment_type not in SYNC_STATUS_ADJUSTMENT_TYPES:
+            return None
+        row_id = premium_adjustment_row_id(record)
+        return int(row_id) if row_id.isdigit() else None
+
+    def _sync_status_adjustment_type_for_ids(self, ids: set[int]) -> str | None:
+        adjustment_types = sorted({
+            record.adjustment_type
+            for record in self.records
+            if record.adjustment_type and (row_id := self._sync_status_id_for_record(record)) in ids
+        })
+        if not adjustment_types:
+            selected = self.adjustment_type.currentText().strip().upper()
+            return selected if selected in SYNC_STATUS_ADJUSTMENT_TYPES else None
+        return adjustment_types[0] if len(adjustment_types) == 1 else ",".join(adjustment_types)
+
+    def _queue_sync_status_for_record(self, record: ManualAdjustmentRecord) -> None:
+        if record.adjustment_type not in SYNC_STATUS_ADJUSTMENT_TYPES:
+            return
+        row_id = self._sync_status_id_for_record(record)
+        if row_id is None:
+            self._set_record_sync_status(record, "NO_ID", "missing manual adjustment id")
+            self._refresh_summary()
+            return
+        self._queue_sync_status_ids([row_id], "QUEUED", "waiting sync-status verification")
+
+    def _queue_sync_status_ids(self, ids: list[int], status: str, message: str) -> None:
+        target_ids = {row_id for row_id in ids if row_id > 0}
+        if not target_ids:
+            return
+        if self.sync_status_unavailable_message:
+            self._set_sync_status_for_ids(target_ids, "ERROR", self.sync_status_unavailable_message)
+            self._refresh_summary()
+            return
+        self.pending_sync_status_ids.update(target_ids)
+        self._set_sync_status_for_ids(target_ids, status, message)
+        self._refresh_summary()
+        self._drain_sync_status_queue()
+
+    def _drain_sync_status_queue(self) -> None:
+        if self.sync_status_thread is not None or not self.pending_sync_status_ids or self.sync_status_unavailable_message:
+            return
+        ids = sorted(self.pending_sync_status_ids)
+        self.pending_sync_status_ids.clear()
+        self.inflight_sync_status_ids = set(ids)
+        self._set_sync_status_for_ids(self.inflight_sync_status_ids, "CHECKING", "dry-run/apply sync-status")
+        self._refresh_summary()
+        adjustment_type = self._sync_status_adjustment_type_for_ids(self.inflight_sync_status_ids)
+        self.append_log(f"sync-status dry-run/apply started for {len(ids)} manual adjustment rows.")
+        self.sync_status_thread = QThread(self)
+        self.sync_status_worker = SyncStatusWorker(
+            self._api_client(),
+            self.period_month.value(),
+            self.period_year.value(),
+            self._selected_division_code(),
+            ids,
+            adjustment_type,
+        )
+        self.sync_status_worker.moveToThread(self.sync_status_thread)
+        self.sync_status_thread.started.connect(self.sync_status_worker.run)
+        self.sync_status_worker.completed.connect(self._handle_sync_status_completed)
+        self.sync_status_worker.failed.connect(self._handle_sync_status_failed)
+        self.sync_status_worker.completed.connect(self.sync_status_thread.quit)
+        self.sync_status_worker.failed.connect(self.sync_status_thread.quit)
+        self.sync_status_thread.finished.connect(self.sync_status_thread.deleteLater)
+        self.sync_status_thread.finished.connect(self._clear_sync_status_thread)
+        self.sync_status_thread.start()
+
+    def _handle_sync_status_completed(self, result: object) -> None:
+        if not isinstance(result, dict):
+            self.append_log("sync-status completed with invalid result shape.")
+            return
+        dry_run = result.get("dry_run", {})
+        apply_payload = result.get("apply")
+        verified_ids = result.get("verified_ids", [])
+        dry_rows = sync_status_rows_by_id(dry_run)
+        apply_rows = sync_status_rows_by_id(apply_payload)
+        verified_id_set = {
+            int(row_id)
+            for row_id in verified_ids
+            if isinstance(row_id, int) or str(row_id).isdigit()
+        }
+        affected_ids = set(self.inflight_sync_status_ids)
+        affected_ids.update(dry_rows)
+        affected_ids.update(apply_rows)
+        affected_ids.update(verified_id_set)
+        for row_id in sorted(affected_ids):
+            row = apply_rows.get(row_id) or dry_rows.get(row_id)
+            if row:
+                api_sync, api_match = sync_status_display_from_row(row)
+            elif row_id in verified_id_set:
+                api_sync, api_match = "SYNC", "VERIFIED"
+            else:
+                api_sync, api_match = "CHECKED", "no sync-status row"
+            self._set_sync_status_for_id(row_id, api_sync, api_match)
+        self.inflight_sync_status_ids.clear()
+        self._refresh_summary()
+        dry_data = dry_run.get("data", {}) if isinstance(dry_run, dict) else {}
+        if isinstance(apply_payload, dict):
+            apply_data = apply_payload.get("data", {})
+            self.append_log(
+                "sync-status applied: "
+                f"verified_ids={len(verified_ids)}, "
+                f"updated={apply_data.get('updated_count', 0)}, "
+                f"unchanged={apply_data.get('unchanged_count', 0)}, "
+                f"skipped={apply_data.get('skipped_count', 0)}, "
+                f"partial={apply_data.get('partial_count', 0)}."
+            )
+        else:
+            self.append_log(
+                "sync-status dry-run found no fully verified rows to update: "
+                f"matched={dry_data.get('matched_count', 0)}, partial={dry_data.get('partial_count', 0)}, skipped={dry_data.get('skipped_count', 0)}."
+            )
+
+    def _handle_sync_status_failed(self, message: str) -> None:
+        affected_ids = set(self.inflight_sync_status_ids) | set(self.pending_sync_status_ids)
+        self.pending_sync_status_ids.clear()
+        self.inflight_sync_status_ids.clear()
+        self.sync_status_unavailable_message = message
+        if affected_ids:
+            self._set_sync_status_for_ids(affected_ids, "ERROR", message)
+            self._refresh_summary()
+        self.append_log(f"sync-status failed: {message}")
+
+    def _clear_sync_status_thread(self) -> None:
+        self.sync_status_thread = None
+        self.sync_status_worker = None
+        self._drain_sync_status_queue()
+
+    def _set_sync_status_for_ids(self, ids: set[int], api_sync: str, api_match: str) -> None:
+        for record in self.records:
+            row_id = self._sync_status_id_for_record(record)
+            if row_id in ids:
+                self._set_record_sync_status(record, api_sync, api_match)
+
+    def _set_sync_status_for_id(self, row_id: int, api_sync: str, api_match: str) -> None:
+        self._set_sync_status_for_ids({row_id}, api_sync, api_match)
+
+    def _set_record_sync_status(self, record: ManualAdjustmentRecord, api_sync: str, api_match: str) -> None:
+        key = self._record_key(record)
+        state = self.record_status.get(key)
+        if not state:
+            return
+        state["api_sync"] = api_sync
+        state["api_match"] = api_match
+        row = int(state.get("row", -1))
+        if row >= 0:
+            self.records_table.setItem(row, 2, QTableWidgetItem(api_sync))
+            self.records_table.setItem(row, 3, QTableWidgetItem(api_match))
+
     def set_records(self, records: list[ManualAdjustmentRecord]) -> None:
         self.records = records
         self.records_table.setRowCount(len(records))
         self.record_status = {}
         for row, record in enumerate(records):
             key = self._record_key(record)
-            self.record_status[key] = {"row": row, "input_status": "Pending", "db_status": "Not Checked", "message": ""}
-            values = ["Pending", "Not Checked", self._sync_status_from_remarks(record), self._fetch_verification_display(record) or self._match_status_from_remarks(record), record.emp_code, record.gang_code, record.division_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), self._remarks_adcode(record), f"{record.amount:g}", record.remarks]
+            api_sync = self._sync_status_from_remarks(record)
+            api_match = self._fetch_verification_display(record) or self._match_status_from_remarks(record)
+            db_status = self._db_status_for_record(record)
+            self.record_status[key] = {
+                "row": row,
+                "input_status": "Pending",
+                "db_status": db_status,
+                "api_sync": api_sync,
+                "api_match": api_match,
+                "message": "",
+            }
+            detail_value = record.subblok or record.vehicle_code
+            values = ["Pending", db_status, api_sync, api_match, record.emp_code, record.gang_code, record.division_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), self._remarks_adcode(record), f"{record.amount:g}", record.remarks, record.estate, record.divisioncode, record.detail_type, detail_value]
             for column, value in enumerate(values):
                 self.records_table.setItem(row, column, QTableWidgetItem(value))
-            self._apply_record_row_style(row, "Pending", "Not Checked")
+            self._apply_record_row_style(row, "Pending", db_status)
         self._update_process_context()
         self._refresh_summary()
 
@@ -1299,7 +1991,7 @@ class MainWindow(QMainWindow):
         return str(self.category.currentData() or "") in {"spsi", "masa_kerja", "tunjangan_jabatan"}
 
     def _update_record_from_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
-        record = self._find_record(str(payload.get("emp_code", "")), str(payload.get("adjustment_name", "")))
+        record = self._find_record(str(payload.get("emp_code", "")), str(payload.get("adjustment_name", "")), str(payload.get("detail_key", "") or ""))
         if not record:
             return
         key = self._record_key(record)
@@ -1320,6 +2012,8 @@ class MainWindow(QMainWindow):
             self.live_message_label.setText(message)
         elif event_name in {"row.success", "row.skipped", "row.failed"}:
             self.live_message_label.setText(message)
+        if event_name == "row.success":
+            self._queue_sync_status_for_record(record)
         self._refresh_summary()
 
     def _refresh_summary(self) -> None:
@@ -1330,11 +2024,13 @@ class MainWindow(QMainWindow):
             state = self.record_status.get(self._record_key(record), {})
             input_status = str(state.get("input_status", "Pending"))
             db_status = str(state.get("db_status", "Not Checked"))
+            api_sync = str(state.get("api_sync", self._sync_status_from_remarks(record)))
+            api_match = str(state.get("api_match", self._match_status_from_remarks(record)))
             if input_status == "Input Done":
                 success_records.append(record)
             elif input_status == "Failed":
                 failed_records.append(record)
-            table_rows.append([input_status, db_status, self._sync_status_from_remarks(record), self._match_status_from_remarks(record), record.emp_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), f"{record.amount:g}", str(state.get("message", "")), str(state.get("tab_index", ""))])
+            table_rows.append([input_status, db_status, api_sync, api_match, record.emp_code, record.adjustment_name, self._description_for_record(record), self._adcode_for_record(record), f"{record.amount:g}", str(state.get("message", "")), str(state.get("tab_index", ""))])
         self.last_successful_records = success_records
         attempted = len([row for row in table_rows if row[0] in {"Input Done", "Skipped", "Failed"}])
         skipped = len([row for row in table_rows if row[0] == "Skipped"])
@@ -1498,6 +2194,9 @@ class MainWindow(QMainWindow):
         is_auto_buffer = record.adjustment_type == "AUTO_BUFFER" or (record.category_key or "") in {"spsi", "masa_kerja", "tunjangan_jabatan"}
         if is_auto_buffer and category and category.adcode:
             return category.adcode
+        display_adcode = display_adcode_for_record(record)
+        if display_adcode:
+            return display_adcode
         if record.ad_code:
             return record.ad_code
         remarks_adcode = self._remarks_adcode(record)
@@ -1530,7 +2229,38 @@ class MainWindow(QMainWindow):
         status = self.fetch_verification_status.get((record.emp_code, self._filter_for_record(record)), {})
         return str(status.get("status") or "")
 
+    def _db_status_for_record(self, record: ManualAdjustmentRecord) -> str:
+        if self._sync_status_from_remarks(record).upper() == "SYNC":
+            return "Already in DB"
+        if self.fetch_verification_status.get("source") == "sync-status":
+            row_id = self._sync_status_id_for_record(record)
+            sync_payload = self.fetch_verification_status.get("sync_status_payload", {})
+            row = sync_status_rows_by_id(sync_payload).get(row_id) if row_id is not None else None
+            if row:
+                api_sync, _ = sync_status_display_from_row(row)
+                if api_sync == "SYNC":
+                    return "Already in DB"
+                if api_sync == "PARTIAL":
+                    return "DB Mismatch"
+                if api_sync == "NOT_FOUND":
+                    return "Missing in DB"
+                if api_sync in {"NO_SYNC_SEGMENT", "ERROR"}:
+                    return "Verify Error"
+            return "Not Checked"
+        verified_status = self._fetch_verification_display(record).upper()
+        if verified_status == "VERIFIED_MATCH":
+            return "Already in DB"
+        if verified_status == "VERIFIED_MISMATCH":
+            return "DB Mismatch"
+        if verified_status == "VERIFIED_NOT_FOUND":
+            return "Missing in DB"
+        if verified_status == "VERIFY_ERROR":
+            return "Verify Error"
+        return "Not Checked"
+
     def _record_is_miss(self, record: ManualAdjustmentRecord) -> bool:
+        if record.category_key in PREMI_CATEGORY_KEYS and self.fetch_verification_status:
+            return self._record_key(record) in self.premium_retry_record_keys
         verified_status = self._fetch_verification_display(record).upper()
         if verified_status in {"VERIFIED_MATCH", "VERIFIED_MISMATCH"}:
             return False
@@ -1539,9 +2269,13 @@ class MainWindow(QMainWindow):
         return record_is_stale_miss(record)
 
     def _record_key(self, record: ManualAdjustmentRecord) -> str:
-        return f"{record.emp_code}|{record.adjustment_name}|{record.amount:g}"
+        return record.record_key
 
-    def _find_record(self, emp_code: str, adjustment_name: str = "") -> ManualAdjustmentRecord | None:
+    def _find_record(self, emp_code: str, adjustment_name: str = "", detail_key: str = "") -> ManualAdjustmentRecord | None:
+        if detail_key:
+            for record in self.records:
+                if record.record_key == detail_key or record.detail_key == detail_key:
+                    return record
         emp = emp_code.upper().strip()
         adj = adjustment_name.upper().strip()
         for record in self.records:
@@ -1550,14 +2284,28 @@ class MainWindow(QMainWindow):
         return None
 
     def _reset_record_status(self) -> None:
+        self.pending_sync_status_ids.clear()
+        self.inflight_sync_status_ids.clear()
+        self.sync_status_unavailable_message = ""
         for record in self.records:
             key = self._record_key(record)
             row = int(self.record_status.get(key, {}).get("row", -1))
             db_status = str(self.record_status.get(key, {}).get("db_status", "Not Checked"))
-            self.record_status[key] = {"row": row, "input_status": "Pending", "db_status": db_status, "message": ""}
+            api_sync = self._sync_status_from_remarks(record)
+            api_match = self._fetch_verification_display(record) or self._match_status_from_remarks(record)
+            self.record_status[key] = {
+                "row": row,
+                "input_status": "Pending",
+                "db_status": db_status,
+                "api_sync": api_sync,
+                "api_match": api_match,
+                "message": "",
+            }
             if row >= 0:
                 self.records_table.setItem(row, 0, QTableWidgetItem("Pending"))
                 self.records_table.setItem(row, 1, QTableWidgetItem(db_status))
+                self.records_table.setItem(row, 2, QTableWidgetItem(api_sync))
+                self.records_table.setItem(row, 3, QTableWidgetItem(api_match))
         self.live_emp_label.setText("-")
         self.live_adjustment_label.setText("-")
         self.live_description_label.setText("-")

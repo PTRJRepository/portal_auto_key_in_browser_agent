@@ -22,7 +22,14 @@ function record(category_key: string, adjustment_name: string, remarks: string, 
 const premiRecord = record("premi", "INSENTIF PANEN", "", { adjustment_type: "PREMI", ad_code: "A100", description: "INSENTIF PANEN" });
 const premi = resolveCategory(premiRecord, "premi");
 assert.equal(premi.adcode(premiRecord), "A100");
+const pruningRecord = record("premi", "PREMI PRUNING", "", { adjustment_type: "PREMI", ad_code: "AL3PM0601", ad_code_desc: "(AL) TUNJANGAN PREMI ((PM) PRUNING)", description: "PREMI PRUNING", detail_type: "blok", subblok: "P0801" });
+const rakingRecord = record("premi", "PREMI RAKING", "", { adjustment_type: "PREMI", ad_code: "AL3PM0106", ad_code_desc: "(AL) TUNJANGAN PREMI ((PM) WEEDING - CIRCLE RAKING)", description: "PREMI RAKING", detail_type: "blok", subblok: "P0901" });
+const tbsRecord = record("premi", "PREMI TBS", "", { adjustment_type: "PREMI", ad_code: "(AL) TUNJANGAN PREMI ((PM) HARVESTING LABOUR - HARVESTING)", ad_code_desc: "(AL) TUNJANGAN PREMI ((PM) HARVESTING LABOUR - HARVESTING)", description: "PREMI TBS", detail_type: "blok", subblok: "P0902" });
+assert.equal(premi.adcode(pruningRecord), "(AL) TUNJANGAN PREMI ((PM) PRUNING)");
 assert.equal(premi.description(premiRecord), "INSENTIF PANEN");
+assert.equal(premi.description(pruningRecord), "PREMI PRUNING");
+assert.equal(premi.description(rakingRecord), "PREMI RAKING");
+assert.equal(premi.description(tbsRecord), "PREMI TBS");
 
 const koreksiRecord = record("koreksi", "KOREKSI UPAH", "AD CODE: D200 - (DE) KOREKSI UPAH", { adjustment_type: "POTONGAN_KOTOR" });
 const koreksi = resolveCategory(koreksiRecord, "koreksi");

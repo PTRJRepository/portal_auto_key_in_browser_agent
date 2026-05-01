@@ -21,7 +21,27 @@ function extractAdcodeFromRemarks(remarks: string): string {
 }
 
 function manualAdcode(record: ManualAdjustmentRecord, fallback: string): string {
-  return record.ad_code?.trim().toUpperCase() || extractAdcodeFromRemarks(record.remarks || "") || fallback;
+  const displayAdcode = [record.ad_code_desc, record.task_desc, record.description]
+    .map((value) => value?.trim() ?? "")
+    .find((value) => isTaskDescAdcode(value));
+  const explicit = displayAdcode || record.ad_code?.trim() || extractAdcodeFromRemarks(record.remarks || "");
+  if (explicit) return explicit;
+  if (fallback === "premi" && hasPremiumDetail(record)) {
+    throw new Error(`PREMI detail row for ${record.emp_code} / ${record.adjustment_name} is missing ad_code`);
+  }
+  return fallback;
+}
+
+function isTaskDescAdcode(value: string): boolean {
+  return /^\((AL|DE)\)\s+/i.test(value.trim());
+}
+
+function hasPremiumDetail(record: ManualAdjustmentRecord): boolean {
+  const detailType = (record.detail_type ?? "").trim().toLowerCase();
+  return Boolean(
+    ["blok", "block", "subblok", "sub_block", "kendaraan", "vehicle", "veh"].includes(detailType) ||
+    (record.subblok ?? record.subblok_raw ?? record.vehicle_code ?? "").trim()
+  );
 }
 
 function labourExpense(): string {

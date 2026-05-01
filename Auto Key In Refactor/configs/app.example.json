@@ -4,7 +4,7 @@
   "runner_command": "node runner/dist/cli.js",
   "default_period_month": 4,
   "default_period_year": 2026,
-  "default_division_code": "P1B",
+  "default_division_code": "AB1",
   "default_runner_mode": "multi_tab_shared_session",
   "default_max_tabs": 5,
   "headless": false
