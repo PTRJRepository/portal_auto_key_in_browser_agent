@@ -436,6 +436,78 @@ assert.equal(
   true
 );
 assert.equal(subblokNoSearchResultMenuClicks.includes(".ui-menu-item:visible"), true);
+
+const {
+  page: blockDivisionNoSearchResultPage,
+  keyPresses: blockDivisionNoSearchResultKeyPresses
+} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["block"] });
+await fillAdjustmentRow(
+  blockDivisionNoSearchResultPage as never,
+  completeGrossDeductionRecord,
+  resolveCategory(completeGrossDeductionRecord, "potongan_upah_kotor"),
+  true,
+  "P1B"
+);
+assert.equal(
+  blockDivisionNoSearchResultKeyPresses.includes("#MainContent_MultiDimAcc_ddlBlock + input.ui-autocomplete-input: "),
+  true
+);
+
+const noMatchExpenseRecord = { ...completeGrossDeductionRecord, expense_code: "BAD" };
+const {
+  page: expenseNoSearchResultPage,
+  keyPresses: expenseNoSearchResultKeyPresses
+} = fakePageForDescriptionOrder();
+await fillAdjustmentRow(
+  expenseNoSearchResultPage as never,
+  noMatchExpenseRecord,
+  resolveCategory(noMatchExpenseRecord, "potongan_upah_kotor"),
+  true,
+  "P1B"
+);
+assert.equal(
+  expenseNoSearchResultKeyPresses.includes("#MainContent_MultiDimAcc_ddlExpCode + input.ui-autocomplete-input: "),
+  true
+);
+
+const {
+  page: adcodeNoSearchResultPage,
+  keyPresses: adcodeNoSearchResultKeyPresses
+} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["adcode"] });
+await assert.rejects(
+  () => fillAdjustmentRow(
+    adcodeNoSearchResultPage as never,
+    completeGrossDeductionRecord,
+    resolveCategory(completeGrossDeductionRecord, "potongan_upah_kotor"),
+    true,
+    "P1B"
+  ),
+  /No autocomplete option matched adcode/
+);
+assert.equal(
+  adcodeNoSearchResultKeyPresses.includes("#MainContent_ddlTaskCode + input.ui-autocomplete-input: "),
+  false
+);
+
+const {
+  page: employeeNoSearchResultPage,
+  keyPresses: employeeNoSearchResultKeyPresses
+} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["employee"] });
+await assert.rejects(
+  () => fillAdjustmentRow(
+    employeeNoSearchResultPage as never,
+    completeGrossDeductionRecord,
+    resolveCategory(completeGrossDeductionRecord, "potongan_upah_kotor"),
+    true,
+    "P1B"
+  ),
+  /No autocomplete option matched employee/
+);
+assert.equal(
+  employeeNoSearchResultKeyPresses.includes("#MainContent_ddlEmployee + input.ui-autocomplete-input: "),
+  false
+);
+
 assert.equal(shouldUseSingleRemainingAutocompleteFallback(subBlockAutocompleteField(blockRecord)), true);
 assert.equal(shouldUseSingleRemainingAutocompleteFallback(vehicleAutocompleteField(vehicleRecord)), true);
 assert.equal(shouldUseSingleRemainingAutocompleteFallback(blockExpenseAutocompleteField(blockRecord)), false);

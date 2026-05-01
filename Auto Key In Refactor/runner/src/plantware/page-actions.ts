@@ -308,6 +308,12 @@ function hasSubBlockAutocompleteValue(record: ManualAdjustmentRecord): boolean {
   return Boolean((record.subblok ?? record.subblok_raw ?? "").trim().replace(/[^0-9A-Za-z]/g, ""));
 }
 
+function hasBlockDivisionAutocompleteValue(record: ManualAdjustmentRecord): boolean {
+  const explicit = (record.divisioncode ?? "").trim();
+  if (explicit) return true;
+  return compactCode(record.gang_code ?? "").length >= 2;
+}
+
 function hasVehicleAutocompleteValue(record: ManualAdjustmentRecord): boolean {
   return Boolean((record.vehicle_code ?? "").trim());
 }
@@ -477,6 +483,16 @@ function subBlockAutocompleteFieldOrAnyAvailable(record: ManualAdjustmentRecord)
   };
 }
 
+function blockDivisionAutocompleteFieldOrAnyAvailable(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
+  return {
+    key: "block",
+    selectSelector: monthlyAllowanceInputMappings.blockDivision.selectSelector,
+    inputSelector: monthlyAllowanceInputMappings.blockDivision.inputSelector,
+    value: hasBlockDivisionAutocompleteValue(record) ? compactCode(blockDivisionAutocompleteValue(record)) : "",
+    waitForNetworkIdle: false
+  };
+}
+
 function vehicleAutocompleteFieldOrAnyAvailable(record: ManualAdjustmentRecord): AutocompleteFieldPlan {
   return {
     key: "vehicle",
@@ -507,7 +523,7 @@ function getDetailFormControls(page: Page) {
 }
 
 async function fillBlockBasedMonthlyAllowanceDetails(page: Page, record: ManualAdjustmentRecord): Promise<void> {
-  const blockField = blockDivisionAutocompleteField(record);
+  const blockField = blockDivisionAutocompleteFieldOrAnyAvailable(record);
   const subBlockField = subBlockAutocompleteFieldOrAnyAvailable(record);
   const expenseField = blockExpenseAutocompleteField(record);
 
@@ -518,8 +534,7 @@ async function fillBlockBasedMonthlyAllowanceDetails(page: Page, record: ManualA
   await selectAutocompleteFieldAfterOptionsReady(page, subBlockField, 2000, "sub block after division");
   await page.waitForTimeout(1000);
   await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlExpCode, #MainContent_MultiDimAcc_trExpCode", "block expense after sub block");
-  await waitForAutocompleteOptionReady(page, expenseField, "block expense after sub block");
-  await selectAutocompleteField(page, expenseField, 1000);
+  await selectAutocompleteFieldAfterOptionsReady(page, expenseField, 1000, "block expense after sub block");
 }
 
 async function fillDescriptionField(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
@@ -745,7 +760,7 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
 }
 
 function shouldUseAnyAvailableAutocompleteFallback(field: AutocompleteFieldPlan): boolean {
-  return field.key === "subblok" || field.key === "vehicle" || field.key === "vehicle_expense";
+  return field.key !== "employee" && field.key !== "adcode";
 }
 
 async function selectAnyAvailableAutocompleteField(
