@@ -36,18 +36,23 @@ from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
 from app.ui.division_monitor import DivisionMonitorWidget
 from app.ui.themes import AppTheme
 from app.core.category_registry import CategoryRegistry
-from app.core.config import AppConfig, DivisionOption
+from app.core.config import AppConfig, DivisionOption, MAX_CONCURRENT_TABS
 from app.core.models import DuplicateDocIdTarget, ManualAdjustmentRecord, RunPayload, enrich_records_with_automation_options, extract_ad_code_from_remarks
+from app.core.query_gateway import PlantwareDbPtrjGateway, QueryGatewayConfig
 from app.core.run_artifacts import RunArtifactPaths, RunArtifactStore
 from app.core.run_service import apply_row_limit, division_mismatch_warning, filter_by_category, filter_records_by_division_prefix
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
+from app.core.loosefruit_gateway import LoosefruitGatewayRepository
+from app.core.task_register_gateway import TaskRegisterGatewayRepository
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
 AUTOMATION_OPTION_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
-SYNC_STATUS_ADJUSTMENT_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
+AUTO_BUFFER_CATEGORY_KEYS = {"spsi", "masa_kerja", "tunjangan_jabatan", "pph21"}
+SYNC_STATUS_ADJUSTMENT_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "AUTO_BUFFER"}
 PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan"}
 MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
 MANUAL_ADJUSTMENT_OPTION_TYPES = "PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH"
+DELETE_RUNNER_MODE = "session_reuse_single"
 
 def sync_status_payload_rows(payload: object) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
@@ -173,8 +178,7 @@ def record_is_stale_miss(record: ManualAdjustmentRecord) -> bool:
     sync_status = sync_status_from_remarks(record).upper()
     if sync_status == "SYNC":
         return False
-    match_status = match_status_from_remarks(record).upper()
-    return sync_status in {"MISS", "MISSING"} or match_status in {"MISMATCH", "MISS", "MISSING"}
+    return sync_status in {"MISS", "MISSING", "NOT_FOUND"}
 
 
 def filter_for_record(record: ManualAdjustmentRecord) -> str:
@@ -183,6 +187,8 @@ def filter_for_record(record: ManualAdjustmentRecord) -> str:
         return "masa kerja"
     if category_key == "tunjangan_jabatan":
         return "jabatan"
+    if category_key == "pph21":
+        return "pph"
     if category_key == "potongan_upah_kotor":
         return "potongan"
     if category_key == "potongan_upah_bersih":
@@ -432,10 +438,16 @@ class FetchWorker(QObject):
     completed = Signal(object, object)
     failed = Signal(str)
 
-    def __init__(self, client: ManualAdjustmentApiClient, query: ManualAdjustmentQuery) -> None:
+    def __init__(
+        self,
+        client: ManualAdjustmentApiClient,
+        query: ManualAdjustmentQuery,
+        automation_division_code: str | None = None,
+    ) -> None:
         super().__init__()
         self.client = client
         self.query = query
+        self.automation_division_code = automation_division_code
 
     def run(self) -> None:
         try:
@@ -500,7 +512,7 @@ class FetchWorker(QObject):
             if not categories:
                 return records
             options = self.client.get_automation_options(
-                division_code=self.query.division_code,
+                division_code=self.automation_division_code or self.query.division_code,
                 categories=categories,
                 limit=200,
             )
@@ -609,17 +621,100 @@ class DuplicateFetchWorker(QObject):
     completed = Signal(list)
     failed = Signal(str)
 
-    def __init__(self, client: ManualAdjustmentApiClient, period_month: int, period_year: int, division_code: str, filters: list[str]) -> None:
+    def __init__(
+        self,
+        client: ManualAdjustmentApiClient,
+        period_month: int,
+        period_year: int,
+        division_code: str,
+        filters: list[str],
+        adjustment_type: str | None = None,
+        adjustment_name: str | None = None,
+        doc_desc: str | None = None,
+    ) -> None:
         super().__init__()
         self.client = client
         self.period_month = period_month
         self.period_year = period_year
         self.division_code = division_code
         self.filters = filters
+        self.adjustment_type = adjustment_type
+        self.adjustment_name = adjustment_name
+        self.doc_desc = doc_desc
 
     def run(self) -> None:
         try:
-            self.completed.emit(self.client.get_duplicate_delete_targets(self.period_month, self.period_year, self.division_code, self.filters))
+            self.completed.emit(self.client.get_duplicate_delete_targets(
+                self.period_month,
+                self.period_year,
+                self.division_code,
+                self.filters,
+                adjustment_type=self.adjustment_type,
+                adjustment_name=self.adjustment_name,
+                doc_desc=self.doc_desc,
+            ))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class LoosefruitFetchWorker(QObject):
+    completed = Signal(list)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        repository: LoosefruitGatewayRepository,
+        loc_code: str | None,
+        phy_month: int | None,
+        phy_year: int | None,
+        limit: int,
+    ) -> None:
+        super().__init__()
+        self.repository = repository
+        self.loc_code = loc_code
+        self.phy_month = phy_month
+        self.phy_year = phy_year
+        self.limit = limit
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self.repository.list_duplicate_targets(
+                loc_code=self.loc_code,
+                phy_month=self.phy_month,
+                phy_year=self.phy_year,
+                limit=self.limit,
+            ))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class TaskRegisterFetchWorker(QObject):
+    completed = Signal(list)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        repository: TaskRegisterGatewayRepository,
+        loc_code: str | None,
+        phy_month: int | None,
+        phy_year: int | None,
+        limit: int,
+    ) -> None:
+        super().__init__()
+        self.repository = repository
+        self.loc_code = loc_code
+        self.phy_month = phy_month
+        self.phy_year = phy_year
+        self.limit = limit
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self.repository.list_duplicate_targets(
+                loc_code=self.loc_code,
+                phy_month=self.phy_month,
+                phy_year=self.phy_year,
+                limit=self.limit,
+            ))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -635,7 +730,17 @@ class ResetDocIdFetchWorker(QObject):
 
     def run(self) -> None:
         try:
-            self.completed.emit(self.client.get_adtrans_doc_id_delete_targets(**self.request))
+            source_mode = str(self.request.get("source_mode") or "config")
+            if source_mode == "diff":
+                request = {key: value for key, value in self.request.items() if key != "source_mode"}
+                self.completed.emit(self.client.get_mismatch_doc_id_delete_targets(**request))
+            else:
+                request = {
+                    key: value
+                    for key, value in self.request.items()
+                    if key not in {"source_mode", "gang_code"}
+                }
+                self.completed.emit(self.client.get_adtrans_doc_id_delete_targets(**request))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -683,6 +788,8 @@ class MainWindow(QMainWindow):
         self.sync_status_unavailable_message = ""
         self.duplicate_fetch_thread: QThread | None = None
         self.duplicate_fetch_worker: DuplicateFetchWorker | None = None
+        self.task_register_fetch_thread: QThread | None = None
+        self.task_register_fetch_worker: TaskRegisterFetchWorker | None = None
         self.duplicate_targets: list[DuplicateDocIdTarget] = []
         self.duplicate_target_rows: dict[str, int] = {}
         self.reset_docid_fetch_thread: QThread | None = None
@@ -704,6 +811,7 @@ class MainWindow(QMainWindow):
         self.premium_retry_held_groups: dict[tuple[str, str], str] = {}
         self.last_run_result: dict[str, Any] | None = None
         self.last_successful_records: list[ManualAdjustmentRecord] = []
+        self.active_run_payload: RunPayload | None = None
         self.division_run_dialogs: list[QDialog] = []
         self._suppress_adjustment_name_refresh = False
         self.setWindowTitle("Auto Key In Refactor")
@@ -815,14 +923,16 @@ class MainWindow(QMainWindow):
         filter_form.addRow("Selected Session", self.session_status_label)
         self.division_code.currentIndexChanged.connect(self._refresh_session_status)
         self.division_code.currentIndexChanged.connect(self._refresh_adjustment_name_options)
+        self.division_code.currentIndexChanged.connect(self._sync_task_register_loc_code)
 
         runner_group = QGroupBox("Runner Settings")
         runner_form = QFormLayout(runner_group)
         self.runner_mode = QComboBox()
         self.runner_mode.addItems(["multi_tab_shared_session", "dry_run", "session_reuse_single", "fresh_login_single", "get_session", "test_session", "mock"])
         self.max_tabs = QSpinBox()
-        self.max_tabs.setRange(1, 10)
+        self.max_tabs.setRange(1, MAX_CONCURRENT_TABS)
         self.max_tabs.setValue(self.config.default_max_tabs)
+        self.max_tabs.setToolTip("Only used for multi-tab auto key-in runs. Session checks and single-run modes use one tab.")
         self.row_limit = QSpinBox()
         self.row_limit.setRange(0, 10000)
         self.row_limit.setSpecialValueText("No limit")
@@ -832,7 +942,7 @@ class MainWindow(QMainWindow):
         self.only_missing = QCheckBox("Only missing rows")
         self.only_missing.setChecked(True)
         runner_form.addRow("Runner Mode", self.runner_mode)
-        runner_form.addRow("Max Tabs", self.max_tabs)
+        runner_form.addRow("Concurrent Tabs (Auto Key-In)", self.max_tabs)
         runner_form.addRow("Row Limit", self.row_limit)
         runner_form.addRow(self.headless)
         runner_form.addRow(self.only_missing)
@@ -902,9 +1012,9 @@ class MainWindow(QMainWindow):
         self.export_button = QPushButton("Open Artifacts")
         self.process_context_label = QLabel("No data loaded.")
         self.process_context_label.setStyleSheet("font-weight: 500; color: #94a3b8;")
-        self.process_only_miss = QCheckBox("Input MISS/MISMATCH only")
+        self.process_only_miss = QCheckBox("Input MISS only")
         self.process_only_miss.setChecked(True)
-        self.process_only_miss.setToolTip("Jika aktif, fetch/run hanya memakai row dengan remarks sync:MISS atau match:MISMATCH.")
+        self.process_only_miss.setToolTip("Jika aktif, fetch/run hanya memakai MISS. DIFF/MISMATCH harus dihapus dulu dari Reset/Delete DocID.")
         self.process_only_miss.stateChanged.connect(self._update_process_context)
         self.test_get_data_button.clicked.connect(self.fetch_records)
         self.run_button.clicked.connect(self.run_auto_key_in)
@@ -1085,10 +1195,75 @@ class MainWindow(QMainWindow):
         form.addRow("Category", self.duplicate_category)
         form.addRow("Filters", self.duplicate_filters)
         form.addRow(action_row)
-        layout.addWidget(controls)
+
+        task_controls = QGroupBox("Task Register duplicate DocID (_01)")
+        task_form = QFormLayout(task_controls)
+        self.task_register_loc_code = QLineEdit(self._selected_location_code())
+        self.task_register_phy_month = QSpinBox()
+        self.task_register_phy_month.setRange(0, 12)
+        self.task_register_phy_month.setValue(0)
+        self.task_register_phy_year = QSpinBox()
+        self.task_register_phy_year.setRange(0, 2100)
+        self.task_register_phy_year.setValue(0)
+        self.task_register_limit = QSpinBox()
+        self.task_register_limit.setRange(1, 10000)
+        self.task_register_limit.setValue(1000)
+        self.fetch_task_register_duplicates_button = QPushButton("Fetch Task Register DocIDs")
+        self.delete_task_register_button = QPushButton("Scan Selected (Dry Run)")
+        self.delete_task_register_button.setEnabled(False)
+        self.task_register_dry_run = QCheckBox("Dry run")
+        self.task_register_dry_run.setChecked(True)
+        self.task_register_status_label = QLabel("Belum dicek.")
+        self.fetch_task_register_duplicates_button.clicked.connect(self.fetch_task_register_duplicate_targets)
+        self.delete_task_register_button.clicked.connect(self.run_task_register_delete)
+        self.task_register_dry_run.toggled.connect(self._sync_task_register_button_text)
+        self._sync_task_register_button_text()
+        task_action_row = QHBoxLayout()
+        task_action_row.addWidget(self.fetch_task_register_duplicates_button)
+        task_action_row.addWidget(self.delete_task_register_button)
+        task_action_row.addWidget(self.task_register_dry_run)
+        task_action_row.addWidget(self.task_register_status_label, 1)
+        task_form.addRow("LocCode", self.task_register_loc_code)
+        task_form.addRow("Phy/Actual Month (0=all)", self.task_register_phy_month)
+        task_form.addRow("Phy/Actual Year (0=all)", self.task_register_phy_year)
+        task_form.addRow("Limit", self.task_register_limit)
+        task_form.addRow(task_action_row)
+
+        loosefruit_controls = QGroupBox("Loosefruit duplicate DocID (_)")
+        loosefruit_form = QFormLayout(loosefruit_controls)
+        self.loosefruit_loc_code = QLineEdit("")
+        self.loosefruit_loc_code.setPlaceholderText("Kosong = seluruh lokasi")
+        self.loosefruit_limit = QSpinBox()
+        self.loosefruit_limit.setRange(1, 10000)
+        self.loosefruit_limit.setValue(1000)
+        self.fetch_loosefruit_duplicates_button = QPushButton("Fetch Loosefruit DocIDs")
+        self.delete_loosefruit_button = QPushButton("Scan Selected (Dry Run)")
+        self.delete_loosefruit_button.setEnabled(False)
+        self.loosefruit_dry_run = QCheckBox("Dry run")
+        self.loosefruit_dry_run.setChecked(True)
+        self.loosefruit_status_label = QLabel("Belum dicek.")
+        self.fetch_loosefruit_duplicates_button.clicked.connect(self.fetch_loosefruit_duplicate_targets)
+        self.delete_loosefruit_button.clicked.connect(self.run_loosefruit_delete)
+        self.loosefruit_dry_run.toggled.connect(self._sync_loosefruit_button_text)
+        self._sync_loosefruit_button_text()
+        loosefruit_action_row = QHBoxLayout()
+        loosefruit_action_row.addWidget(self.fetch_loosefruit_duplicates_button)
+        loosefruit_action_row.addWidget(self.delete_loosefruit_button)
+        loosefruit_action_row.addWidget(self.loosefruit_dry_run)
+        loosefruit_action_row.addWidget(self.loosefruit_status_label, 1)
+        loosefruit_form.addRow("LocCode (kosong=all)", self.loosefruit_loc_code)
+        loosefruit_form.addRow("Limit", self.loosefruit_limit)
+        loosefruit_form.addRow(loosefruit_action_row)
+
+        cleanup_grid = QGridLayout()
+        cleanup_grid.setHorizontalSpacing(8)
+        cleanup_grid.addWidget(controls, 0, 0)
+        cleanup_grid.addWidget(task_controls, 0, 1)
+        cleanup_grid.addWidget(loosefruit_controls, 1, 0, 1, 2)
+        layout.addLayout(cleanup_grid)
 
         self.duplicate_table = QTableWidget(0, 9)
-        self.duplicate_table.setHorizontalHeaderLabels(["Select", "Action", "DocID", "Emp Code", "Emp Name", "DocDesc", "Keep DocID", "Status", "Message"])
+        self.duplicate_table.setHorizontalHeaderLabels(["Select", "Action", "DocID", "Emp/Loc", "Emp Name", "DocDesc", "Keep DocID", "Status", "Message"])
         self.duplicate_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.duplicate_table, 1)
         return tab
@@ -1099,10 +1274,12 @@ class MainWindow(QMainWindow):
         controls = QGroupBox("Reset/delete DocID berdasarkan Config aktif")
         form = QFormLayout(controls)
         self.reset_docid_scope_label = QLabel("Mengikuti Period, Division, Employee, Category, Adjustment Type, dan Adjustment Name di tab Config.")
+        self.reset_docid_source = QComboBox()
+        self.reset_docid_source.addItem("DIFF/MISMATCH DocIDs", "diff")
         self.reset_docid_dry_run = QCheckBox("Dry run: search Plantware, do not delete")
         self.reset_docid_dry_run.setChecked(True)
-        self.reset_docid_dry_run.setToolTip("Browser akan mencari DocID dari endpoint adtrans-doc-ids, tetapi tombol Delete tidak akan diklik.")
-        self.fetch_reset_docid_button = QPushButton("Fetch DocID Targets")
+        self.reset_docid_dry_run.setToolTip("Browser akan mencari DocID dari compare-adtrans status MISMATCH, tetapi tombol Delete tidak akan diklik.")
+        self.fetch_reset_docid_button = QPushButton("Fetch DIFF DocIDs")
         self.run_reset_docid_delete_button = QPushButton()
         self.run_reset_docid_delete_button.setEnabled(False)
         self.reset_docid_status_label = QLabel("Belum dicek.")
@@ -1116,6 +1293,7 @@ class MainWindow(QMainWindow):
         action_row.addWidget(self.reset_docid_dry_run)
         action_row.addWidget(self.reset_docid_status_label, 1)
         form.addRow("Scope", self.reset_docid_scope_label)
+        form.addRow("Source", self.reset_docid_source)
         form.addRow(action_row)
         layout.addWidget(controls)
 
@@ -1142,6 +1320,10 @@ class MainWindow(QMainWindow):
                 self.adjustment_type.setCurrentText("AUTO_BUFFER")
                 self._set_adjustment_name_options(["TUNJANGAN JABATAN"], "TUNJANGAN JABATAN")
                 self.only_missing.setChecked(True)
+            elif category_key == "pph21":
+                self.adjustment_type.setCurrentText("AUTO_BUFFER")
+                self._set_adjustment_name_options(["POTONGAN PPH"], "POTONGAN PPH")
+                self.only_missing.setChecked(True)
             elif category_key == "premi_tunjangan":
                 self.adjustment_type.setCurrentText("PREMI")
                 self.adjustment_name.setText("TUNJANGAN PREMI")
@@ -1156,12 +1338,12 @@ class MainWindow(QMainWindow):
                 self.adjustment_type.setCurrentText("POTONGAN_KOTOR")
                 self.adjustment_name.clear()
                 self.only_missing.setChecked(False)
-                self.process_only_miss.setChecked(False)
+                self.process_only_miss.setChecked(True)
             elif category_key == "potongan_upah_bersih":
                 self.adjustment_type.setCurrentText("POTONGAN_BERSIH")
                 self.adjustment_name.clear()
                 self.only_missing.setChecked(False)
-                self.process_only_miss.setChecked(False)
+                self.process_only_miss.setChecked(True)
         finally:
             self._suppress_adjustment_name_refresh = False
         self._refresh_adjustment_name_options()
@@ -1212,7 +1394,7 @@ class MainWindow(QMainWindow):
 
     def _adjustment_name_option_type(self) -> str | None:
         category_key = str(self.category.currentData() or "")
-        if category_key in {"spsi", "masa_kerja", "tunjangan_jabatan"}:
+        if category_key in AUTO_BUFFER_CATEGORY_KEYS:
             return None
         if category_key in {"premi", "premi_tunjangan"}:
             return "PREMI"
@@ -1239,6 +1421,7 @@ class MainWindow(QMainWindow):
             "period_month": self.period_month.value(),
             "period_year": self.period_year.value(),
             "division_code": self._selected_division_code(),
+            "session_division_code": self._selected_session_code(),
             "gang_code": self.gang_code.text().strip().upper(),
             "emp_code": self.emp_code.text().strip().upper(),
             "adjustment_type": self.adjustment_type.currentText().strip().upper(),
@@ -1288,21 +1471,25 @@ class MainWindow(QMainWindow):
         return selected
 
     def build_payload_from_job(self, job: dict[str, Any], records: list[ManualAdjustmentRecord]) -> RunPayload:
+        runner_mode = str(job.get("runner_mode") or "multi_tab_shared_session")
+        division_code = str(job["division_code"]).strip().upper()
+        session_division_code = str(job.get("session_division_code") or self._session_code_for_division(division_code)).strip().upper() or division_code
         return RunPayload(
             period_month=int(job["period_month"]),
             period_year=int(job["period_year"]),
-            division_code=str(job["division_code"]).strip().upper(),
+            division_code=division_code,
             gang_code=str(job.get("gang_code") or "").strip().upper() or None,
             emp_code=str(job.get("emp_code") or "").strip().upper() or None,
             adjustment_type=str(job.get("adjustment_type") or "").strip().upper() or None,
             adjustment_name=str(job.get("adjustment_name") or "").strip() or None,
             category_key=str(job.get("category_key") or ""),
-            runner_mode=str(job.get("runner_mode") or "multi_tab_shared_session"),
-            max_tabs=int(job.get("max_tabs") or 1),
+            runner_mode=runner_mode,
+            max_tabs=self._max_tabs_for_mode(runner_mode, int(job.get("max_tabs") or 1)),
             headless=bool(job.get("headless")),
             only_missing_rows=bool(job.get("only_missing_rows")),
             row_limit=job.get("row_limit"),
             records=records,
+            session_division_code=session_division_code,
         )
 
     def run_selected_jobs(self) -> None:
@@ -1326,7 +1513,11 @@ class MainWindow(QMainWindow):
             adjustment_name=self.adjustment_name.text().strip() or None,
         )
         self.fetch_thread = QThread(self)
-        self.fetch_worker = FetchWorker(client, query)
+        self.fetch_worker = FetchWorker(
+            client,
+            query,
+            automation_division_code=self._selected_location_code() or query.division_code,
+        )
         self.fetch_worker.moveToThread(self.fetch_thread)
         self.fetch_thread.started.connect(self.fetch_worker.run)
         self.fetch_worker.completed.connect(self._handle_fetch_completed)
@@ -1383,7 +1574,6 @@ class MainWindow(QMainWindow):
                 f"Division prefix guard skipped {len(division_rejected_records)} records for {self._selected_division_code()}: "
                 f"{examples}. {division_mismatch_warning(division_rejected_records[0], self._selected_division_code())}"
             )
-        manual_preview = category_key in MANUAL_PREVIEW_CATEGORY_KEYS
         premium_preview = category_key in PREMI_CATEGORY_KEYS
         self.premium_retry_record_keys = set()
         self.premium_retry_held_groups = {}
@@ -1413,13 +1603,11 @@ class MainWindow(QMainWindow):
                 )
         elif self.process_only_miss.isChecked() and premium_preview:
             self.append_log("Premi retry-safe filter skipped: no db_ptrj verification status returned.")
-        elif self.process_only_miss.isChecked() and not manual_preview:
+        elif self.process_only_miss.isChecked():
             before_miss_filter = len(filtered_records)
             filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
             miss_filter_applied = True
             self.append_log(f"MISS-only filter active: {len(filtered_records)} of {before_miss_filter} category records will be previewed/run.")
-        elif self.process_only_miss.isChecked() and manual_preview:
-            self.append_log(f"Manual category preview: showing all {len(filtered_records)} category records; MISS-only filter is ignored for {category_key}.")
         self.records = apply_row_limit(filtered_records, row_limit)
         self.set_records(self.records)
         filter_suffix = " after MISS-only filter" if miss_filter_applied else ""
@@ -1453,16 +1641,28 @@ class MainWindow(QMainWindow):
             self.append_log("Get All Sessions already running.")
             return
         division_options = self.divisions or [DivisionOption(self.config.default_division_code, self.config.default_division_code)]
-        division_codes = [division.code.strip().upper() for division in division_options if division.code.strip()]
-        self.session_refresh_results = {code: "Running" for code in division_codes}
+        session_jobs: list[tuple[str, str]] = []
+        seen_session_codes: set[str] = set()
+        configured_codes = {division.code.strip().upper() for division in division_options}
+        for division in division_options:
+            division_code = division.code.strip().upper()
+            if not division_code:
+                continue
+            session_code = division.effective_session_code
+            if session_code in seen_session_codes:
+                continue
+            seen_session_codes.add(session_code)
+            payload_division_code = session_code if session_code in configured_codes else division_code
+            session_jobs.append((payload_division_code, session_code))
+        self.session_refresh_results = {session_code: "Running" for _, session_code in session_jobs}
         self._set_run_buttons_enabled(False)
         self.stop_button.setEnabled(True)
-        self.append_log(f"Starting {len(division_codes)} browser session logins in parallel...")
-        for division_code in division_codes:
+        self.append_log(f"Starting {len(session_jobs)} browser session logins in parallel...")
+        for division_code, session_code in session_jobs:
             payload = self.build_payload(mode="get_session", records=[], division_code=division_code)
             bridge = RunnerBridge(self.config.runner_command)
             thread = QThread(self)
-            worker = SessionRefreshWorker(division_code, bridge, payload)
+            worker = SessionRefreshWorker(session_code, bridge, payload)
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
             worker.event_received.connect(self._handle_session_refresh_event)
@@ -1471,17 +1671,19 @@ class MainWindow(QMainWindow):
             worker.completed.connect(thread.quit)
             worker.failed.connect(thread.quit)
             thread.finished.connect(thread.deleteLater)
-            thread.finished.connect(lambda code=division_code: self._cleanup_session_refresh_worker(code))
-            self.session_refresh_threads[division_code] = thread
-            self.session_refresh_workers[division_code] = worker
-            self.session_refresh_bridges[division_code] = bridge
+            thread.finished.connect(lambda code=session_code: self._cleanup_session_refresh_worker(code))
+            self.session_refresh_threads[session_code] = thread
+            self.session_refresh_workers[session_code] = worker
+            self.session_refresh_bridges[session_code] = bridge
             thread.start()
         self.tabs.setCurrentIndex(1)
 
     def run_session_command(self, mode: str, division_code: str | None = None) -> None:
         target_division = (division_code or self._selected_division_code()).strip().upper()
         payload = self.build_payload(mode=mode, records=[], division_code=target_division)
-        self.start_runner(payload, f"Starting {mode.replace('_', ' ')} for {target_division}...")
+        session_division = payload.session_division_code or target_division
+        suffix = f" via {session_division}" if session_division != target_division else ""
+        self.start_runner(payload, f"Starting {mode.replace('_', ' ')} for {target_division}{suffix}...")
         self.tabs.setCurrentIndex(1)
 
     def run_auto_key_in(self) -> None:
@@ -1518,23 +1720,32 @@ class MainWindow(QMainWindow):
         self.start_runner(payload, f"Starting runner for {len(self.records)} records...")
         self.tabs.setCurrentIndex(1)
 
+    def _max_tabs_for_mode(self, mode: str, selected_max_tabs: int | None = None) -> int:
+        if mode in {"get_session", "test_session"} or mode.endswith("_single"):
+            return 1
+        max_tabs = selected_max_tabs if selected_max_tabs is not None else self.max_tabs.value()
+        return min(max(1, max_tabs), MAX_CONCURRENT_TABS)
+
     def build_payload(self, mode: str, records: list[ManualAdjustmentRecord], division_code: str | None = None) -> RunPayload:
         category_key = str(self.category.currentData() or "spsi")
+        selected_division_code = (division_code or self._selected_division_code()).strip().upper()
+        session_division_code = self._session_code_for_division(selected_division_code) or selected_division_code
         return RunPayload(
             period_month=self.period_month.value(),
             period_year=self.period_year.value(),
-            division_code=(division_code or self._selected_division_code()).strip().upper(),
+            division_code=selected_division_code,
             gang_code=self.gang_code.text().strip().upper() or None,
             emp_code=self.emp_code.text().strip().upper() or None,
             adjustment_type=self.adjustment_type.currentText().strip().upper() or None,
             adjustment_name=self.adjustment_name.text().strip() or None,
             category_key=category_key,
             runner_mode=mode,
-            max_tabs=self.max_tabs.value(),
+            max_tabs=self._max_tabs_for_mode(mode),
             headless=self.headless.isChecked(),
             only_missing_rows=self.only_missing.isChecked(),
             row_limit=self.row_limit.value() or None,
             records=records,
+            session_division_code=session_division_code,
         )
 
     def start_runner(self, payload: RunPayload, start_message: str) -> None:
@@ -1548,6 +1759,7 @@ class MainWindow(QMainWindow):
         self.run_table.setRowCount(0)
         self.agent_table.setRowCount(0)
         self.tab_progress = {}
+        self.active_run_payload = payload
         self.current_artifacts = self.artifact_store.create(payload)
         self.append_log(f"Payload saved: {self.current_artifacts.payload_path}")
         self.runner_bridge = RunnerBridge(self.config.runner_command)
@@ -1632,7 +1844,11 @@ class MainWindow(QMainWindow):
             self._update_record_from_event(event.event, payload, message)
         if event.event.startswith("duplicate."):
             self._handle_duplicate_event(event.event, payload, message)
-        if event.event.startswith("row.") or event.event.startswith("session.") or event.event.startswith("tab."):
+        if event.event.startswith("task_register."):
+            self._handle_duplicate_event(event.event, payload, message)
+        if event.event.startswith("loosefruit."):
+            self._handle_duplicate_event(event.event, payload, message)
+        if event.event.startswith("row.") or event.event.startswith("session.") or event.event.startswith("tab.") or event.event.startswith("task_register.") or event.event.startswith("loosefruit."):
             self._append_event_row(event.event, payload, message)
 
     def _append_event_row(self, event_name: str, payload: dict[str, Any], message: str) -> None:
@@ -1701,11 +1917,14 @@ class MainWindow(QMainWindow):
             self.process_context_label.setText(f"Progress: {totals['done']} success/done, {totals['skipped']} skipped, {totals['failed']} failed of {totals['assigned']} records.")
 
     def _handle_run_completed(self, result: object) -> None:
+        completed_payload = self.active_run_payload
         if self.current_artifacts and isinstance(result, dict):
             self.artifact_store.write_result(self.current_artifacts, result)
             self.last_run_result = result
             self.append_log(f"Result saved: {self.current_artifacts.result_path}")
         self.append_log("Runner completed.")
+        if self._payload_is_actual_diff_reset(completed_payload):
+            self._apply_post_diff_reset_audit(completed_payload)
         self._set_run_buttons_enabled(True)
         self._refresh_session_status()
         self._refresh_summary()
@@ -1722,6 +1941,49 @@ class MainWindow(QMainWindow):
         self._set_run_buttons_enabled(True)
         self._refresh_session_status()
         self._refresh_summary()
+
+    def _payload_is_actual_diff_reset(self, payload: RunPayload | None) -> bool:
+        if not payload or payload.operation != "delete_duplicates" or payload.delete_dry_run:
+            return False
+        return any(
+            isinstance(target.raw, dict) and target.raw.get("source") == "compare-adtrans"
+            for target in payload.duplicate_targets or []
+        )
+
+    def _sync_status_scope_for_category(self, category_key: str, payload: RunPayload) -> tuple[str | None, str | None]:
+        if category_key == "spsi":
+            return "AUTO_BUFFER", "AUTO SPSI"
+        if category_key == "masa_kerja":
+            return "AUTO_BUFFER", "AUTO MASA KERJA"
+        if category_key == "tunjangan_jabatan":
+            return "AUTO_BUFFER", "AUTO TUNJANGAN JABATAN"
+        if category_key == "pph21":
+            return "AUTO_BUFFER", "POTONGAN PPH"
+        return payload.adjustment_type, payload.adjustment_name
+
+    def _apply_post_diff_reset_audit(self, payload: RunPayload) -> None:
+        adjustment_type, adjustment_name = self._sync_status_scope_for_category(payload.category_key, payload)
+        try:
+            result = self._api_client().sync_status(
+                period_month=payload.period_month,
+                period_year=payload.period_year,
+                division_code=payload.division_code,
+                gang_code=payload.gang_code,
+                emp_code=payload.emp_code,
+                adjustment_type=adjustment_type,
+                adjustment_name=adjustment_name,
+                dry_run=False,
+                only_if_adtrans_exists=True,
+                updated_by="browser_automation",
+            )
+        except Exception as exc:
+            self.append_log(f"Post-delete sync-status audit failed: {exc}")
+            return
+        data = result.get("data", {}) if isinstance(result, dict) else {}
+        self.append_log(
+            "Post-delete sync-status audit applied: "
+            f"updated={data.get('updated_count', 0)}, skipped={data.get('skipped_count', 0)}."
+        )
 
     def _start_sync_status_update_for_successful_records(self) -> None:
         records = [
@@ -1987,26 +2249,29 @@ class MainWindow(QMainWindow):
             "period_month": self.period_month.value(),
             "period_year": self.period_year.value(),
             "division_code": self._selected_division_code(),
+            "gang_code": self.gang_code.text().strip().upper() or None,
             "emp_code": self.emp_code.text().strip().upper() or None,
             "filters": filters,
             "adjustment_type": adjustment_type,
             "adjustment_name": adjustment_name,
             "category_key": category_key,
+            "source_mode": str(self.reset_docid_source.currentData() or "config") if hasattr(self, "reset_docid_source") else "config",
         }
 
     def fetch_reset_docid_targets(self) -> None:
-        if self.gang_code.text().strip() and not self.emp_code.text().strip():
+        request = self._reset_docid_request()
+        if request.get("source_mode") == "config" and self.gang_code.text().strip() and not self.emp_code.text().strip():
             message = "Reset DocID endpoint belum mendukung filter gang. Kosongkan Gang atau isi Employee untuk scope lebih sempit."
             self.reset_docid_status_label.setText(message)
             self.append_log(message)
             return
-        request = self._reset_docid_request()
         if not request["filters"] and not request["adjustment_type"] and not request["adjustment_name"]:
             self.reset_docid_status_label.setText("Config filter masih kosong.")
             return
         self.fetch_reset_docid_button.setEnabled(False)
         self.run_reset_docid_delete_button.setEnabled(False)
-        self.reset_docid_status_label.setText("Fetching DocID targets from db_ptrj...")
+        source_label = "compare-adtrans mismatch" if request.get("source_mode") == "diff" else "db_ptrj config"
+        self.reset_docid_status_label.setText(f"Fetching DocID targets from {source_label}...")
         self.reset_docid_fetch_thread = QThread(self)
         self.reset_docid_fetch_worker = ResetDocIdFetchWorker(self._api_client(), request)
         self.reset_docid_fetch_worker.moveToThread(self.reset_docid_fetch_thread)
@@ -2023,7 +2288,8 @@ class MainWindow(QMainWindow):
         self.reset_docid_targets = targets
         self._render_reset_docid_targets(targets)
         self.run_reset_docid_delete_button.setEnabled(bool(targets))
-        self.reset_docid_status_label.setText(f"Loaded {len(targets)} DELETE_RECORD DocID targets.")
+        source_label = "DIFF/MISMATCH" if str(self.reset_docid_source.currentData() or "config") == "diff" else "config"
+        self.reset_docid_status_label.setText(f"Loaded {len(targets)} DELETE_RECORD DocID targets from {source_label}.")
 
     def _handle_reset_docid_fetch_failed(self, message: str) -> None:
         self.fetch_reset_docid_button.setEnabled(True)
@@ -2053,16 +2319,16 @@ class MainWindow(QMainWindow):
         if not selected:
             self.reset_docid_status_label.setText("Tidak ada DocID target yang dipilih.")
             return
-        if not self.reset_docid_dry_run.isChecked() and self.runner_mode.currentText() != "fresh_login_single" and not self._selected_session_active():
+        if not self._selected_session_active():
             division_code = self._selected_division_code()
-            message = f"Session aktif untuk {division_code} belum ada. Jalankan Get Session dulu atau pilih runner mode fresh_login_single."
+            message = f"Session aktif untuk {division_code} belum ada. Jalankan Get Session dulu sebelum reset/delete DIFF."
             self.reset_docid_status_label.setText(message)
             self.append_log(f"Reset DocID delete blocked: {message}")
             QMessageBox.warning(self, "Session belum aktif", message)
             self.tabs.setCurrentIndex(0)
             return
         if not self.reset_docid_dry_run.isChecked():
-            answer = QMessageBox.question(self, "Confirm Reset/Delete DocID", f"Delete {len(selected)} DocIDs that match current Config from {self._selected_division_code()}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            answer = QMessageBox.question(self, "Confirm Reset/Delete DocID", f"Delete {len(selected)} DIFF/MISMATCH DocIDs from {self._selected_division_code()}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 self.reset_docid_status_label.setText("Actual delete dibatalkan.")
                 return
@@ -2070,7 +2336,7 @@ class MainWindow(QMainWindow):
         action_label = "dry-run scan" if dry_run else "delete"
         self.reset_docid_status_label.setText(f"Starting reset {action_label} for {len(selected)} DocIDs...")
         self.append_log(f"Reset DocID selected targets: {[target.doc_id for target in selected[:20]]}; dry_run={dry_run}")
-        base_payload = self.build_payload(mode=self.runner_mode.currentText(), records=[])
+        base_payload = self.build_payload(mode=DELETE_RUNNER_MODE, records=[])
         payload = RunPayload(
             period_month=self.period_month.value(),
             period_year=self.period_year.value(),
@@ -2080,12 +2346,13 @@ class MainWindow(QMainWindow):
             adjustment_type=base_payload.adjustment_type,
             adjustment_name=base_payload.adjustment_name,
             category_key=str(self.category.currentData() or base_payload.category_key),
-            runner_mode=base_payload.runner_mode,
+            runner_mode=DELETE_RUNNER_MODE,
             max_tabs=base_payload.max_tabs,
             headless=base_payload.headless,
             only_missing_rows=base_payload.only_missing_rows,
             row_limit=base_payload.row_limit,
             records=[],
+            session_division_code=base_payload.session_division_code,
             operation="delete_duplicates",
             duplicate_targets=selected,
             delete_dry_run=dry_run,
@@ -2101,19 +2368,214 @@ class MainWindow(QMainWindow):
                 selected.append(target)
         return selected
 
+    def fetch_loosefruit_duplicate_targets(self) -> None:
+        loc_code = self.loosefruit_loc_code.text().strip().upper() or None
+        self.fetch_loosefruit_duplicates_button.setEnabled(False)
+        self.delete_loosefruit_button.setEnabled(False)
+        self.delete_duplicates_button.setEnabled(False)
+        self.loosefruit_status_label.setText("Fetching Loosefruit DocIDs via Query Gateway...")
+        self.duplicate_status_label.setText("Fetching Loosefruit DocIDs via Query Gateway...")
+        repository = self._loosefruit_repository()
+        self.loosefruit_fetch_thread = QThread(self)
+        self.loosefruit_fetch_worker = LoosefruitFetchWorker(
+            repository,
+            loc_code=loc_code,
+            phy_month=None,
+            phy_year=None,
+            limit=self.loosefruit_limit.value(),
+        )
+        self.loosefruit_fetch_worker.moveToThread(self.loosefruit_fetch_thread)
+        self.loosefruit_fetch_thread.started.connect(self.loosefruit_fetch_worker.run)
+        self.loosefruit_fetch_worker.completed.connect(self._handle_loosefruit_fetch_completed)
+        self.loosefruit_fetch_worker.failed.connect(self._handle_loosefruit_fetch_failed)
+        self.loosefruit_fetch_worker.completed.connect(self.loosefruit_fetch_thread.quit)
+        self.loosefruit_fetch_worker.failed.connect(self.loosefruit_fetch_thread.quit)
+        self.loosefruit_fetch_thread.finished.connect(self.loosefruit_fetch_thread.deleteLater)
+        self.loosefruit_fetch_thread.start()
+
+    def _handle_loosefruit_fetch_completed(self, targets: list[DuplicateDocIdTarget]) -> None:
+        self.fetch_loosefruit_duplicates_button.setEnabled(True)
+        self.duplicate_targets = targets
+        self._render_duplicate_targets(targets)
+        enabled = bool(targets)
+        self.delete_duplicates_button.setEnabled(enabled)
+        self.delete_loosefruit_button.setEnabled(enabled)
+        loc_codes = self._duplicate_target_loc_codes(targets)
+        loc_text = "all locations" if not self.loosefruit_loc_code.text().strip() else ", ".join(loc_codes)
+        message = f"Loaded {len(targets)} Loosefruit DocID targets for {loc_text}."
+        if not self.loosefruit_loc_code.text().strip() and loc_codes:
+            message = f"Loaded {len(targets)} Loosefruit DocID targets across {len(loc_codes)} LocCode(s)."
+        self.loosefruit_status_label.setText(message)
+        self.duplicate_status_label.setText(message)
+
+    def _handle_loosefruit_fetch_failed(self, message: str) -> None:
+        self.fetch_loosefruit_duplicates_button.setEnabled(True)
+        self.delete_loosefruit_button.setEnabled(False)
+        self.loosefruit_status_label.setText(f"Fetch failed: {message}")
+        self.duplicate_status_label.setText(f"Fetch failed: {message}")
+        self.append_log(f"Loosefruit target fetch failed: {message}")
+
+    def run_loosefruit_delete(self) -> None:
+        selected = self._selected_duplicate_targets()
+        if not selected:
+            self.loosefruit_status_label.setText("Pilih DocID yang akan dihapus dari table.")
+            return
+        dry_run = self.loosefruit_dry_run.isChecked()
+        loc_codes = self._duplicate_target_loc_codes(selected)
+        if not loc_codes:
+            fallback = self.loosefruit_loc_code.text().strip().upper() or self._selected_location_code()
+            if fallback:
+                loc_codes = [fallback]
+        for loc_code in (loc_codes or [""]):
+            if loc_code and not self._session_active_for_code(loc_code):
+                message = f"Session aktif untuk {loc_code} belum ada. Jalankan Get Session dulu."
+                self.loosefruit_status_label.setText(message)
+                QMessageBox.warning(self, "Session belum aktif", message)
+                self.tabs.setCurrentIndex(0)
+                return
+        if not dry_run:
+            loc_text = ", ".join(loc_codes) if loc_codes else "unknown"
+            answer = QMessageBox.question(
+                self, "Confirm Delete",
+                f"Yakin hapus {len(selected)} Loosefruit DocIDs di {len(loc_codes)} LocCode ({loc_text})?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.loosefruit_status_label.setText("Delete dibatalkan.")
+                return
+        action_label = "dry-run" if dry_run else "delete"
+        self.loosefruit_status_label.setText(f"Starting Loosefruit {action_label} for {len(selected)} DocIDs...")
+        self.duplicate_status_label.setText(f"Starting Loosefruit {action_label} for {len(selected)} DocIDs...")
+        first_loc = loc_codes[0] if loc_codes else self._selected_location_code()
+        payload = RunPayload(
+            period_month=self.period_month.value(),
+            period_year=self.period_year.value(),
+            division_code=first_loc,
+            gang_code=None,
+            emp_code=None,
+            adjustment_type=None,
+            adjustment_name=None,
+            category_key="loosefruit",
+            runner_mode="delete_loosefruit",
+            max_tabs=8,
+            headless=False,
+            only_missing_rows=False,
+            row_limit=None,
+            records=[],
+            session_division_code=first_loc,
+            operation="delete_loosefruit",
+            duplicate_targets=selected,
+            delete_dry_run=dry_run,
+        )
+        self.start_runner(payload, f"Loosefruit {action_label}: {len(selected)} DocIDs...")
+
+    def fetch_task_register_duplicate_targets(self) -> None:
+        loc_code = self.task_register_loc_code.text().strip().upper() or self._selected_location_code()
+        if not loc_code:
+            self.task_register_status_label.setText("LocCode masih kosong.")
+            return
+        self.fetch_task_register_duplicates_button.setEnabled(False)
+        self.delete_duplicates_button.setEnabled(False)
+        self.task_register_status_label.setText("Fetching Task Register DocIDs via Query Gateway...")
+        self.duplicate_status_label.setText("Fetching Task Register DocIDs via Query Gateway...")
+        repository = self._task_register_repository()
+        self.task_register_fetch_thread = QThread(self)
+        self.task_register_fetch_worker = TaskRegisterFetchWorker(
+            repository,
+            loc_code=loc_code,
+            phy_month=self.task_register_phy_month.value() or None,
+            phy_year=self.task_register_phy_year.value() or None,
+            limit=self.task_register_limit.value(),
+        )
+        self.task_register_fetch_worker.moveToThread(self.task_register_fetch_thread)
+        self.task_register_fetch_thread.started.connect(self.task_register_fetch_worker.run)
+        self.task_register_fetch_worker.completed.connect(self._handle_task_register_fetch_completed)
+        self.task_register_fetch_worker.failed.connect(self._handle_task_register_fetch_failed)
+        self.task_register_fetch_worker.completed.connect(self.task_register_fetch_thread.quit)
+        self.task_register_fetch_worker.failed.connect(self.task_register_fetch_thread.quit)
+        self.task_register_fetch_thread.finished.connect(self.task_register_fetch_thread.deleteLater)
+        self.task_register_fetch_thread.start()
+
+    def _handle_task_register_fetch_completed(self, targets: list[DuplicateDocIdTarget]) -> None:
+        self.fetch_task_register_duplicates_button.setEnabled(True)
+        self.duplicate_targets = targets
+        self._render_duplicate_targets(targets)
+        self.delete_duplicates_button.setEnabled(bool(targets))
+        self.delete_task_register_button.setEnabled(bool(targets))
+        loc_code = self.task_register_loc_code.text().strip().upper() or self._selected_location_code()
+        message = f"Loaded {len(targets)} Task Register DocID targets for {loc_code}."
+        self.task_register_status_label.setText(message)
+        self.duplicate_status_label.setText(message)
+
+    def _handle_task_register_fetch_failed(self, message: str) -> None:
+        self.fetch_task_register_duplicates_button.setEnabled(True)
+        self.delete_task_register_button.setEnabled(False)
+        self.task_register_status_label.setText(f"Fetch failed: {message}")
+        self.duplicate_status_label.setText(f"Fetch failed: {message}")
+        self.append_log(f"Task Register target fetch failed: {message}")
+
+    def run_task_register_delete(self) -> None:
+        selected = self._selected_duplicate_targets()
+        if not selected:
+            self.task_register_status_label.setText("Pilih DocID yang akan dihapus dari table.")
+            return
+        dry_run = self.task_register_dry_run.isChecked()
+        loc_code = self.task_register_loc_code.text().strip().upper() or self._selected_location_code()
+        if not self._session_active_for_code(loc_code):
+            message = f"Session aktif untuk {loc_code} belum ada. Jalankan Get Session dulu."
+            self.task_register_status_label.setText(message)
+            QMessageBox.warning(self, "Session belum aktif", message)
+            self.tabs.setCurrentIndex(0)
+            return
+        if not dry_run:
+            answer = QMessageBox.question(
+                self, "Confirm Delete",
+                f"Yakin hapus {len(selected)} Task Register DocIDs?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.task_register_status_label.setText("Delete dibatalkan.")
+                return
+        action_label = "dry-run" if dry_run else "delete"
+        self.task_register_status_label.setText(f"Starting Task Register {action_label} for {len(selected)} DocIDs...")
+        self.duplicate_status_label.setText(f"Starting Task Register {action_label} for {len(selected)} DocIDs...")
+        payload = RunPayload(
+            period_month=5,
+            period_year=2026,
+            division_code=loc_code,
+            gang_code=None,
+            emp_code=None,
+            adjustment_type=None,
+            adjustment_name=None,
+            category_key="task_register",
+            runner_mode="delete_duplicates",
+            max_tabs=1,
+            headless=False,
+            only_missing_rows=False,
+            row_limit=None,
+            records=[],
+            session_division_code=loc_code,
+            operation="delete_duplicates",
+            duplicate_targets=selected,
+            delete_dry_run=dry_run,
+        )
+        self.start_runner(payload, f"Task Register {action_label}: {len(selected)} DocIDs...")
+
     def fetch_duplicate_targets(self) -> None:
         if not self._duplicate_category_supported():
             self.duplicate_status_label.setText("Pilih kategori duplicate cleanup yang valid.")
             return
-        filters = self._parse_list(self.duplicate_filters.text())
-        if not filters:
-            self.duplicate_status_label.setText("Filters masih kosong.")
+        request = self._duplicate_cleanup_request()
+        if not request["filters"] and not request["adjustment_type"] and not request["adjustment_name"] and not request["doc_desc"]:
+            self.duplicate_status_label.setText("Filters atau adjustment config masih kosong.")
             return
         self.fetch_duplicates_button.setEnabled(False)
         self.delete_duplicates_button.setEnabled(False)
         self.duplicate_status_label.setText("Fetching duplicate targets...")
         self.duplicate_fetch_thread = QThread(self)
-        self.duplicate_fetch_worker = DuplicateFetchWorker(self._api_client(), self.duplicate_month.value(), self.duplicate_year.value(), self._selected_division_code(), filters)
+        self.duplicate_fetch_worker = DuplicateFetchWorker(self._api_client(), **request)
         self.duplicate_fetch_worker.moveToThread(self.duplicate_fetch_thread)
         self.duplicate_fetch_thread.started.connect(self.duplicate_fetch_worker.run)
         self.duplicate_fetch_worker.completed.connect(self._handle_duplicate_fetch_completed)
@@ -2122,6 +2584,32 @@ class MainWindow(QMainWindow):
         self.duplicate_fetch_worker.failed.connect(self.duplicate_fetch_thread.quit)
         self.duplicate_fetch_thread.finished.connect(self.duplicate_fetch_thread.deleteLater)
         self.duplicate_fetch_thread.start()
+
+    def _duplicate_cleanup_request(self) -> dict[str, Any]:
+        category_key = str(self.duplicate_category.currentData() or "")
+        filters = self._parse_list(self.duplicate_filters.text())
+        adjustment_type: str | None = None
+        adjustment_name: str | None = None
+        doc_desc: str | None = None
+        config_category_key = str(self.category.currentData() or "")
+        config_adjustment_type = self.adjustment_type.currentText().strip().upper()
+        config_adjustment_name = self.adjustment_name.text().strip()
+        if (
+            category_key == config_category_key
+            and config_adjustment_type in SYNC_STATUS_ADJUSTMENT_TYPES
+        ):
+            adjustment_type = config_adjustment_type
+            adjustment_name = config_adjustment_name or None
+            filters = []
+        return {
+            "period_month": self.duplicate_month.value(),
+            "period_year": self.duplicate_year.value(),
+            "division_code": self._selected_division_code(),
+            "filters": filters,
+            "adjustment_type": adjustment_type,
+            "adjustment_name": adjustment_name,
+            "doc_desc": doc_desc,
+        }
 
     def _handle_duplicate_fetch_completed(self, targets: list[DuplicateDocIdTarget]) -> None:
         self.fetch_duplicates_button.setEnabled(True)
@@ -2143,9 +2631,10 @@ class MainWindow(QMainWindow):
             self.duplicate_target_rows[target.doc_id] = row
             select_item = QTableWidgetItem("")
             select_item.setFlags(select_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            select_item.setCheckState(Qt.CheckState.Checked if target.action == "DELETE_OLD" else Qt.CheckState.Unchecked)
+            select_item.setCheckState(Qt.CheckState.Checked if target.action in {"DELETE_OLD", "DELETE_RECORD"} else Qt.CheckState.Unchecked)
             self.duplicate_table.setItem(row, 0, select_item)
-            values = [target.action, target.doc_id, target.emp_code, target.emp_name, target.doc_desc, target.keep_doc_id, "Pending", ""]
+            loc_code = self._duplicate_target_loc_code(target)
+            values = [target.action, target.doc_id, target.emp_code or loc_code, target.emp_name, target.doc_desc, target.keep_doc_id, "Pending", ""]
             for column, value in enumerate(values, start=1):
                 self.duplicate_table.setItem(row, column, QTableWidgetItem(str(value)))
 
@@ -2153,23 +2642,28 @@ class MainWindow(QMainWindow):
         if self._runner_is_active():
             self.duplicate_status_label.setText("Runner sedang berjalan.")
             return
-        if not self._duplicate_category_supported():
-            self.duplicate_status_label.setText("Pilih kategori duplicate cleanup yang valid.")
-            return
         selected = self._selected_duplicate_targets()
         if not selected:
             self.duplicate_status_label.setText("Tidak ada duplicate target yang dipilih.")
             return
-        if not self.duplicate_dry_run.isChecked() and self.runner_mode.currentText() != "fresh_login_single" and not self._selected_session_active():
-            division_code = self._selected_division_code()
-            message = f"Session aktif untuk {division_code} belum ada. Jalankan Get Session dulu atau pilih runner mode fresh_login_single."
+        task_register_targets = self._targets_are_task_register(selected)
+        if not task_register_targets and not self._duplicate_category_supported():
+            self.duplicate_status_label.setText("Pilih kategori duplicate cleanup yang valid.")
+            return
+        try:
+            runner_division_code = self._duplicate_run_division_code(selected)
+        except ValueError as exc:
+            self.duplicate_status_label.setText(str(exc))
+            return
+        if not self._session_active_for_code(runner_division_code):
+            message = f"Session aktif untuk {runner_division_code} belum ada. Jalankan Get Session dulu sebelum delete duplicate."
             self.duplicate_status_label.setText(message)
             self.append_log(f"Duplicate cleanup blocked: {message}")
             QMessageBox.warning(self, "Session belum aktif", message)
             self.tabs.setCurrentIndex(0)
             return
         if not self.duplicate_dry_run.isChecked():
-            answer = QMessageBox.question(self, "Confirm Duplicate Delete", f"Delete {len(selected)} duplicate DocIDs from {self._selected_division_code()}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            answer = QMessageBox.question(self, "Confirm Duplicate Delete", f"Delete {len(selected)} duplicate DocIDs from {runner_division_code}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
                 self.duplicate_status_label.setText("Actual delete dibatalkan.")
                 return
@@ -2177,23 +2671,25 @@ class MainWindow(QMainWindow):
         action_label = "dry-run scan" if dry_run else "delete"
         self.duplicate_status_label.setText(f"Starting duplicate {action_label} for {len(selected)} DocIDs...")
         self.append_log(f"Duplicate cleanup selected targets: {[(target.doc_id, target.master_id) for target in selected[:10]]}; dry_run={dry_run}")
-        payload = self.build_payload(mode=self.runner_mode.currentText(), records=[])
-        duplicate_category_key = str(self.duplicate_category.currentData() or payload.category_key)
+        payload = self.build_payload(mode=DELETE_RUNNER_MODE, records=[], division_code=runner_division_code)
+        duplicate_category_key = "task_register" if task_register_targets else str(self.duplicate_category.currentData() or payload.category_key)
+        period_month, period_year = self._duplicate_run_period(selected, default_month=self.duplicate_month.value(), default_year=self.duplicate_year.value())
         payload = RunPayload(
-            period_month=self.duplicate_month.value(),
-            period_year=self.duplicate_year.value(),
-            division_code=self._selected_division_code(),
+            period_month=period_month,
+            period_year=period_year,
+            division_code=runner_division_code,
             gang_code=payload.gang_code,
             emp_code=payload.emp_code,
             adjustment_type=payload.adjustment_type,
             adjustment_name=payload.adjustment_name,
             category_key=duplicate_category_key,
-            runner_mode=payload.runner_mode,
+            runner_mode=DELETE_RUNNER_MODE,
             max_tabs=payload.max_tabs,
             headless=payload.headless,
             only_missing_rows=payload.only_missing_rows,
             row_limit=payload.row_limit,
             records=[],
+            session_division_code=payload.session_division_code,
             operation="delete_duplicates",
             duplicate_targets=selected,
             delete_dry_run=dry_run,
@@ -2205,9 +2701,56 @@ class MainWindow(QMainWindow):
         selected: list[DuplicateDocIdTarget] = []
         for row, target in enumerate(self.duplicate_targets):
             item = self.duplicate_table.item(row, 0)
-            if item and item.checkState() == Qt.CheckState.Checked and target.action == "DELETE_OLD":
+            if item and item.checkState() == Qt.CheckState.Checked and target.action in {"DELETE_OLD", "DELETE_RECORD"}:
                 selected.append(target)
         return selected
+
+    def _targets_are_task_register(self, targets: list[DuplicateDocIdTarget]) -> bool:
+        if not targets:
+            return False
+        return all(
+            target.category == "task_register"
+            or str((target.raw or {}).get("source") or "") == "task-register-pr-taskreg"
+            for target in targets
+        )
+
+    def _targets_are_loosefruit(self, targets: list[DuplicateDocIdTarget]) -> bool:
+        if not targets:
+            return False
+        return all(
+            target.category == "loosefruit"
+            or str((target.raw or {}).get("source") or "") == "loosefruit-pr-loosefruit"
+            for target in targets
+        )
+
+    def _duplicate_target_loc_code(self, target: DuplicateDocIdTarget) -> str:
+        raw = target.raw or {}
+        return str(raw.get("loc_code") or raw.get("locCode") or raw.get("LocCode") or "").strip().upper()
+
+    def _duplicate_target_loc_codes(self, targets: list[DuplicateDocIdTarget]) -> list[str]:
+        return sorted({loc for target in targets if (loc := self._duplicate_target_loc_code(target))})
+
+    def _duplicate_run_division_code(self, targets: list[DuplicateDocIdTarget]) -> str:
+        if not self._targets_are_task_register(targets):
+            return self._selected_division_code()
+        loc_codes = sorted({loc_code for target in targets if (loc_code := self._duplicate_target_loc_code(target))})
+        if len(loc_codes) > 1:
+            raise ValueError(f"Task Register delete hanya boleh satu LocCode per run: {', '.join(loc_codes)}")
+        return loc_codes[0] if loc_codes else (self.task_register_loc_code.text().strip().upper() or self._selected_location_code())
+
+    def _duplicate_run_period(self, targets: list[DuplicateDocIdTarget], default_month: int, default_year: int) -> tuple[int, int]:
+        if not self._targets_are_task_register(targets):
+            return default_month, default_year
+        raw = targets[0].raw or {}
+        try:
+            month = int(raw.get("acc_month") or raw.get("accMonth") or default_month)
+        except (TypeError, ValueError):
+            month = default_month
+        try:
+            year = int(raw.get("acc_year") or raw.get("accYear") or default_year)
+        except (TypeError, ValueError):
+            year = default_year
+        return month, year
 
     def _handle_duplicate_event(self, event_name: str, payload: dict[str, Any], message: str) -> None:
         doc_id = str(payload.get("doc_id", ""))
@@ -2241,6 +2784,8 @@ class MainWindow(QMainWindow):
     def _duplicate_category_supported(self) -> bool:
         if not hasattr(self, "duplicate_category"):
             return False
+        if self.duplicate_targets and self._targets_are_task_register(self.duplicate_targets):
+            return True
         return bool(self._default_filter_for_category_key(str(self.duplicate_category.currentData() or "")))
 
     def _apply_duplicate_category_filter(self) -> None:
@@ -2257,6 +2802,22 @@ class MainWindow(QMainWindow):
             self.delete_duplicates_button.setText("Scan Selected Duplicates (Dry Run)")
         else:
             self.delete_duplicates_button.setText("Delete Selected Duplicates")
+
+    def _sync_task_register_button_text(self) -> None:
+        if not hasattr(self, "delete_task_register_button") or not hasattr(self, "task_register_dry_run"):
+            return
+        if self.task_register_dry_run.isChecked():
+            self.delete_task_register_button.setText("Scan Selected (Dry Run)")
+        else:
+            self.delete_task_register_button.setText("Delete Selected")
+
+    def _sync_loosefruit_button_text(self) -> None:
+        if not hasattr(self, "delete_loosefruit_button") or not hasattr(self, "loosefruit_dry_run"):
+            return
+        if self.loosefruit_dry_run.isChecked():
+            self.delete_loosefruit_button.setText("Scan Selected (Dry Run)")
+        else:
+            self.delete_loosefruit_button.setText("Delete Selected")
 
     def _sync_reset_docid_button_text(self) -> None:
         if not hasattr(self, "run_reset_docid_delete_button") or not hasattr(self, "reset_docid_dry_run"):
@@ -2348,6 +2909,24 @@ class MainWindow(QMainWindow):
     def _api_client(self) -> ManualAdjustmentApiClient:
         return ManualAdjustmentApiClient(self.api_base_url.text().strip(), self.api_key.text().strip(), self.categories)
 
+    def _task_register_repository(self) -> TaskRegisterGatewayRepository:
+        config = QueryGatewayConfig(
+            base_url=self.config.query_gateway_base_url,
+            api_key=self.config.query_gateway_api_key,
+            server=self.config.query_gateway_server,
+            database=self.config.query_gateway_database,
+        )
+        return TaskRegisterGatewayRepository(PlantwareDbPtrjGateway(config))
+
+    def _loosefruit_repository(self) -> LoosefruitGatewayRepository:
+        config = QueryGatewayConfig(
+            base_url=self.config.query_gateway_base_url,
+            api_key=self.config.query_gateway_api_key,
+            server=self.config.query_gateway_server,
+            database=self.config.query_gateway_database,
+        )
+        return LoosefruitGatewayRepository(PlantwareDbPtrjGateway(config))
+
     def _populate_division_dropdown(self) -> None:
         if self.divisions:
             for division in self.divisions:
@@ -2356,12 +2935,47 @@ class MainWindow(QMainWindow):
             self.division_code.addItem(self.config.default_division_code, self.config.default_division_code)
         default_code = self.config.default_division_code.strip().upper()
         for index in range(self.division_code.count()):
-            if str(self.division_code.itemData(index)).upper() == default_code:
+            option = self._division_option_for_code(str(self.division_code.itemData(index) or ""))
+            aliases = {alias.strip().upper() for alias in option.aliases} if option else set()
+            if str(self.division_code.itemData(index)).upper() == default_code or default_code in aliases:
                 self.division_code.setCurrentIndex(index)
                 return
 
     def _selected_division_code(self) -> str:
         return str(self.division_code.currentData() or self.division_code.currentText()).split("-", 1)[0].strip().upper()
+
+    def _division_option_for_code(self, code: str | None) -> DivisionOption | None:
+        normalized = (code or "").strip().upper()
+        if not normalized:
+            return None
+        for division in self.divisions:
+            if division.code.strip().upper() == normalized:
+                return division
+            if any(alias.strip().upper() == normalized for alias in division.aliases):
+                return division
+        return None
+
+    def _location_code_for_division(self, code: str | None) -> str:
+        option = self._division_option_for_code(code)
+        return option.effective_location_code if option else (code or "").strip().upper()
+
+    def _session_code_for_division(self, code: str | None) -> str:
+        option = self._division_option_for_code(code)
+        return option.effective_session_code if option else (code or "").strip().upper()
+
+    def _selected_location_code(self) -> str:
+        return self._location_code_for_division(self._selected_division_code())
+
+    def _selected_session_code(self) -> str:
+        return self._session_code_for_division(self._selected_division_code())
+
+    def _location_label_for_division(self, division: DivisionOption) -> str:
+        location_code = division.effective_location_code
+        location_option = self._division_option_for_code(location_code)
+        location_label = location_option.label if location_option else location_code
+        if location_code != division.code.strip().upper():
+            return f"{location_code} - {location_label}"
+        return division.label
 
     def _session_dir(self) -> Path:
         if self.session_dir_override is not None:
@@ -2380,7 +2994,8 @@ class MainWindow(QMainWindow):
         results: list[dict[str, str | bool]] = []
         for division in division_options:
             code = division.code.strip().upper()
-            session_file = session_dir / f"session-{code}.json"
+            session_code = division.effective_session_code
+            session_file = session_dir / f"session-{session_code}.json"
             status = "— None"
             age = ""
             saved = ""
@@ -2389,10 +3004,10 @@ class MainWindow(QMainWindow):
                 try:
                     data = json.loads(session_file.read_text(encoding="utf-8"))
                     saved_at = self._parse_session_timestamp(str(data.get("savedAt", "")))
-                    file_division = str(data.get("division") or code).strip().upper()
+                    file_division = str(data.get("division") or session_code).strip().upper()
                     age_minutes = int((now - saved_at).total_seconds() / 60)
-                    active = file_division == code and age_minutes < 240
-                    if file_division != code:
+                    active = file_division == session_code and age_minutes < 240
+                    if file_division != session_code:
                         status = f"Mismatch ({file_division})"
                     else:
                         status = "Active" if active else "Expired"
@@ -2400,7 +3015,16 @@ class MainWindow(QMainWindow):
                     saved = saved_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
                 except (OSError, json.JSONDecodeError, ValueError):
                     status = "Invalid"
-            results.append({"code": code, "label": division.label, "status": status, "age": age, "saved": saved, "active": active})
+            results.append({
+                "code": code,
+                "label": self._location_label_for_division(division),
+                "division_label": division.label,
+                "session_code": session_code,
+                "status": status,
+                "age": age,
+                "saved": saved,
+                "active": active,
+            })
         return results
 
     def _parse_session_timestamp(self, value: str) -> datetime:
@@ -2430,6 +3054,23 @@ class MainWindow(QMainWindow):
         status = self._selected_session_status()
         return bool(status and status["active"])
 
+    def _session_active_for_code(self, code: str | None) -> bool:
+        normalized = (code or "").strip().upper()
+        if not normalized:
+            return False
+        session_code = self._session_code_for_division(normalized) or normalized
+        session_file = self._session_dir() / f"session-{session_code}.json"
+        if not session_file.exists():
+            return False
+        try:
+            data = json.loads(session_file.read_text(encoding="utf-8"))
+            saved_at = self._parse_session_timestamp(str(data.get("savedAt", "")))
+            file_division = str(data.get("division") or session_code).strip().upper()
+            age_minutes = int((datetime.now(timezone.utc) - saved_at).total_seconds() / 60)
+            return file_division == session_code and age_minutes < 240
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+
     def _refresh_session_status(self) -> None:
         from PySide6.QtGui import QColor
         if not hasattr(self, "session_table"):
@@ -2454,9 +3095,13 @@ class MainWindow(QMainWindow):
             button.clicked.connect(lambda checked=False, code=str(item["code"]): self.get_session_for_division(code))
             self.session_table.setCellWidget(row, 5, button)
         if selected_status and selected_status["active"]:
-            self.session_status_label.setText(f"Session ready for {selected_code} (age: {selected_status['age']})")
+            session_code = str(selected_status.get("session_code") or selected_code)
+            suffix = f" via {session_code}" if session_code != selected_code else ""
+            self.session_status_label.setText(f"Session ready for {selected_code}{suffix} (age: {selected_status['age']})")
         else:
-            self.session_status_label.setText(f"No active session for {selected_code}. Use Get Session or runner will do fresh login.")
+            session_code = self._session_code_for_division(selected_code)
+            suffix = f" parent {session_code}" if session_code and session_code != selected_code else selected_code
+            self.session_status_label.setText(f"No active session for {selected_code} ({suffix}). Use Get Session or runner will do fresh login.")
 
     def _description_for_record(self, record: ManualAdjustmentRecord) -> str:
         category = self.categories.by_key(record.category_key or str(self.category.currentData() or ""))
@@ -2467,7 +3112,7 @@ class MainWindow(QMainWindow):
 
     def _adcode_for_record(self, record: ManualAdjustmentRecord) -> str:
         category = self.categories.by_key(record.category_key or str(self.category.currentData() or ""))
-        is_auto_buffer = record.adjustment_type == "AUTO_BUFFER" or (record.category_key or "") in {"spsi", "masa_kerja", "tunjangan_jabatan"}
+        is_auto_buffer = record.adjustment_type == "AUTO_BUFFER" or (record.category_key or "") in AUTO_BUFFER_CATEGORY_KEYS
         if is_auto_buffer and category and category.adcode:
             return category.adcode
         display_adcode = display_adcode_for_record(record)
@@ -2516,9 +3161,11 @@ class MainWindow(QMainWindow):
                 api_sync, _ = sync_status_display_from_row(row)
                 if api_sync == "SYNC":
                     return "Already in DB"
+                if api_sync in {"DIFF", "MISMATCH"}:
+                    return "DB Mismatch"
                 if api_sync == "PARTIAL":
                     return "DB Mismatch"
-                if api_sync == "NOT_FOUND":
+                if api_sync in {"MISS", "MISSING", "NOT_FOUND"}:
                     return "Missing in DB"
                 if api_sync in {"NO_SYNC_SEGMENT", "ERROR"}:
                     return "Verify Error"
@@ -2538,9 +3185,9 @@ class MainWindow(QMainWindow):
         if record.category_key in PREMI_CATEGORY_KEYS and self.fetch_verification_status:
             return self._record_key(record) in self.premium_retry_record_keys
         verified_status = self._fetch_verification_display(record).upper()
-        if verified_status in {"VERIFIED_MATCH", "VERIFIED_MISMATCH"}:
+        if verified_status in {"VERIFIED_MATCH", "VERIFIED_MISMATCH", "SYNC", "DIFF", "MISMATCH", "PARTIAL"}:
             return False
-        if verified_status == "VERIFIED_NOT_FOUND":
+        if verified_status in {"VERIFIED_NOT_FOUND", "MISS", "MISSING", "NOT_FOUND"}:
             return True
         return record_is_stale_miss(record)
 
@@ -2599,6 +3246,12 @@ class MainWindow(QMainWindow):
         self.session_table.setEnabled(enabled)
         if hasattr(self, "fetch_duplicates_button"):
             self.fetch_duplicates_button.setEnabled(enabled)
+        if hasattr(self, "fetch_task_register_duplicates_button"):
+            self.fetch_task_register_duplicates_button.setEnabled(enabled)
+        if hasattr(self, "fetch_loosefruit_duplicates_button"):
+            self.fetch_loosefruit_duplicates_button.setEnabled(enabled)
+        if hasattr(self, "delete_loosefruit_button"):
+            self.delete_loosefruit_button.setEnabled(enabled and bool(self.duplicate_targets))
         if hasattr(self, "delete_duplicates_button"):
             self.delete_duplicates_button.setEnabled(enabled and bool(self.duplicate_targets))
         if hasattr(self, "fetch_reset_docid_button"):
@@ -2628,17 +3281,24 @@ class MainWindow(QMainWindow):
         if hasattr(self, "duplicate_filters"):
             self.duplicate_month.setValue(self.period_month.value())
             self.duplicate_year.setValue(self.period_year.value())
+            if hasattr(self, "task_register_loc_code"):
+                self.task_register_loc_code.setText(self._selected_location_code())
             duplicate_index = self.duplicate_category.findData(category_key) if hasattr(self, "duplicate_category") else -1
             if duplicate_index >= 0:
                 self.duplicate_category.setCurrentIndex(duplicate_index)
             else:
                 self.duplicate_filters.setText(default_filter)
 
+    def _sync_task_register_loc_code(self) -> None:
+        if hasattr(self, "task_register_loc_code"):
+            self.task_register_loc_code.setText(self._selected_location_code())
+
     def _default_filter_for_category_key(self, category_key: str) -> str:
         defaults = {
             "spsi": "spsi",
             "masa_kerja": "masa kerja",
             "tunjangan_jabatan": "jabatan",
+            "pph21": "pph",
             "premi": "premi",
             "potongan_upah_kotor": "potongan",
             "koreksi": "koreksi",
@@ -2668,7 +3328,8 @@ class MainWindow(QMainWindow):
 
     def _on_division_monitor_run(self, division_code: str, cat_key: str, cat_label: str, mode: str, month: int, year: int, extra_details: object | None = None) -> None:
         from app.ui.division_run_dialog import DivisionRunDialog
-        division_label = next((d.label for d in self.divisions if d.code == division_code), division_code)
+        division_option = self._division_option_for_code(division_code)
+        division_label = division_option.label if division_option else division_code
         dialog = DivisionRunDialog(
             config=self.config,
             categories=self.categories,
@@ -2680,6 +3341,7 @@ class MainWindow(QMainWindow):
             mode=mode,
             month=month,
             year=year,
+            session_division_code=self._session_code_for_division(division_code),
             extra_details=extra_details if isinstance(extra_details, list) else None,
             parent=self,
         )
@@ -2691,3 +3353,4 @@ class MainWindow(QMainWindow):
 
     def append_log(self, message: str) -> None:
         self.log_output.append(message)
+
