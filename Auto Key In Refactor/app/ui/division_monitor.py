@@ -40,6 +40,7 @@ CATEGORY_TO_FILTERS = {
     "spsi": ["spsi"],
     "masa_kerja": ["masa kerja"],
     "tunjangan_jabatan": ["jabatan"],
+    "pph21": ["pph"],
     "premi": ["premi"],
     "premi_tunjangan": ["tunjangan premi"],
     "potongan_upah_kotor": ["koreksi", "potongan"],
@@ -51,6 +52,7 @@ FILTER_TO_CATEGORY: dict[str, str] = {
     "spsi": "spsi",
     "masa kerja": "masa_kerja",
     "jabatan": "tunjangan_jabatan",
+    "pph": "pph21",
     "premi": "premi",
     "tunjangan premi": "premi_tunjangan",
     "koreksi": "potongan_upah_kotor",
@@ -295,7 +297,7 @@ class SyncWorker(QObject):
                 self.year,
                 self.division_code,
                 filters=self.filters,
-                sync_mode="MISMATCH_AND_MISSING",
+                sync_mode="MISSING_ONLY",
             )
             self.completed.emit(result)
         except Exception as exc:
@@ -569,10 +571,10 @@ class DivisionCard(QWidget):
         detail_btn.clicked.connect(lambda _c=False, k=cat_key: self._on_detail(k))
         top.addWidget(detail_btn)
 
-        sync_btn = QPushButton("Sync")
+        sync_btn = QPushButton("Sync Missing")
         sync_btn.setObjectName("sync-btn")
         sync_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        sync_btn.setToolTip("Sync db_ptrj values back to extend_db for this category")
+        sync_btn.setToolTip("Insert missing db_ptrj values only; mismatch rows stay for reset/delete")
         sync_btn.clicked.connect(lambda _c=False, k=cat_key: self._on_sync(k))
         top.addWidget(sync_btn)
 

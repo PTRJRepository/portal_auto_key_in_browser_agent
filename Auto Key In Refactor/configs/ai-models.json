@@ -1,0 +1,54 @@
+{
+  "_comment": "AI Model Configuration - Custom GLM Provider (GLM-5.1)",
+  "_provider_note": "Custom OpenAI-compatible provider. Base URL and model name must match your custom provider endpoint.",
+  "base_url": "https://api.custom.glm.ai/v1/chat/completions",
+  "api_key_env": "CUSTOM_GLM_API_KEY",
+  "models": {
+    "glm": {
+      "name": "glm-5.1",
+      "description": "Default model - GLM 5.1 via custom provider",
+      "default_for": ["general", "fallback", "default"]
+    },
+    "sonnet": {
+      "name": "sonnet-4.6",
+      "description": "Worker tasks - fast, cost-effective",
+      "default_for": ["worker", "execution", "implementation", "coding"]
+    },
+    "opus": {
+      "name": "opus",
+      "description": "Orchestration - complex planning and coordination",
+      "default_for": ["orchestration", "orchestrate", "coordinate", "planning"]
+    },
+    "kimi": {
+      "name": "kimi-2.5",
+      "description": "Telegram gateway tasks",
+      "default_for": ["telegram", "telegram-gateway", "messaging"]
+    },
+    "minimax": {
+      "name": "minimax",
+      "description": "Additional model",
+      "default_for": []
+    },
+    "qwen": {
+      "name": "qwen-max",
+      "description": "Additional model - high capability",
+      "default_for": []
+    },
+    "plus": {
+      "name": "plus",
+      "description": "Additional model",
+      "default_for": []
+    },
+    "gemini": {
+      "name": "gemini-3.1-pro",
+      "description": "Additional model - Google",
+      "default_for": []
+    }
+  },
+  "routing_rules": {
+    "telegram_gateway": "kimi",
+    "orchestration": "opus",
+    "worker": "sonnet",
+    "default": "glm"
+  }
+}

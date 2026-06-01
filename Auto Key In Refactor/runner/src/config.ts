@@ -17,6 +17,7 @@ function loadDotenv(): void {
 loadDotenv();
 
 const baseUrl = process.env.PLANTWARE_BASE_URL ?? "http://plantwarep3:8001";
+export const MAX_CONCURRENT_TABS = 8;
 
 export const PLANTWARE_CONFIG = {
   baseUrl,
@@ -26,5 +27,5 @@ export const PLANTWARE_CONFIG = {
   division: process.env.PLANTWARE_DIVISION ?? "P1B",
   listPage: "/en/PR/trx/frmPrTrxADLists.aspx",
   detailPage: "/en/PR/trx/frmPrTrxADDets.aspx",
-  maxTabs: 10
+  maxTabs: MAX_CONCURRENT_TABS
 };

@@ -8,6 +8,7 @@ export interface BrowserSessionOptions {
   sessionId?: string;
   sessionDir?: string;
   freshLoginFirst?: boolean;
+  loginFallback?: boolean;
   division?: string;
 }
 
@@ -18,6 +19,7 @@ export class BrowserSession {
   private sessionId: string;
   private sessionDir: string;
   private freshLoginFirst: boolean;
+  private loginFallback: boolean;
   private headless: boolean;
   private division: string;
 
@@ -27,6 +29,7 @@ export class BrowserSession {
     this.sessionId = options.sessionId ?? `session-${this.division}`;
     this.sessionDir = options.sessionDir ?? path.resolve(process.cwd(), "data/sessions");
     this.freshLoginFirst = options.freshLoginFirst ?? true;
+    this.loginFallback = options.loginFallback ?? true;
   }
 
   async start(): Promise<void> {
@@ -46,7 +49,12 @@ export class BrowserSession {
       return;
     }
     const loaded = await this.tryLoadSession();
-    if (!loaded) await this.loginAndSave();
+    if (!loaded) {
+      if (!this.loginFallback) {
+        throw new Error(`Saved Plantware session for ${this.division} is required. Run Get Session before this runner.`);
+      }
+      await this.loginAndSave();
+    }
   }
 
   async newPage(): Promise<Page> {

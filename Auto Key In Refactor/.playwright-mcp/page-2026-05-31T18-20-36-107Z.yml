@@ -1,0 +1,47 @@
+- generic [ref=e2]:
+  - table [ref=e4]:
+    - rowgroup [ref=e5]:
+      - row [ref=e6]:
+        - cell [ref=e7]
+      - row "PLANTATION SOFT SDN BHD PLANTWAREP3 VP3PLUS.1.118.0413" [ref=e8]:
+        - cell "PLANTATION SOFT SDN BHD PLANTWAREP3 VP3PLUS.1.118.0413" [ref=e9]:
+          - table [ref=e10]:
+            - rowgroup [ref=e11]:
+              - row "PLANTATION SOFT SDN BHD" [ref=e12]:
+                - cell "PLANTATION SOFT SDN BHD" [ref=e13]: PLANTATION SOFT SDN BHD
+              - row "PLANTWAREP3" [ref=e14]:
+                - cell "PLANTWAREP3" [ref=e15]
+              - row "VP3PLUS.1.118.0413" [ref=e16]:
+                - cell "VP3PLUS.1.118.0413" [ref=e17]
+              - row [ref=e18]:
+                - cell [ref=e19]
+      - row [ref=e20]:
+        - cell [ref=e21]
+      - row [ref=e22]:
+        - cell [ref=e23]
+      - row "LOG IN" [ref=e24]:
+        - cell "LOG IN" [ref=e25]:
+          - table [ref=e26]:
+            - rowgroup [ref=e27]:
+              - row [ref=e28]:
+                - cell [ref=e29]
+                - cell [ref=e30]:
+                  - textbox "User Name" [active] [ref=e31]
+                - cell [ref=e32]
+              - row [ref=e33]:
+                - cell [ref=e34]
+                - cell [ref=e35]:
+                  - textbox "Password" [ref=e36]
+                - cell [ref=e37]
+              - row "LOG IN" [ref=e38]:
+                - cell "LOG IN" [ref=e39]:
+                  - button "LOG IN" [ref=e40] [cursor=pointer]
+              - row [ref=e41]:
+                - cell [ref=e42]
+                - cell [ref=e43]
+                - cell [ref=e44]
+      - row [ref=e45]:
+        - cell [ref=e46]
+  - generic [ref=e48]:
+    - text: eFlex Plantware by iTech Plantation Soft Sdn. Bhd.
+    - img "iTech Plantation Soft Sdn. Bhd." [ref=e49] [cursor=pointer]

@@ -1,0 +1,365 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - link [ref=e6] [cursor=pointer]:
+      - /url: /en/system/user/frmSystemUserSetlocation.aspx?FROM=OK
+      - img [ref=e7]
+      - img [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img "Company" [ref=e11]
+        - text: PT. REBINMAS JAYA
+      - generic [ref=e12]:
+        - img "Location" [ref=e13]
+        - text: ESTATE PARIT GUNUNG 1B (P1B)
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - img "User ID" [ref=e16]
+        - text: Atha Rizki Pangestu
+        - img "Date Time" [ref=e17]
+        - text: Sunday, 31 May 2026
+      - generic [ref=e18]:
+        - link "Change Location" [ref=e19] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLocation','')
+          - img "Change Location" [ref=e20]
+        - text: "|"
+        - link "Change Password" [ref=e21] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkPassword','')
+          - img "Change Password" [ref=e22]
+        - text: "|"
+        - link "Change Email Address" [ref=e23] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkChangeEmail','')
+          - img "Change Email Address" [ref=e24]
+        - text: "|"
+        - link "Logout" [ref=e25] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLogout','')
+          - img "Logout" [ref=e26]
+    - generic [ref=e27]:
+      - link "Skip Navigation Links":
+        - /url: "#NavigationMenu_SkipLink"
+        - img "Skip Navigation Links"
+      - menubar [ref=e29]:
+        - menuitem "Admin" [ref=e30]:
+          - generic [ref=e31]: Admin
+        - menuitem "Financials" [ref=e32]:
+          - generic [ref=e33]: Financials
+        - menuitem "Procurement" [ref=e34]:
+          - generic [ref=e35]: Procurement
+        - menuitem "Human Resource" [ref=e36]:
+          - generic [ref=e37]: Human Resource
+        - menuitem "Budget" [ref=e38]:
+          - generic [ref=e39]: Budget
+        - menuitem "Expansion" [ref=e40]:
+          - generic [ref=e41]: Expansion
+        - menuitem "Reports" [ref=e42]:
+          - generic [ref=e43]: Reports
+  - generic [ref=e45]: Dashboard
+  - table [ref=e47]:
+    - rowgroup [ref=e48]:
+      - row [ref=e49]:
+        - cell [ref=e50]
+        - cell [ref=e51]
+        - cell [ref=e52]
+        - cell [ref=e53]
+        - cell [ref=e54]
+      - row "Loading... Cancel Go back to the parent report" [ref=e55]:
+        - cell "Loading... Cancel Go back to the parent report" [ref=e56]:
+          - generic [ref=e58]:
+            - table [ref=e61]:
+              - rowgroup [ref=e62]:
+                - row "Loading... Cancel" [ref=e63]:
+                  - cell [ref=e64]:
+                    - img [ref=e65]
+                  - cell "Loading... Cancel" [ref=e66]:
+                    - text: Loading...
+                    - link "Cancel" [ref=e68] [cursor=pointer]:
+                      - /url: javascript:$get('ctl00_MainContent_rvConsole_AsyncWait').control._cancelCurrentPostback();
+            - table [ref=e69]:
+              - rowgroup [ref=e70]:
+                - row:
+                  - cell
+                - row "Go back to the parent report" [ref=e71]:
+                  - cell "Go back to the parent report" [ref=e72]:
+                    - generic [ref=e75]:
+                      - table [ref=e77]:
+                        - rowgroup [ref=e78]:
+                          - row "Go back to the parent report" [ref=e79]:
+                            - cell "Go back to the parent report" [ref=e80]:
+                              - table "Go back to the parent report" [ref=e83]:
+                                - rowgroup [ref=e84]:
+                                  - row "Go back to the parent report" [ref=e85]:
+                                    - cell "Go back to the parent report" [ref=e86]:
+                                      - button "Go back to the parent report" [disabled] [ref=e87]
+                      - table:
+                        - rowgroup:
+                          - row:
+                            - cell
+                      - table [ref=e89]:
+                        - rowgroup [ref=e90]:
+                          - row [ref=e91]:
+                            - cell [ref=e92]:
+                              - table "Export" [ref=e94]:
+                                - rowgroup [ref=e95]:
+                                  - row [ref=e96]:
+                                    - cell [ref=e97]:
+                                      - link [ref=e98]:
+                                        - /url: javascript:void(0)
+                                        - img [ref=e99]
+                                        - img [ref=e100]
+                - row [ref=e101]:
+                  - cell [ref=e102]
+      - row [ref=e104]:
+        - cell [ref=e105]
+      - row "Refresh Summary Data View System Log" [ref=e106]:
+        - cell "Refresh Summary Data" [ref=e107]:
+          - link "Refresh Summary Data" [ref=e108] [cursor=pointer]:
+            - /url: javascript:__doPostBack('ctl00$MainContent$lbtnRefeshDate','')
+        - cell [ref=e109]
+        - cell [ref=e110]
+        - cell [ref=e111]
+        - cell "View System Log" [ref=e112]:
+          - link "View System Log" [ref=e113] [cursor=pointer]:
+            - /url: javascript:__doPostBack('ctl00$MainContent$lbtnViewSystemLog','')
+      - row [ref=e114]:
+        - cell [ref=e115]
+        - cell [ref=e116]
+        - cell [ref=e117]
+        - cell [ref=e118]
+        - cell [ref=e119]
+      - row [ref=e120]:
+        - 'cell "Accounts Receivable/Accounts Payable supplier invoice(s) due for payment. Total amount due: IDR invoice(s) due for collection. Total receivable amount due : IDR Inventory/Purchasing stock item(s) requires reordering. outstanding PR(s). outstanding PO(s). Workshop/Canteen workshop item(s) requires reordering. active workshop job(s). canteen item(s) requires reordering." [ref=e121]':
+          - table [ref=e122]:
+            - rowgroup [ref=e123]:
+              - row "Accounts Receivable/Accounts Payable" [ref=e124]:
+                - cell "Accounts Receivable/Accounts Payable" [ref=e125]
+              - row [ref=e126]:
+                - cell [ref=e127]
+                - cell [ref=e128]
+              - row "supplier invoice(s) due for payment." [ref=e129]:
+                - cell [ref=e130]:
+                  - link [ref=e131] [cursor=pointer]:
+                    - /url: ../../AP/trx/frmApTrxInvrcvlist.aspx?from=Home&Type=InvDue
+                - cell "supplier invoice(s) due for payment." [ref=e132]
+              - 'row "Total amount due: IDR" [ref=e133]':
+                - cell [ref=e134]
+                - 'cell "Total amount due: IDR" [ref=e135]':
+                  - text: "Total amount due:"
+                  - generic [ref=e136]: IDR
+              - row "invoice(s) due for collection." [ref=e137]:
+                - cell [ref=e138]:
+                  - link [ref=e139] [cursor=pointer]:
+                    - /url: ../../BI/trx/frmBiTrxInvoicelist.aspx?from=Home&Type=InvDue
+                - cell "invoice(s) due for collection." [ref=e140]
+              - 'row "Total receivable amount due : IDR" [ref=e141]':
+                - cell [ref=e142]
+                - 'cell "Total receivable amount due : IDR" [ref=e143]':
+                  - text: "Total receivable amount due :"
+                  - generic [ref=e144]: IDR
+              - row [ref=e145]:
+                - cell [ref=e146]
+                - cell [ref=e147]
+          - table [ref=e148]:
+            - rowgroup [ref=e149]:
+              - row "Inventory/Purchasing" [ref=e150]:
+                - cell "Inventory/Purchasing" [ref=e151]
+              - row [ref=e152]:
+                - cell [ref=e153]
+                - cell [ref=e154]
+              - row "stock item(s) requires reordering." [ref=e155]:
+                - cell [ref=e156]:
+                  - link [ref=e157] [cursor=pointer]:
+                    - /url: ../../IN/Setup/frmInStockitem.aspx?from=Home&Type=ReOrder
+                - cell "stock item(s) requires reordering." [ref=e158]
+              - row "outstanding PR(s)." [ref=e159]:
+                - cell [ref=e160]:
+                  - link [ref=e161] [cursor=pointer]:
+                    - /url: ../../IN/trx/frmInPurReq.aspx?from=Home&type=PRPending
+                - cell "outstanding PR(s)." [ref=e162]
+              - row "outstanding PO(s)." [ref=e163]:
+                - cell [ref=e164]:
+                  - link [ref=e165] [cursor=pointer]:
+                    - /url: ../../PU/trx/frmPUTrxPOList.aspx?from=Home&type=POPending
+                - cell "outstanding PO(s)." [ref=e166]
+              - row [ref=e167]:
+                - cell [ref=e168]
+              - row [ref=e169]:
+                - cell [ref=e170]
+                - cell [ref=e171]
+          - table [ref=e172]:
+            - rowgroup [ref=e173]:
+              - row "Workshop/Canteen" [ref=e174]:
+                - cell "Workshop/Canteen" [ref=e175]
+              - row [ref=e176]:
+                - cell [ref=e177]
+                - cell [ref=e178]
+              - row "workshop item(s) requires reordering." [ref=e179]:
+                - cell [ref=e180]
+                - cell "workshop item(s) requires reordering." [ref=e182]
+              - row "active workshop job(s)." [ref=e183]:
+                - cell [ref=e184]:
+                  - link [ref=e185] [cursor=pointer]:
+                    - /url: ../../WS/trx/frmWSTrxJobList.aspx
+                - cell "active workshop job(s)." [ref=e186]
+              - row "canteen item(s) requires reordering." [ref=e187]:
+                - cell [ref=e188]
+                - cell "canteen item(s) requires reordering." [ref=e190]
+              - row [ref=e191]:
+                - cell [ref=e192]
+                - cell [ref=e193]
+        - cell [ref=e194]
+        - 'cell "Fixed Assets/General Ledger outstanding fixed asset PR(s) ¨C pending receive. over budgeted accounts. vehicle(s) pending transport usage distribution. 182 transaction charges from other estate. There is an inter-charging from below location : [P1A] ESTATE PARIT GUNUNG 1A If you want to closing General Ledger Module make sure inter-charging location - vehicle distribution and cost allocation process have complete and no more re-process. vehicle(s) road tax to be expired in next 7 days. vehicle(s) need to have service maintenance in next 7 days. vehicle(s) road tax that already expired. vehicle(s) not having service maintenance before due date. Human Resource/Payroll Passport expired/expiring in 6 months. Workpass expired/expiring in 6 months. Labour License expired/expiring in 6 months. worker(s) without earning after payroll process. worker(s) with negative income after payroll process." [ref=e195]':
+          - table [ref=e196]:
+            - rowgroup [ref=e197]:
+              - row "Fixed Assets/General Ledger" [ref=e198]:
+                - cell "Fixed Assets/General Ledger" [ref=e199]
+              - row [ref=e200]:
+                - cell [ref=e201]
+                - cell [ref=e202]
+              - row "outstanding fixed asset PR(s) ¨C pending receive." [ref=e203]:
+                - cell [ref=e204]:
+                  - link [ref=e205] [cursor=pointer]:
+                    - /url: ../../FA/trx/frmFaTrxPurReq.aspx?from=Home&Type=PRPending
+                - cell "outstanding fixed asset PR(s) ¨C pending receive." [ref=e206]
+              - row "over budgeted accounts." [ref=e207]:
+                - cell [ref=e208]:
+                  - link [ref=e209] [cursor=pointer]:
+                    - /url: ../../GL/Setup/frmGLSetupOverBudgetAcc.aspx
+                - cell "over budgeted accounts." [ref=e210]
+              - row "vehicle(s) pending transport usage distribution." [ref=e211]:
+                - cell [ref=e212]:
+                  - link [ref=e213] [cursor=pointer]:
+                    - /url: ../../GL/trx/frmGlTrxVehicleusagePending.aspx
+                - cell "vehicle(s) pending transport usage distribution." [ref=e214]
+              - row "182 transaction charges from other estate." [ref=e215]:
+                - cell "182" [ref=e216]:
+                  - link "182" [ref=e217] [cursor=pointer]:
+                    - /url: ../../Reports/frmGlStdrptGeneralledgertrxlistingPreview.aspx?Type=Print&CompName=PTRJ&SelLocation=P1B&DDLAccMth=1&DDLAccYr=2027&RptId=RPTGL1000018&RptName=TRANSACTION LISTING&Decimal=2&Supp=Yes&sum=yes&SrchTrxIDFrom=&SrchTrxIDTo=&SrchBlkType=&SrchBlkGrpCode=&SrchBlkCode=&SrchSubBlkCode=&SrchAccCode=&SrchVehCode=&SrchVehExpCode=&SrchRefDesc=Inter Charge From&CostLevel=&ViewRptType=2&CustRptName=
+                - cell "transaction charges from other estate." [ref=e218]
+              - 'row "There is an inter-charging from below location : [P1A] ESTATE PARIT GUNUNG 1A If you want to closing General Ledger Module make sure inter-charging location - vehicle distribution and cost allocation process have complete and no more re-process." [ref=e219]':
+                - 'cell "There is an inter-charging from below location : [P1A] ESTATE PARIT GUNUNG 1A If you want to closing General Ledger Module make sure inter-charging location - vehicle distribution and cost allocation process have complete and no more re-process." [ref=e220]':
+                  - table [ref=e221]:
+                    - rowgroup [ref=e222]:
+                      - row [ref=e223]:
+                        - cell [ref=e224]
+                      - row "There is an inter-charging from below location :" [ref=e225]:
+                        - cell "There is an inter-charging from below location :" [ref=e226]
+                      - row "[P1A] ESTATE PARIT GUNUNG 1A" [ref=e227]:
+                        - cell "[P1A] ESTATE PARIT GUNUNG 1A" [ref=e228]
+                      - row "If you want to closing General Ledger Module make sure inter-charging location - vehicle distribution and cost allocation process have complete and no more re-process." [ref=e229]:
+                        - cell "If you want to closing General Ledger Module make sure inter-charging location - vehicle distribution and cost allocation process have complete and no more re-process." [ref=e230]
+              - row "vehicle(s) road tax to be expired in next 7 days." [ref=e231]:
+                - cell [ref=e232]:
+                  - link [ref=e233] [cursor=pointer]:
+                    - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehRoadTax
+                - cell "vehicle(s) road tax to be expired in next 7 days." [ref=e234]
+              - row "vehicle(s) need to have service maintenance in next 7 days." [ref=e235]:
+                - cell [ref=e236]:
+                  - link [ref=e237] [cursor=pointer]:
+                    - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehServMaint
+                - cell "vehicle(s) need to have service maintenance in next 7 days." [ref=e238]
+              - row "vehicle(s) road tax that already expired." [ref=e239]:
+                - cell [ref=e240]:
+                  - link [ref=e241] [cursor=pointer]:
+                    - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehRoadTaxExp
+                - cell "vehicle(s) road tax that already expired." [ref=e242]
+              - row "vehicle(s) not having service maintenance before due date." [ref=e243]:
+                - cell [ref=e244]:
+                  - link [ref=e245] [cursor=pointer]:
+                    - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehServMaintExp
+                - cell "vehicle(s) not having service maintenance before due date." [ref=e246]
+              - row [ref=e247]:
+                - cell [ref=e248]
+                - cell [ref=e249]
+          - table [ref=e250]:
+            - rowgroup [ref=e251]:
+              - row "Human Resource/Payroll" [ref=e252]:
+                - cell "Human Resource/Payroll" [ref=e253]
+              - row [ref=e254]:
+                - cell [ref=e255]
+                - cell [ref=e256]
+              - row "Passport expired/expiring in 6 months." [ref=e257]:
+                - cell [ref=e258]:
+                  - link [ref=e259] [cursor=pointer]:
+                    - /url: ../../HR/trx/frmHrTrxEmployeelist.aspx?redirect=passportexpired
+                - cell "Passport expired/expiring in 6 months." [ref=e260]
+              - row "Workpass expired/expiring in 6 months." [ref=e261]:
+                - cell [ref=e262]:
+                  - link [ref=e263] [cursor=pointer]:
+                    - /url: ../../HR/trx/frmHrTrxEmployeelist.aspx?redirect=workpassexpired
+                - cell "Workpass expired/expiring in 6 months." [ref=e264]
+              - row "Labour License expired/expiring in 6 months." [ref=e265]:
+                - cell [ref=e266]:
+                  - link [ref=e267] [cursor=pointer]:
+                    - /url: ../../HR/trx/frmHrTrxEmployeelist.aspx?redirect=lablicenseexpired
+                - cell "Labour License expired/expiring in 6 months." [ref=e268]
+              - row "worker(s) without earning after payroll process." [ref=e269]:
+                - cell [ref=e270]:
+                  - link [ref=e271] [cursor=pointer]:
+                    - /url: ../../HR/trx/frmHrTrxEmployeeNoPay.aspx?redirect=workernopay
+                - cell "worker(s) without earning after payroll process." [ref=e272]
+              - row "worker(s) with negative income after payroll process." [ref=e273]:
+                - cell [ref=e274]:
+                  - link [ref=e275] [cursor=pointer]:
+                    - /url: ../../HR/trx/frmHrTrxEmployeeNoPay.aspx?redirect=workernegativepay
+                - cell "worker(s) with negative income after payroll process." [ref=e276]
+              - row [ref=e277]:
+                - cell [ref=e278]
+                - cell [ref=e279]
+        - cell [ref=e280]
+        - cell "Nursery unplanted seed(s). seedling(s) available. seedling(s) sold to external parties in current month. Production Current Month Year-To-Date Total FFB weight MT MT Yield per HA HA HA Production Dashboard" [ref=e281]:
+          - table [ref=e282]:
+            - rowgroup [ref=e283]:
+              - row "Nursery" [ref=e284]:
+                - cell "Nursery" [ref=e285]
+              - row [ref=e286]:
+                - cell [ref=e287]
+                - cell [ref=e288]
+              - row "unplanted seed(s)." [ref=e289]:
+                - cell [ref=e290]:
+                  - link [ref=e291] [cursor=pointer]:
+                    - /url: ../../NU/Data/frmNuDataSeedQty.aspx?from=Home
+                - cell "unplanted seed(s)." [ref=e292]
+              - row "seedling(s) available." [ref=e293]:
+                - cell [ref=e294]:
+                  - link [ref=e295] [cursor=pointer]:
+                    - /url: ../../NU/Data/frmNuDataSeedQty.aspx?from=Home
+                - cell "seedling(s) available." [ref=e296]
+              - row "seedling(s) sold to external parties in current month." [ref=e297]:
+                - cell [ref=e298]:
+                  - link [ref=e299] [cursor=pointer]:
+                    - /url: ../../NU/trx/frmNuTrxSeeddispatchlist.aspx?from=Home
+                - cell "seedling(s) sold to external parties in current month." [ref=e300]
+          - table [ref=e301]:
+            - rowgroup [ref=e302]:
+              - row "Production Current Month Year-To-Date" [ref=e303]:
+                - cell "Production" [ref=e304]
+                - cell "Current Month" [ref=e305]
+                - cell "Year-To-Date" [ref=e306]
+              - row [ref=e307]:
+                - cell [ref=e308]
+                - cell [ref=e309]
+                - cell [ref=e310]
+              - row "Total FFB weight MT MT" [ref=e311]:
+                - cell "Total FFB weight" [ref=e312]
+                - cell "MT" [ref=e313]: MT
+                - cell "MT" [ref=e314]: MT
+              - row "Yield per HA HA HA" [ref=e315]:
+                - cell "Yield per HA" [ref=e316]
+                - cell "HA" [ref=e317]: HA
+                - cell "HA" [ref=e318]: HA
+              - row "Production Dashboard" [ref=e319]:
+                - cell "Production Dashboard" [ref=e320]:
+                  - link "Production Dashboard" [ref=e321] [cursor=pointer]:
+                    - /url: /en/PD/reports/frmPDDashboard.aspx
+                    - img [ref=e322]
+                    - text: Production Dashboard
+              - row [ref=e323]:
+                - cell [ref=e324]
+                - cell [ref=e325]
+        - cell [ref=e326]
+      - row [ref=e327]:
+        - cell [ref=e328]
+        - cell [ref=e329]
+        - cell [ref=e330]
+        - cell [ref=e331]
+        - cell [ref=e332]
+  - generic [ref=e333]: eFlex Plantware © 2011

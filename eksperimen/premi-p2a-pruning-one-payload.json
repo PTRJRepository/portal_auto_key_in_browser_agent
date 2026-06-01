@@ -1,0 +1,42 @@
+{
+  "period_month": 4,
+  "period_year": 2026,
+  "division_code": "P2A",
+  "category_key": "premi",
+  "runner_mode": "dry_run",
+  "max_tabs": 1,
+  "headless": false,
+  "only_missing_rows": true,
+  "row_limit": 1,
+  "records": [
+    {
+      "emp_code": "C0766",
+      "emp_name": "AHAMD RONI JOHARI",
+      "nik": "5203200606030003",
+      "gang_code": "C1H",
+      "division_code": "P2A",
+      "estate": "P2A",
+      "divisioncode": "C 1",
+      "adjustment_type": "PREMI",
+      "adjustment_name": "PREMI PRUNING",
+      "amount": 173250,
+      "remarks": "AD CODE: AL3PM0601 - (AL) TUNJANGAN PREMI ((PM) PRUNING)",
+      "category_key": "premi",
+      "ad_code": "AL3PM0601",
+      "description": "PREMI PRUNING",
+      "task_code": "AL3PM0601",
+      "task_desc": "(AL) TUNJANGAN PREMI ((PM) PRUNING)",
+      "base_task_code": "AL3PM0601",
+      "loc_code": "P2A",
+      "automation_category": "premi",
+      "detail_type": "blok",
+      "subblok": "P0701",
+      "subblok_raw": "P07/01",
+      "jumlah": 173250,
+      "expense_code": "L",
+      "transaction_index": 1,
+      "adjustment_id": 37054,
+      "detail_key": "37054:1:P0701"
+    }
+  ]
+}

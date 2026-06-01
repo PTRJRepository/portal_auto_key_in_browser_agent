@@ -40,3 +40,9 @@ const potonganBersihRecord = record("potongan_upah_bersih", "POTONGAN PINJAMAN",
 const potonganBersih = resolveCategory(potonganBersihRecord, "potongan_upah_bersih");
 assert.equal(potonganBersih.adcode(potonganBersihRecord), "D300");
 assert.equal(potonganBersih.description(potonganBersihRecord), "POTONGAN PINJAMAN");
+
+const pph21Record = record("pph21", "POTONGAN PPH", "POTONGAN PPH | (DE) POTONGAN PPH21 | 93435", { adjustment_type: "AUTO_BUFFER" });
+const pph21 = resolveCategory(pph21Record, "pph21");
+assert.equal(pph21.adcode(pph21Record), "(DE) POTONGAN PPH21");
+assert.equal(pph21.description(pph21Record), "(DE) POTONGAN PPH21");
+assert.equal(resolveCategory({ ...pph21Record, category_key: "" }, "").key, "pph21");

@@ -1,0 +1,22 @@
+{
+  "id": "TASK-003",
+  "title": "Add loosefruit UI section in MainWindow duplicate cleanup tab",
+  "scope": "app/ui/",
+  "description": "Add third QGroupBox in _build_duplicate_cleanup_tab() after Task Register section. Fields: Period Month/Year (QSpinBox, default from config), LocCode (QLineEdit, default from selected division), Dry Run (QCheckBox, default True), Limit (QSpinBox, default 1000). Fetch button -> LoosefruitFetchWorker -> QTableWidget 6 cols (DocID, DocDate, LocCode, AccMonth, Status, Amount). Delete button -> LoosefruitDeleteWorker -> RunPayload with duplicate_targets. Mirror TaskRegisterFetchWorker pattern.",
+  "depends_on": ["TASK-002"],
+  "convergence": {
+    "criteria": [
+      "QGroupBox 'Loosefruit duplicate (_)' with period, loc_code, dry_run, limit controls",
+      "LoosefruitFetchWorker (QThread) calls TaskRegisterGatewayRepository.list_loosefruit_duplicate_targets()",
+      "QTableWidget populated with loosefruit records after fetch",
+      "Delete button enabled only when rows selected; triggers RunPayload + RunnerBridge",
+      "Layout follows existing QGroupBox pattern in duplicate cleanup tab"
+    ]
+  },
+  "status": "pending",
+  "priority": "high",
+  "files": [
+    "app/ui/main_window.py",
+    "app/core/task_register_gateway.py"
+  ]
+}

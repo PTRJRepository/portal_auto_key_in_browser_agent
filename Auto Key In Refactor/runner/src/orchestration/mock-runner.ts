@@ -1,5 +1,6 @@
 import type { RowResult, RunPayload, RunResult } from "../types.js";
 import { resolveCategory } from "../categories/registry.js";
+import { PLANTWARE_CONFIG } from "../config.js";
 
 export type EmitEvent = (event: Record<string, unknown>) => void;
 
@@ -13,7 +14,7 @@ export async function runMock(payload: RunPayload, emit: EmitEvent): Promise<Run
   for (let index = 0; index < rows.length; index++) {
     const record = rows[index];
     const category = resolveCategory(record, payload.category_key);
-    const tab_index = index % Math.max(1, Math.min(payload.max_tabs, 10));
+    const tab_index = index % Math.max(1, Math.min(payload.max_tabs, PLANTWARE_CONFIG.maxTabs));
     await new Promise((resolve) => setTimeout(resolve, 10));
     const result: RowResult = {
       emp_code: record.emp_code,

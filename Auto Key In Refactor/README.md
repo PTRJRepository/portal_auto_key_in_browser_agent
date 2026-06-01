@@ -124,14 +124,17 @@ Aturan penggunaan:
 
 ## Reset/Delete DocID
 
-Tab **Reset/Delete DocID** mengambil list DocID dari endpoint `adtrans-doc-ids/by-api-key`. Endpoint ini hanya membaca `db_ptrj.PR_ADTRANS` / archive dan tidak menghapus apa pun.
+Tab **Reset/Delete DocID** mengambil list DocID DIFF/MISMATCH dari endpoint `compare-adtrans/by-api-key`. Endpoint ini hanya membaca perbandingan `db_ptrj.PR_ADTRANS` / archive terhadap manual adjustment; proses delete tetap dilakukan oleh runner browser.
 
 Aturan penggunaan:
 
 - Scope mengikuti tab **Config**: period, division, employee jika diisi, category, adjustment type, dan adjustment name.
+- Reset/delete di tab ini hanya memakai source **DIFF/MISMATCH DocIDs**.
+- Source **DIFF/MISMATCH DocIDs** memakai `compare-adtrans/by-api-key`, hanya mengambil `status=MISMATCH`, lalu memakai `db_ptrj_doc_desc_details[].doc_id` sebagai target delete. Endpoint `adtrans-doc-ids/by-api-key` tidak dipakai untuk delete DIFF karena endpoint itu tidak membandingkan nominal.
+- Setelah delete aktual untuk source DIFF/MISMATCH, app menjalankan `sync-status/by-api-key` untuk audit ulang. Row yang transaksi Plantware-nya sudah dihapus akan berubah menjadi `sync:MISS | match:MISMATCH`.
 - Untuk SPSI, masa kerja, dan jabatan, app memakai filter category seperti `spsi`, `masa kerja`, atau `jabatan`.
 - Untuk premi/koreksi/potongan spesifik, pilih category lalu isi **Adjustment Name** supaya endpoint hanya mengembalikan DocID yang match, misalnya `PREMI TBS`.
-- Jika field **Gang** diisi tanpa Employee, fetch reset diblokir karena endpoint reset DocID tidak menyediakan filter gang. Kosongkan Gang atau isi Employee untuk scope yang lebih sempit.
+- Field **Gang** boleh diisi untuk mempersempit DIFF/MISMATCH karena app memfilter hasil compare di sisi client.
 - Biarkan **Dry run** aktif untuk scan Plantware tanpa delete. Matikan hanya setelah daftar DocID sudah benar dan session divisi aktif.
 
 ## Alur Khusus Premi
@@ -169,7 +172,7 @@ filters = ["premi"]
 
 Aturan retry aman:
 
-- Biarkan checkbox **Input MISS/MISMATCH only** aktif untuk kategori Premi. Untuk Premi, checkbox ini dipakai sebagai retry-safe filter berbasis `check-adtrans`.
+- Biarkan checkbox **Input MISS only** aktif. Checkbox ini tidak memasukkan `DIFF`/`MISMATCH`; data DIFF harus dihapus/reset dulu dari tab **Reset/Delete DocID**.
 - Klik **Fetch / Refresh Data** lagi setelah run gagal. App akan menjumlahkan total payload Premi per employee, lalu membandingkannya dengan total `premi` di `db_ptrj`.
 - Row dengan status `VERIFIED_MATCH` tidak boleh diinput ulang.
 - Row dengan status `VERIFIED_NOT_FOUND` aman untuk retry karena total Premi employee tersebut masih `0` di `db_ptrj`.

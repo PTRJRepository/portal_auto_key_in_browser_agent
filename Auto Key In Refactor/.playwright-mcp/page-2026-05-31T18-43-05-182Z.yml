@@ -1,0 +1,71 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - link [ref=e6] [cursor=pointer]:
+      - /url: /en/system/user/frmSystemUserSetlocation.aspx?FROM=OK
+      - img [ref=e7]
+      - img [ref=e8]
+    - generic [ref=e9]:
+      - img "Company" [ref=e11]
+      - generic [ref=e12]:
+        - img "Location" [ref=e13]
+        - text: ()
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - img "User ID" [ref=e16]
+        - img "Date Time" [ref=e17]
+        - text: Monday, 1 June 2026
+      - generic [ref=e18]:
+        - link "Change Location" [ref=e19] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLocation','')
+          - img "Change Location" [ref=e20]
+        - text: "|"
+        - link "Change Password" [ref=e21] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkPassword','')
+          - img "Change Password" [ref=e22]
+        - text: "|"
+        - link "Change Email Address" [ref=e23] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkChangeEmail','')
+          - img "Change Email Address" [ref=e24]
+        - text: "|"
+        - link "Logout" [ref=e25] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLogout','')
+          - img "Logout" [ref=e26]
+    - generic [ref=e27]:
+      - link "Skip Navigation Links":
+        - /url: "#NavigationMenu_SkipLink"
+        - img "Skip Navigation Links"
+      - menubar [ref=e29]:
+        - menuitem "Admin" [ref=e30]:
+          - generic [ref=e31]: Admin
+        - menuitem "Financials" [ref=e32]:
+          - generic [ref=e33]: Financials
+        - menuitem "Procurement" [ref=e34]:
+          - generic [ref=e35]: Procurement
+        - menuitem "Human Resource" [ref=e36]:
+          - generic [ref=e37]: Human Resource
+        - menuitem "Budget" [ref=e38]:
+          - generic [ref=e39]: Budget
+        - menuitem "Expansion" [ref=e40]:
+          - generic [ref=e41]: Expansion
+        - menuitem "Reports" [ref=e42]:
+          - generic [ref=e43]: Reports
+  - generic [ref=e45]: Dashboard
+  - table [ref=e47]:
+    - rowgroup [ref=e48]:
+      - row [ref=e49]:
+        - cell [ref=e50]
+      - row "SESSION EXPIRE" [ref=e51]:
+        - cell "SESSION EXPIRE" [ref=e52]
+      - row [ref=e53]:
+        - cell [ref=e54]:
+          - separator [ref=e55]
+      - row [ref=e56]:
+        - cell [ref=e57]
+      - row "Your login session has expired/timeout, please login again." [ref=e58]:
+        - cell "Your login session has expired/timeout, please login again." [ref=e59]
+      - row [ref=e60]:
+        - cell [ref=e61]
+      - row "OK" [ref=e62]:
+        - cell "OK" [ref=e63]:
+          - button "OK" [ref=e64]
+  - generic [ref=e65]: eFlex Plantware © 2011

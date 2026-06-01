@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
 from app.core.category_registry import CategoryRegistry
-from app.core.config import AppConfig
+from app.core.config import AppConfig, MAX_CONCURRENT_TABS
 from app.core.models import ManualAdjustmentRecord, RunPayload, enrich_records_with_automation_options
 from app.core.run_service import filter_by_category
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
@@ -53,6 +54,7 @@ class DivisionFetchWorker:
         category_key: str,
         adjustment_type: str | None,
         adjustment_name: str | None,
+        automation_division_code: str | None = None,
     ) -> None:
         self.client = client
         self.month = month
@@ -61,6 +63,7 @@ class DivisionFetchWorker:
         self.category_key = category_key
         self.adjustment_type = adjustment_type
         self.adjustment_name = adjustment_name
+        self.automation_division_code = automation_division_code
 
     def run(self) -> list[ManualAdjustmentRecord]:
         query = ManualAdjustmentQuery(
@@ -92,7 +95,7 @@ class DivisionFetchWorker:
             if not categories:
                 return records
             options = self.client.get_automation_options(
-                division_code=self.division_code,
+                division_code=self.automation_division_code or self.division_code,
                 categories=categories,
                 limit=200,
             )
@@ -122,6 +125,7 @@ class DivisionRunDialog(QDialog):
         mode: str,
         month: int,
         year: int,
+        session_division_code: str | None = None,
         extra_details: list[Any] | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -136,6 +140,7 @@ class DivisionRunDialog(QDialog):
         self.mode = mode
         self.month = month
         self.year = year
+        self.session_division_code = (session_division_code or division_code).strip().upper()
         self.extra_details = list(extra_details or [])
         self.records: list[ManualAdjustmentRecord] = []
         self.setWindowTitle(f"Run {division_code} / {category_label}")
@@ -173,6 +178,17 @@ class DivisionRunDialog(QDialog):
         self.progress.setMaximumHeight(6)
         layout.addWidget(self.progress)
 
+        # Auto key-in settings
+        settings = QHBoxLayout()
+        settings.addWidget(QLabel("Concurrent Tabs (Auto Key-In)"))
+        self.concurrent_tabs = QSpinBox()
+        self.concurrent_tabs.setRange(1, MAX_CONCURRENT_TABS)
+        self.concurrent_tabs.setValue(min(max(1, int(self.config.default_max_tabs or 1)), MAX_CONCURRENT_TABS))
+        self.concurrent_tabs.setToolTip("Only used when running auto key-in. Session checks and sync do not use this setting.")
+        settings.addWidget(self.concurrent_tabs)
+        settings.addStretch(1)
+        layout.addLayout(settings)
+
         # Live record table
         self.record_table = QTableWidget(0, 5)
         self.record_table.setHorizontalHeaderLabels(["Emp Code", "Gang", "Adjustment", "Amount", "Status"])
@@ -187,9 +203,9 @@ class DivisionRunDialog(QDialog):
 
         # Buttons
         btns = QHBoxLayout()
-        self.sync_btn = QPushButton("Sync Missing")
+        self.sync_btn = QPushButton("Sync Missing Only")
         self.sync_btn.setObjectName("primary")
-        self.sync_btn.setToolTip("Sync missing records from db_ptrj to extend_db via API")
+        self.sync_btn.setToolTip("Insert missing records from db_ptrj only; mismatches stay for reset/delete")
         self.sync_btn.clicked.connect(self._on_sync_missing)
 
         self.run_btn = QPushButton("Run Auto Key-In")
@@ -229,6 +245,7 @@ class DivisionRunDialog(QDialog):
                     "spsi": ["spsi"],
                     "masa_kerja": ["masa kerja"],
                     "tunjangan_jabatan": ["jabatan"],
+                    "pph21": ["pph"],
                     "premi": ["premi"],
                     "potongan_upah_kotor": ["koreksi", "potongan"],
                     "potongan_upah_bersih": ["potongan upah bersih"],
@@ -241,7 +258,7 @@ class DivisionRunDialog(QDialog):
                 self.year,
                 self.division_code,
                 filters=filters,
-                sync_mode="MISMATCH_AND_MISSING",
+                sync_mode="MISSING_ONLY",
             )
             data = result.get("data", {})
             synced = data.get("synced_count", 0) if isinstance(data, dict) else 0
@@ -277,11 +294,14 @@ class DivisionRunDialog(QDialog):
                 adjustment_name = "AUTO MASA KERJA"
             elif self.category_key == "tunjangan_jabatan":
                 adjustment_name = "AUTO TUNJANGAN JABATAN"
+            elif self.category_key == "pph21":
+                adjustment_name = "POTONGAN PPH"
 
             fetcher = DivisionFetchWorker(
                 self.api_client, self.month, self.year,
                 self.division_code, self.category_key,
                 adjustment_type, adjustment_name,
+                automation_division_code=self.session_division_code,
             )
             self.records = fetcher.run()
             self.records = self._filter_extra_records(self.records)
@@ -339,6 +359,11 @@ class DivisionRunDialog(QDialog):
         payload = self._build_payload(self.mode, self.records)
         self._run_in_thread(payload, self._on_run_finished)
 
+    def _max_tabs_for_mode(self, mode: str) -> int:
+        if mode in {"get_session", "test_session"} or mode.endswith("_single"):
+            return 1
+        return min(max(1, self.concurrent_tabs.value()), MAX_CONCURRENT_TABS)
+
     def _build_payload(self, mode: str, records: list[ManualAdjustmentRecord]) -> RunPayload:
         adjustment_type = None
         adjustment_name = None
@@ -351,6 +376,8 @@ class DivisionRunDialog(QDialog):
             adjustment_name = "AUTO MASA KERJA"
         elif self.category_key == "tunjangan_jabatan":
             adjustment_name = "AUTO TUNJANGAN JABATAN"
+        elif self.category_key == "pph21":
+            adjustment_name = "POTONGAN PPH"
 
         return RunPayload(
             period_month=self.month,
@@ -362,11 +389,12 @@ class DivisionRunDialog(QDialog):
             adjustment_name=adjustment_name,
             category_key=self.category_key,
             runner_mode=mode,
-            max_tabs=self.config.default_max_tabs,
+            max_tabs=self._max_tabs_for_mode(mode),
             headless=self.config.headless,
             only_missing_rows=True,
             row_limit=None,
             records=records,
+            session_division_code=self.session_division_code,
         )
 
     def _run_in_thread(self, payload: RunPayload, on_completed: Any) -> None:

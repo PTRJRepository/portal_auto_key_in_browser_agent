@@ -7,7 +7,11 @@
   {"code":"HQ","label":"PTRJ HQ","aliases":[]},
   {"code":"IJL","label":"ESTATE IMPIAN JAYA LESTARI","aliases":["L","Ijuk"]},
   {"code":"P1A","label":"ESTATE PARIT GUNUNG 1A","aliases":["PG1A","PLASMA1A","Plasma 1A"]},
+  {"code":"INF","label":"VIRTUAL INFRASTRUKTUR","aliases":["INFRA","INFRASTRUKTUR"],"location_code":"P1A","session_code":"P1A","virtual":true},
+  {"code":"WKS_PG","label":"VIRTUAL WORKSHOP PARIT GUNUNG","aliases":["WORKSHOP PG","WORKSHOP P.G","WORKSHOP PGE","AMC"],"location_code":"P1A","session_code":"P1A","virtual":true},
   {"code":"P1B","label":"ESTATE PARIT GUNUNG 1B","aliases":["PG1B","PLASMA1B","Plasma 1B"]},
+  {"code":"NRS","label":"VIRTUAL NURSERY","aliases":["NURSERY","B2N"],"location_code":"P1B","session_code":"P1B","virtual":true},
   {"code":"P2A","label":"ESTATE PARIT GUNUNG 2A","aliases":["PG2A","PLASMA2A","Plasma 2A"]},
-  {"code":"P2B","label":"ESTATE PARIT GUNUNG 2B","aliases":["PG2B","PLASMA2B","Plasma 2B"]}
+  {"code":"P2B","label":"ESTATE PARIT GUNUNG 2B","aliases":["PG2B","PLASMA2B","Plasma 2B"]},
+  {"code":"WKS_AR","label":"VIRTUAL WORKSHOP AIR RUAK","aliases":["WORKSHOP AR","WORKSHOP ARE","HMC"],"location_code":"AB2","session_code":"AB2","virtual":true}
 ]

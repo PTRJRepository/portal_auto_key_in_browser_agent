@@ -1,0 +1,10 @@
+{
+  "session_id": "WFS-loosefruit-duplicate-cleanup",
+  "status": "planned",
+  "created_at": "2026-06-01T01:50:00+08:00",
+  "updated_at": "2026-06-01T02:05:00+08:00",
+  "task_description": "Add application feature to fetch and delete duplicate Loosefruit transactions from db_ptrj.dbo.PR_LOOSEFRUIT where DocID contains underscore, across all locations, using Query Gateway and existing Plantware browser delete runner. Improve Duplicate Cleanup layout so Loosefruit cleanup is clear and proper.",
+  "mode": "plan",
+  "skill": "workflow-plan",
+  "quality_gate": "PROCEED_WITH_CAUTION"
+}

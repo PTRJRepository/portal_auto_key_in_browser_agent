@@ -1,0 +1,146 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - link [ref=e6] [cursor=pointer]:
+      - /url: /en/system/user/frmSystemUserSetlocation.aspx?FROM=OK
+      - img [ref=e7]
+      - img [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img "Company" [ref=e11]
+        - text: PT. REBINMAS JAYA
+      - generic [ref=e12]:
+        - img "Location" [ref=e13]
+        - text: ()
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - img "User ID" [ref=e16]
+        - text: Atha Rizki Pangestu
+        - img "Date Time" [ref=e17]
+        - text: Monday, 1 June 2026
+      - generic [ref=e18]:
+        - link "Change Location" [ref=e19] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLocation','')
+          - img "Change Location" [ref=e20]
+        - text: "|"
+        - link "Change Password" [ref=e21] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkPassword','')
+          - img "Change Password" [ref=e22]
+        - text: "|"
+        - link "Change Email Address" [ref=e23] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkChangeEmail','')
+          - img "Change Email Address" [ref=e24]
+        - text: "|"
+        - link "Logout" [ref=e25] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLogout','')
+          - img "Logout" [ref=e26]
+    - generic [ref=e27]:
+      - link "Skip Navigation Links":
+        - /url: "#NavigationMenu_SkipLink"
+        - img "Skip Navigation Links"
+      - menubar [ref=e29]:
+        - menuitem "Admin" [ref=e30]:
+          - generic [ref=e31]: Admin
+        - menuitem "Financials" [ref=e32]:
+          - generic [ref=e33]: Financials
+        - menuitem "Procurement" [ref=e34]:
+          - generic [ref=e35]: Procurement
+        - menuitem "Human Resource" [ref=e36]:
+          - generic [ref=e37]: Human Resource
+        - menuitem "Budget" [ref=e38]:
+          - generic [ref=e39]: Budget
+        - menuitem "Expansion" [ref=e40]:
+          - generic [ref=e41]: Expansion
+        - menuitem "Reports" [ref=e42]:
+          - generic [ref=e43]: Reports
+  - generic [ref=e45]: Human Resource > Payroll > Loose Fruit Collector List
+  - table [ref=e47]:
+    - rowgroup [ref=e48]:
+      - row [ref=e49]:
+        - cell [ref=e50]
+      - row "LOOSE FRUIT COLLECTOR LIST" [ref=e51]:
+        - cell "LOOSE FRUIT COLLECTOR LIST" [ref=e52]
+        - cell [ref=e53]
+      - row [ref=e54]:
+        - cell [ref=e55]:
+          - separator [ref=e56]
+      - 'row "Document ID : *_* Accounting Month : Accounting Year : Status : Active Updated By : Division Code : Field No Code : Staff Reference : Search" [ref=e57]':
+        - 'cell "Document ID : *_* Accounting Month : Accounting Year : Status : Active Updated By : Division Code : Field No Code : Staff Reference : Search" [ref=e58]':
+          - table [ref=e59]:
+            - rowgroup [ref=e60]:
+              - 'row "Document ID : *_* Accounting Month : Accounting Year : Status : Active Updated By : Division Code : Field No Code : Staff Reference : Search" [ref=e61]':
+                - 'cell "Document ID : *_*" [ref=e62]':
+                  - text: "Document ID :"
+                  - textbox [ref=e63]: "*_*"
+                - cell "Accounting Month :" [ref=e64]:
+                  - text: "Accounting Month :"
+                  - textbox [ref=e65]
+                - cell "Accounting Year :" [ref=e66]:
+                  - text: "Accounting Year :"
+                  - textbox [ref=e67]
+                - 'cell "Status : Active" [ref=e68]':
+                  - text: "Status :"
+                  - combobox [ref=e69]:
+                    - option "All"
+                    - option "Active" [selected]
+                    - option "Confirmed"
+                    - option "Error"
+                - cell "Updated By :" [ref=e70]:
+                  - text: "Updated By :"
+                  - textbox [ref=e71]
+                - cell "Division Code :" [ref=e72]:
+                  - text: "Division Code :"
+                  - combobox [ref=e73]
+                - cell "Field No Code :" [ref=e74]:
+                  - text: "Field No Code :"
+                  - combobox [disabled] [ref=e75]
+                - cell "Staff Reference :" [ref=e76]:
+                  - text: "Staff Reference :"
+                  - combobox [disabled] [ref=e77]
+                - cell "Search" [ref=e78]:
+                  - button "Search" [ref=e79] [cursor=pointer]
+      - row "Document ID Document Date Total MT No of Employee Total Working Hour Total Amount MT Per Hour Status Updated By No Records" [ref=e80]:
+        - cell "Document ID Document Date Total MT No of Employee Total Working Hour Total Amount MT Per Hour Status Updated By No Records" [ref=e81]:
+          - table [ref=e83]:
+            - rowgroup [ref=e84]:
+              - row "Document ID Document Date Total MT No of Employee Total Working Hour Total Amount MT Per Hour Status Updated By" [ref=e85]:
+                - columnheader "Document ID" [ref=e86]:
+                  - link "Document ID" [ref=e87] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MDocID')
+                - columnheader "Document Date" [ref=e88]:
+                  - link "Document Date" [ref=e89] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MDocDate')
+                - columnheader "Total MT" [ref=e90]:
+                  - link "Total MT" [ref=e91] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$TotalMT')
+                - columnheader "No of Employee" [ref=e92]:
+                  - link "No of Employee" [ref=e93] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$TotalEmp')
+                - columnheader "Total Working Hour" [ref=e94]:
+                  - link "Total Working Hour" [ref=e95] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$WorkHour')
+                - columnheader "Total Amount" [ref=e96]:
+                  - link "Total Amount" [ref=e97] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$TotalAmt')
+                - columnheader "MT Per Hour" [ref=e98]:
+                  - link "MT Per Hour" [ref=e99] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MTPerHour')
+                - columnheader [ref=e100]
+                - columnheader "Status" [ref=e101]:
+                  - link "Status" [ref=e102] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MStatus')
+                - columnheader "Updated By" [ref=e103]:
+                  - link "Updated By" [ref=e104] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MUpdatedBy')
+              - row "No Records" [ref=e105]:
+                - cell "No Records" [ref=e106]
+      - row "Prev Next" [ref=e107]:
+        - cell "Prev Next" [ref=e108]:
+          - button "Prev" [ref=e109] [cursor=pointer]
+          - combobox [ref=e110]
+          - button "Next" [ref=e111] [cursor=pointer]
+      - row [ref=e112]:
+        - cell [ref=e113]
+      - row "New" [ref=e114]:
+        - cell "New" [ref=e115]:
+          - button "New" [ref=e116] [cursor=pointer]
+  - generic [ref=e117]: eFlex Plantware © 2011

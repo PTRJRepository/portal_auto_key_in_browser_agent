@@ -1,0 +1,429 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - link [ref=e6] [cursor=pointer]:
+      - /url: /en/system/user/frmSystemUserSetlocation.aspx?FROM=OK
+      - img [ref=e7]
+      - img [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img "Company" [ref=e11]
+        - text: PT. REBINMAS JAYA
+      - generic [ref=e12]:
+        - img "Location" [ref=e13]
+        - text: ()
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - img "User ID" [ref=e16]
+        - text: Atha Rizki Pangestu
+        - img "Date Time" [ref=e17]
+        - text: Sunday, 31 May 2026
+      - generic [ref=e18]:
+        - link "Change Location" [ref=e19] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLocation','')
+          - img "Change Location" [ref=e20]
+        - text: "|"
+        - link "Change Password" [ref=e21] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkPassword','')
+          - img "Change Password" [ref=e22]
+        - text: "|"
+        - link "Change Email Address" [ref=e23] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkChangeEmail','')
+          - img "Change Email Address" [ref=e24]
+        - text: "|"
+        - link "Logout" [ref=e25] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLogout','')
+          - img "Logout" [ref=e26]
+    - generic [ref=e27]:
+      - link "Skip Navigation Links":
+        - /url: "#NavigationMenu_SkipLink"
+        - img "Skip Navigation Links"
+      - menubar [ref=e29]:
+        - menuitem "Admin" [ref=e30]:
+          - generic [ref=e31]: Admin
+        - menuitem "Financials" [ref=e32]:
+          - generic [ref=e33]: Financials
+        - menuitem "Procurement" [ref=e34]:
+          - generic [ref=e35]: Procurement
+        - menuitem "Human Resource" [ref=e36]:
+          - generic [ref=e37]: Human Resource
+        - menuitem "Budget" [ref=e38]:
+          - generic [ref=e39]: Budget
+        - menuitem "Expansion" [ref=e40]:
+          - generic [ref=e41]: Expansion
+        - menuitem "Reports" [ref=e42]:
+          - generic [ref=e43]: Reports
+  - generic [ref=e45]: Dashboard
+  - generic [ref=e46]:
+    - table [ref=e47]:
+      - rowgroup [ref=e48]:
+        - row [ref=e49]:
+          - cell [ref=e50]
+          - cell [ref=e51]
+          - cell [ref=e52]
+          - cell [ref=e53]
+          - cell [ref=e54]
+        - row [ref=e55]:
+          - cell [ref=e56]
+        - row "Refresh Summary Data View System Log" [ref=e57]:
+          - cell "Refresh Summary Data" [ref=e58]:
+            - link "Refresh Summary Data" [ref=e59] [cursor=pointer]:
+              - /url: javascript:__doPostBack('ctl00$MainContent$lbtnRefeshDate','')
+          - cell [ref=e60]
+          - cell [ref=e61]
+          - cell [ref=e62]
+          - cell "View System Log" [ref=e63]:
+            - link "View System Log" [ref=e64] [cursor=pointer]:
+              - /url: javascript:__doPostBack('ctl00$MainContent$lbtnViewSystemLog','')
+        - row [ref=e65]:
+          - cell [ref=e66]
+          - cell [ref=e67]
+          - cell [ref=e68]
+          - cell [ref=e69]
+          - cell [ref=e70]
+        - row [ref=e71]:
+          - 'cell "Accounts Receivable/Accounts Payable supplier invoice(s) due for payment. Total amount due: RM invoice(s) due for collection. Total receivable amount due : RM Inventory/Purchasing stock item(s) requires reordering. outstanding PR(s). outstanding PO(s). Workshop/Canteen workshop item(s) requires reordering. active workshop job(s). canteen item(s) requires reordering." [ref=e72]':
+            - table [ref=e73]:
+              - rowgroup [ref=e74]:
+                - row "Accounts Receivable/Accounts Payable" [ref=e75]:
+                  - cell "Accounts Receivable/Accounts Payable" [ref=e76]
+                - row [ref=e77]:
+                  - cell [ref=e78]
+                  - cell [ref=e79]
+                - row "supplier invoice(s) due for payment." [ref=e80]:
+                  - cell [ref=e81]:
+                    - link [ref=e82] [cursor=pointer]:
+                      - /url: ../../AP/trx/frmApTrxInvrcvlist.aspx?from=Home&Type=InvDue
+                  - cell "supplier invoice(s) due for payment." [ref=e83]
+                - 'row "Total amount due: RM" [ref=e84]':
+                  - cell [ref=e85]
+                  - 'cell "Total amount due: RM" [ref=e86]':
+                    - text: "Total amount due:"
+                    - generic [ref=e87]: RM
+                - row "invoice(s) due for collection." [ref=e88]:
+                  - cell [ref=e89]:
+                    - link [ref=e90] [cursor=pointer]:
+                      - /url: ../../BI/trx/frmBiTrxInvoicelist.aspx?from=Home&Type=InvDue
+                  - cell "invoice(s) due for collection." [ref=e91]
+                - 'row "Total receivable amount due : RM" [ref=e92]':
+                  - cell [ref=e93]
+                  - 'cell "Total receivable amount due : RM" [ref=e94]':
+                    - text: "Total receivable amount due :"
+                    - generic [ref=e95]: RM
+                - row [ref=e96]:
+                  - cell [ref=e97]
+                  - cell [ref=e98]
+            - table [ref=e99]:
+              - rowgroup [ref=e100]:
+                - row "Inventory/Purchasing" [ref=e101]:
+                  - cell "Inventory/Purchasing" [ref=e102]
+                - row [ref=e103]:
+                  - cell [ref=e104]
+                  - cell [ref=e105]
+                - row "stock item(s) requires reordering." [ref=e106]:
+                  - cell [ref=e107]:
+                    - link [ref=e108] [cursor=pointer]:
+                      - /url: ../../IN/Setup/frmInStockitem.aspx?from=Home&Type=ReOrder
+                  - cell "stock item(s) requires reordering." [ref=e109]
+                - row "outstanding PR(s)." [ref=e110]:
+                  - cell [ref=e111]:
+                    - link [ref=e112] [cursor=pointer]:
+                      - /url: ../../IN/trx/frmInPurReq.aspx?from=Home&type=PRPending
+                  - cell "outstanding PR(s)." [ref=e113]
+                - row "outstanding PO(s)." [ref=e114]:
+                  - cell [ref=e115]:
+                    - link [ref=e116] [cursor=pointer]:
+                      - /url: ../../PU/trx/frmPUTrxPOList.aspx?from=Home&type=POPending
+                  - cell "outstanding PO(s)." [ref=e117]
+                - row [ref=e118]:
+                  - cell [ref=e119]
+                - row [ref=e120]:
+                  - cell [ref=e121]
+                  - cell [ref=e122]
+            - table [ref=e123]:
+              - rowgroup [ref=e124]:
+                - row "Workshop/Canteen" [ref=e125]:
+                  - cell "Workshop/Canteen" [ref=e126]
+                - row [ref=e127]:
+                  - cell [ref=e128]
+                  - cell [ref=e129]
+                - row "workshop item(s) requires reordering." [ref=e130]:
+                  - cell [ref=e131]
+                  - cell "workshop item(s) requires reordering." [ref=e133]
+                - row "active workshop job(s)." [ref=e134]:
+                  - cell [ref=e135]:
+                    - link [ref=e136] [cursor=pointer]:
+                      - /url: ../../WS/trx/frmWSTrxJobList.aspx
+                  - cell "active workshop job(s)." [ref=e137]
+                - row "canteen item(s) requires reordering." [ref=e138]:
+                  - cell [ref=e139]
+                  - cell "canteen item(s) requires reordering." [ref=e141]
+                - row [ref=e142]:
+                  - cell [ref=e143]
+                  - cell [ref=e144]
+          - cell [ref=e145]
+          - cell "Fixed Assets/General Ledger outstanding fixed asset PR(s) ¨C pending receive. over budgeted accounts. vehicle(s) pending transport usage distribution. transaction charges from other estate. vehicle(s) road tax to be expired in next 7 days. vehicle(s) need to have service maintenance in next 7 days. vehicle(s) road tax that already expired. vehicle(s) not having service maintenance before due date. Human Resource/Payroll Passport expired/expiring in 6 months. Workpass expired/expiring in 6 months. Labour License expired/expiring in 6 months. worker(s) without earning after payroll process. worker(s) with negative income after payroll process." [ref=e146]:
+            - table [ref=e147]:
+              - rowgroup [ref=e148]:
+                - row "Fixed Assets/General Ledger" [ref=e149]:
+                  - cell "Fixed Assets/General Ledger" [ref=e150]
+                - row [ref=e151]:
+                  - cell [ref=e152]
+                  - cell [ref=e153]
+                - row "outstanding fixed asset PR(s) ¨C pending receive." [ref=e154]:
+                  - cell [ref=e155]:
+                    - link [ref=e156] [cursor=pointer]:
+                      - /url: ../../FA/trx/frmFaTrxPurReq.aspx?from=Home&Type=PRPending
+                  - cell "outstanding fixed asset PR(s) ¨C pending receive." [ref=e157]
+                - row "over budgeted accounts." [ref=e158]:
+                  - cell [ref=e159]:
+                    - link [ref=e160] [cursor=pointer]:
+                      - /url: ../../GL/Setup/frmGLSetupOverBudgetAcc.aspx
+                  - cell "over budgeted accounts." [ref=e161]
+                - row "vehicle(s) pending transport usage distribution." [ref=e162]:
+                  - cell [ref=e163]:
+                    - link [ref=e164] [cursor=pointer]:
+                      - /url: ../../GL/trx/frmGlTrxVehicleusagePending.aspx
+                  - cell "vehicle(s) pending transport usage distribution." [ref=e165]
+                - row "transaction charges from other estate." [ref=e166]:
+                  - cell [ref=e167]:
+                    - link [ref=e168] [cursor=pointer]:
+                      - /url: ../../RptGen/frmNewRptFinancial.aspx?from=Home
+                  - cell "transaction charges from other estate." [ref=e169]
+                - row [ref=e170]:
+                  - cell [ref=e171]
+                - row "vehicle(s) road tax to be expired in next 7 days." [ref=e172]:
+                  - cell [ref=e173]:
+                    - link [ref=e174] [cursor=pointer]:
+                      - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehRoadTax
+                  - cell "vehicle(s) road tax to be expired in next 7 days." [ref=e175]
+                - row "vehicle(s) need to have service maintenance in next 7 days." [ref=e176]:
+                  - cell [ref=e177]:
+                    - link [ref=e178] [cursor=pointer]:
+                      - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehServMaint
+                  - cell "vehicle(s) need to have service maintenance in next 7 days." [ref=e179]
+                - row "vehicle(s) road tax that already expired." [ref=e180]:
+                  - cell [ref=e181]:
+                    - link [ref=e182] [cursor=pointer]:
+                      - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehRoadTaxExp
+                  - cell "vehicle(s) road tax that already expired." [ref=e183]
+                - row "vehicle(s) not having service maintenance before due date." [ref=e184]:
+                  - cell [ref=e185]:
+                    - link [ref=e186] [cursor=pointer]:
+                      - /url: ../../GL/setup/frmGLSetupVehicle.aspx?from=VehServMaintExp
+                  - cell "vehicle(s) not having service maintenance before due date." [ref=e187]
+                - row [ref=e188]:
+                  - cell [ref=e189]
+                  - cell [ref=e190]
+            - table [ref=e191]:
+              - rowgroup [ref=e192]:
+                - row "Human Resource/Payroll" [ref=e193]:
+                  - cell "Human Resource/Payroll" [ref=e194]
+                - row [ref=e195]:
+                  - cell [ref=e196]
+                  - cell [ref=e197]
+                - row "Passport expired/expiring in 6 months." [ref=e198]:
+                  - cell [ref=e199]:
+                    - link [ref=e200] [cursor=pointer]:
+                      - /url: ../../HR/trx/frmHrTrxEmployeelist.aspx?redirect=passportexpired
+                  - cell "Passport expired/expiring in 6 months." [ref=e201]
+                - row "Workpass expired/expiring in 6 months." [ref=e202]:
+                  - cell [ref=e203]:
+                    - link [ref=e204] [cursor=pointer]:
+                      - /url: ../../HR/trx/frmHrTrxEmployeelist.aspx?redirect=workpassexpired
+                  - cell "Workpass expired/expiring in 6 months." [ref=e205]
+                - row "Labour License expired/expiring in 6 months." [ref=e206]:
+                  - cell [ref=e207]:
+                    - link [ref=e208] [cursor=pointer]:
+                      - /url: ../../HR/trx/frmHrTrxEmployeelist.aspx?redirect=lablicenseexpired
+                  - cell "Labour License expired/expiring in 6 months." [ref=e209]
+                - row "worker(s) without earning after payroll process." [ref=e210]:
+                  - cell [ref=e211]:
+                    - link [ref=e212] [cursor=pointer]:
+                      - /url: ../../HR/trx/frmHrTrxEmployeeNoPay.aspx?redirect=workernopay
+                  - cell "worker(s) without earning after payroll process." [ref=e213]
+                - row "worker(s) with negative income after payroll process." [ref=e214]:
+                  - cell [ref=e215]:
+                    - link [ref=e216] [cursor=pointer]:
+                      - /url: ../../HR/trx/frmHrTrxEmployeeNoPay.aspx?redirect=workernegativepay
+                  - cell "worker(s) with negative income after payroll process." [ref=e217]
+                - row [ref=e218]:
+                  - cell [ref=e219]
+                  - cell [ref=e220]
+          - cell [ref=e221]
+          - cell "Nursery unplanted seed(s). seedling(s) available. seedling(s) sold to external parties in current month. Production Current Month Year-To-Date Total FFB weight MT MT Yield per HA HA HA Production Dashboard" [ref=e222]:
+            - table [ref=e223]:
+              - rowgroup [ref=e224]:
+                - row "Nursery" [ref=e225]:
+                  - cell "Nursery" [ref=e226]
+                - row [ref=e227]:
+                  - cell [ref=e228]
+                  - cell [ref=e229]
+                - row "unplanted seed(s)." [ref=e230]:
+                  - cell [ref=e231]:
+                    - link [ref=e232] [cursor=pointer]:
+                      - /url: ../../NU/Data/frmNuDataSeedQty.aspx?from=Home
+                  - cell "unplanted seed(s)." [ref=e233]
+                - row "seedling(s) available." [ref=e234]:
+                  - cell [ref=e235]:
+                    - link [ref=e236] [cursor=pointer]:
+                      - /url: ../../NU/Data/frmNuDataSeedQty.aspx?from=Home
+                  - cell "seedling(s) available." [ref=e237]
+                - row "seedling(s) sold to external parties in current month." [ref=e238]:
+                  - cell [ref=e239]:
+                    - link [ref=e240] [cursor=pointer]:
+                      - /url: ../../NU/trx/frmNuTrxSeeddispatchlist.aspx?from=Home
+                  - cell "seedling(s) sold to external parties in current month." [ref=e241]
+            - table [ref=e242]:
+              - rowgroup [ref=e243]:
+                - row "Production Current Month Year-To-Date" [ref=e244]:
+                  - cell "Production" [ref=e245]
+                  - cell "Current Month" [ref=e246]
+                  - cell "Year-To-Date" [ref=e247]
+                - row [ref=e248]:
+                  - cell [ref=e249]
+                  - cell [ref=e250]
+                  - cell [ref=e251]
+                - row "Total FFB weight MT MT" [ref=e252]:
+                  - cell "Total FFB weight" [ref=e253]
+                  - cell "MT" [ref=e254]: MT
+                  - cell "MT" [ref=e255]: MT
+                - row "Yield per HA HA HA" [ref=e256]:
+                  - cell "Yield per HA" [ref=e257]
+                  - cell "HA" [ref=e258]: HA
+                  - cell "HA" [ref=e259]: HA
+                - row "Production Dashboard" [ref=e260]:
+                  - cell "Production Dashboard" [ref=e261]:
+                    - link "Production Dashboard" [ref=e262] [cursor=pointer]:
+                      - /url: /en/PD/reports/frmPDDashboard.aspx
+                      - img [ref=e263]
+                      - text: Production Dashboard
+                - row [ref=e264]:
+                  - cell [ref=e265]
+                  - cell [ref=e266]
+          - cell [ref=e267]
+        - row [ref=e268]:
+          - cell [ref=e269]
+          - cell [ref=e270]
+          - cell [ref=e271]
+          - cell [ref=e272]
+          - cell [ref=e273]
+    - table [ref=e276]:
+      - rowgroup [ref=e277]:
+        - row [ref=e278]:
+          - cell [ref=e279]
+        - row "LOCATION SETTING" [ref=e280]:
+          - cell "LOCATION SETTING" [ref=e281]
+        - row [ref=e282]:
+          - cell [ref=e283]:
+            - separator [ref=e284]
+        - row "Please select the Location you wish to access." [ref=e285]:
+          - cell "Please select the Location you wish to access." [ref=e286]
+        - 'row "User ID : adm075" [ref=e287]':
+          - cell "User ID :" [ref=e288]
+          - cell "adm075" [ref=e289]
+        - 'row "Your last logged on was : Sunday, May 31, 2026 at 11:36 PM" [ref=e290]':
+          - cell "Your last logged on was :" [ref=e291]
+          - cell "Sunday, May 31, 2026 at 11:36 PM" [ref=e292]
+        - 'row "Your last logged off was : Saturday, May 30, 2026 at 10:17 AM" [ref=e293]':
+          - cell "Your last logged off was :" [ref=e294]
+          - cell "Saturday, May 30, 2026 at 10:17 AM" [ref=e295]
+        - 'row "Company : PT. REBINMAS JAYA" [ref=e296]':
+          - cell "Company :" [ref=e297]
+          - cell "PT. REBINMAS JAYA" [ref=e298]
+        - 'row "Current Location Selected Login : ()" [ref=e299]':
+          - cell "Current Location Selected Login :" [ref=e300]
+          - cell "()" [ref=e301]
+        - 'row "Accounting Period : Purchasing Inventory Canteen Workshop Nursery Payroll Account Payable Weighing, Production Contract, Account Receivable Fixed Asset General Ledger Region : NA Active Location : ESTATE AIR RUAK B1 ESTATE IMPIAN JAYA LESTARI ESTATE AIR RUAK B2 ESTATE PARIT GUNUNG 1A ESTATE AIR RUAK A ESTATE PARIT GUNUNG 1B ESTATE AIR RUAK C ESTATE PARIT GUNUNG 2A ESTATE DARUR MAKMUR ESTATE PARIT GUNUNG 2B PTRJ HQ" [ref=e302]':
+          - cell "Accounting Period :" [ref=e303]
+          - cell "Purchasing Inventory Canteen Workshop Nursery Payroll Account Payable Weighing, Production Contract, Account Receivable Fixed Asset General Ledger" [ref=e304]:
+            - table [ref=e305]:
+              - rowgroup [ref=e306]:
+                - row "Purchasing" [ref=e307]:
+                  - cell "Purchasing" [ref=e308]
+                  - cell [ref=e309]
+                - row "Inventory" [ref=e310]:
+                  - cell "Inventory" [ref=e311]
+                  - cell [ref=e312]
+                - row "Canteen" [ref=e313]:
+                  - cell "Canteen" [ref=e314]
+                  - cell [ref=e315]
+                - row "Workshop" [ref=e316]:
+                  - cell "Workshop" [ref=e317]
+                  - cell [ref=e318]
+                - row "Nursery" [ref=e319]:
+                  - cell "Nursery" [ref=e320]
+                  - cell [ref=e321]
+                - row "Payroll" [ref=e322]:
+                  - cell "Payroll" [ref=e323]
+                  - cell [ref=e324]
+                - row "Account Payable" [ref=e325]:
+                  - cell "Account Payable" [ref=e326]
+                  - cell [ref=e327]
+                - row "Weighing, Production" [ref=e328]:
+                  - cell "Weighing, Production" [ref=e329]
+                  - cell [ref=e330]
+                - row "Contract, Account Receivable" [ref=e331]:
+                  - cell "Contract, Account Receivable" [ref=e332]
+                  - cell [ref=e333]
+                - row "Fixed Asset" [ref=e334]:
+                  - cell "Fixed Asset" [ref=e335]
+                  - cell [ref=e336]
+                - row "General Ledger" [ref=e337]:
+                  - cell "General Ledger" [ref=e338]
+                  - cell [ref=e339]
+          - 'cell "Region : NA Active Location : ESTATE AIR RUAK B1 ESTATE IMPIAN JAYA LESTARI ESTATE AIR RUAK B2 ESTATE PARIT GUNUNG 1A ESTATE AIR RUAK A ESTATE PARIT GUNUNG 1B ESTATE AIR RUAK C ESTATE PARIT GUNUNG 2A ESTATE DARUR MAKMUR ESTATE PARIT GUNUNG 2B PTRJ HQ" [ref=e340]':
+            - text: "Region :"
+            - table [ref=e341]:
+              - rowgroup [ref=e342]:
+                - row "NA" [ref=e343]:
+                  - cell "NA" [ref=e344]:
+                    - radio "NA" [checked] [ref=e345] [cursor=pointer]
+                    - text: NA
+                  - cell [ref=e346]
+            - text: "Active Location :"
+            - table [ref=e347]:
+              - rowgroup [ref=e348]:
+                - row "ESTATE AIR RUAK B1 ESTATE IMPIAN JAYA LESTARI" [ref=e349]:
+                  - cell "ESTATE AIR RUAK B1" [ref=e350]:
+                    - radio "ESTATE AIR RUAK B1" [ref=e351] [cursor=pointer]
+                    - text: ESTATE AIR RUAK B1
+                  - cell "ESTATE IMPIAN JAYA LESTARI" [ref=e352]:
+                    - radio "ESTATE IMPIAN JAYA LESTARI" [ref=e353] [cursor=pointer]
+                    - text: ESTATE IMPIAN JAYA LESTARI
+                - row "ESTATE AIR RUAK B2 ESTATE PARIT GUNUNG 1A" [ref=e354]:
+                  - cell "ESTATE AIR RUAK B2" [ref=e355]:
+                    - radio "ESTATE AIR RUAK B2" [ref=e356] [cursor=pointer]
+                    - text: ESTATE AIR RUAK B2
+                  - cell "ESTATE PARIT GUNUNG 1A" [ref=e357]:
+                    - radio "ESTATE PARIT GUNUNG 1A" [ref=e358] [cursor=pointer]
+                    - text: ESTATE PARIT GUNUNG 1A
+                - row "ESTATE AIR RUAK A ESTATE PARIT GUNUNG 1B" [ref=e359]:
+                  - cell "ESTATE AIR RUAK A" [ref=e360]:
+                    - radio "ESTATE AIR RUAK A" [ref=e361] [cursor=pointer]
+                    - text: ESTATE AIR RUAK A
+                  - cell "ESTATE PARIT GUNUNG 1B" [ref=e362]:
+                    - radio "ESTATE PARIT GUNUNG 1B" [ref=e363] [cursor=pointer]
+                    - text: ESTATE PARIT GUNUNG 1B
+                - row "ESTATE AIR RUAK C ESTATE PARIT GUNUNG 2A" [ref=e364]:
+                  - cell "ESTATE AIR RUAK C" [ref=e365]:
+                    - radio "ESTATE AIR RUAK C" [ref=e366] [cursor=pointer]
+                    - text: ESTATE AIR RUAK C
+                  - cell "ESTATE PARIT GUNUNG 2A" [ref=e367]:
+                    - radio "ESTATE PARIT GUNUNG 2A" [ref=e368] [cursor=pointer]
+                    - text: ESTATE PARIT GUNUNG 2A
+                - row "ESTATE DARUR MAKMUR ESTATE PARIT GUNUNG 2B" [ref=e369]:
+                  - cell "ESTATE DARUR MAKMUR" [ref=e370]:
+                    - radio "ESTATE DARUR MAKMUR" [ref=e371] [cursor=pointer]
+                    - text: ESTATE DARUR MAKMUR
+                  - cell "ESTATE PARIT GUNUNG 2B" [ref=e372]:
+                    - radio "ESTATE PARIT GUNUNG 2B" [ref=e373] [cursor=pointer]
+                    - text: ESTATE PARIT GUNUNG 2B
+                - row "PTRJ HQ" [ref=e374]:
+                  - cell "PTRJ HQ" [ref=e375]:
+                    - radio "PTRJ HQ" [ref=e376] [cursor=pointer]
+                    - text: PTRJ HQ
+                  - cell [ref=e377]
+        - row [ref=e378]:
+          - cell [ref=e379]
+          - cell [ref=e380]
+  - generic [ref=e382]: eFlex Plantware © 2011

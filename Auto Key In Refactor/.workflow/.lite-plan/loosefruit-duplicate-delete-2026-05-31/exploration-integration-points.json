@@ -1,0 +1,8 @@
+{
+  "metadata": {
+    "exploration_angle": "integration-points",
+    "task_description": "Create loosefruit duplicate deletion feature - scan PR_LOOSEFRUIT table where DocID contains underscore (duplicate suffix pattern), delete from all locations, add to Python/PySide6 desktop app with proper layout following existing UI patterns. SQL: SELECT TOP (1000) [ID],[DocID],[DocDate],[DocDesc],[LocCode],[AccMonth],[AccYear],[PhyMonth],[PhyYear],[Status],[CreatedBy],[CreatedDate],[UpdatedBy],[UpdatedDate],[ImpFlag],[AutoCalMT],[TotalMT] FROM [db_ptrj].[dbo].[PR_LOOSEFRUIT] WHERE [DocID] LIKE \"%[_]%\" ORDER BY [DocID];",
+    "exploration_index": 2,
+    "generated_at": "2026-05-31T12:00:00Z"
+  }
+}

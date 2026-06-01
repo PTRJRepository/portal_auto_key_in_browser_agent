@@ -6,6 +6,7 @@ import { fillAdjustmentRow, openDetailPage, premiumDetailGroupKey, rowAlreadyExi
 import { assignRowsToTabs, duplicateInputRowKeys, findCrossTabEmployeeSplits, premiumEmployeeGroupKey } from "./row-assignment.js";
 import type { RowResult, RunPayload, RunResult } from "../types.js";
 import type { EmitEvent } from "./mock-runner.js";
+import { sessionDivisionCode } from "../payload.js";
 
 export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEvent): Promise<RunResult> {
   const started_at = new Date().toISOString();
@@ -13,7 +14,8 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
   const requestedTabCount = payload.runner_mode.endsWith("_single") ? 1 : payload.max_tabs;
   const tabCount = Math.min(Math.max(1, requestedTabCount), PLANTWARE_CONFIG.maxTabs, Math.max(1, rows.length));
   const freshLoginFirst = payload.runner_mode === "fresh_login_single";
-  const session = new BrowserSession({ headless: payload.headless, freshLoginFirst, division: payload.division_code });
+  const sessionDivision = sessionDivisionCode(payload);
+  const session = new BrowserSession({ headless: payload.headless, freshLoginFirst, division: sessionDivision });
   const rowResults: RowResult[] = [];
 
   emit({ event: "run.started", runner_mode: payload.runner_mode, total_records: rows.length, tabs: tabCount, requested_tabs: payload.max_tabs });
@@ -30,7 +32,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
     }
 
     await session.start();
-    emit({ event: "session.ready", division_code: payload.division_code, session_path: session.getSessionPath(), session_reused: session.sessionReused });
+    emit({ event: "session.ready", division_code: payload.division_code, session_division_code: sessionDivision, session_path: session.getSessionPath(), session_reused: session.sessionReused });
 
     const pages: Page[] = [];
     for (let index = 0; index < tabCount; index++) {
@@ -89,7 +91,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
             emit({ event: "tab.progress", tab_index: tabIndex, current_emp_code: record.emp_code, done: tabStats.done, skipped: tabStats.skipped, failed: tabStats.failed, total: tabStats.total });
             continue;
           }
-          await fillAdjustmentRow(page, record, category, rowIndex === 0, payload.division_code, { continueEmployeePremium, continuePremiumDetails });
+          await fillAdjustmentRow(page, record, category, rowIndex === 0, sessionDivision, { continueEmployeePremium, continuePremiumDetails });
           const result: RowResult = {
             emp_code: record.emp_code,
             adjustment_name: record.adjustment_name,

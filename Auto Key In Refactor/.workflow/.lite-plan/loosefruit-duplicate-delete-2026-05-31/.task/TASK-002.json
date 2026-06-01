@@ -1,0 +1,92 @@
+{
+  "id": "TASK-002",
+  "title": "Add loosefruit duplicate deletion UI to Duplicate Cleanup tab",
+  "scope": "app/ui/main_window.py, app/core/query_gateway.py",
+  "action": "Implement",
+  "description": "Add third QGroupBox (Loosefruit duplicate DocID) to _build_duplicate_cleanup_tab() with: (1) AccMonth/AccYear/LocCode filters, (2) Fetch from query gateway WHERE DocID LIKE '%[_]%', (3) Display list in table, (4) Delete via runner browser automation (search → detail → delete). Workflow: fetch list from PR_LOOSEFRUIT API → for each DocId: search Plantware → click detail → click delete.",
+  "files": [
+    {
+      "path": "app/core/query_gateway.py",
+      "action": "add",
+      "target": "PlantwareDbPtrjGateway class",
+      "change": "Add fetch_loosefruit_duplicate_docids(acc_month, acc_year, loc_code, limit) method: SELECT DocID, DocDate, DocDesc, LocCode, TotalMT FROM PR_LOOSEFRUIT WHERE DocID LIKE '%[_]%' AND AccMonth=@acc_month AND AccYear=@acc_year AND (@loc_code IS NULL OR LocCode=@loc_code) ORDER BY DocId"
+    },
+    {
+      "path": "app/ui/main_window.py",
+      "action": "add",
+      "target": "_build_duplicate_cleanup_tab()",
+      "change": "Add third QGroupBox 'Loosefruit duplicate DocID (underscore pattern)' after task_controls section. QFormLayout: acc_month QSpinBox (1-12), acc_year QSpinBox (2000-2100), loc_code QLineEdit (default empty = all locations), limit QSpinBox (1-10000, default 1000), dry_run QCheckBox (default True), fetch_button + delete_button row, status_label"
+    },
+    {
+      "path": "app/ui/main_window.py",
+      "action": "add",
+      "target": "LoosefruitFetchWorker class",
+      "change": "Add LoosefruitFetchWorker QObject before DuplicateFetchWorker at L619: __init__(gateway, acc_month, acc_year, loc_code, limit), run() calls gateway.fetch_loosefruit_duplicate_docids(), emits completed(list) or failed(str)"
+    },
+    {
+      "path": "app/ui/main_window.py",
+      "action": "add",
+      "target": "_build_duplicate_cleanup_tab()",
+      "change": "Add self.loosefruit_table = QTableWidget(0, 6) with headers: [Select, DocID, DocDate, LocCode, TotalMT, Message]. No Status column initially (set after delete). Checkbox in Select column defaults checked for all rows."
+    },
+    {
+      "path": "app/ui/main_window.py",
+      "action": "add",
+      "target": "fetch_loosefruit_targets() slot",
+      "change": "Add slot: read acc_month/year/loc_code/limit from UI, create LoosefruitFetchWorker in QThread, connect completed→_handle_loosefruit_fetch_completed, failed→_handle_fetch_failed, start thread. On completed: populate table, enable delete button with count."
+    },
+    {
+      "path": "app/ui/main_window.py",
+      "action": "add",
+      "target": "run_loosefruit_delete() slot",
+      "change": "Add slot: collect selected DocIDs from table checkboxes, read dry_run checkbox, build RunnerBridge payload with operation='delete_loosefruit', duplicate_targets list (doc_id, action='DELETE_RECORD'), delete_dry_run flag, headless=True. Call runner_bridge.run(payload, on_event). On result: update Message column per row (DELETED, DRY_RUN, ERROR)."
+    }
+  ],
+  "implementation": [
+    "Step 1: Add PlantwareDbPtrjGateway.fetch_loosefruit_duplicate_docids() in query_gateway.py after execute() method",
+    "Step 2: Add LoosefruitFetchWorker class in main_window.py before DuplicateFetchWorker (L619)",
+    "Step 3: Add third QGroupBox in _build_duplicate_cleanup_tab() after layout.addWidget(task_controls) at L1200",
+    "Step 4: Add loosefruit_table QTableWidget with 6 columns before 'return tab'",
+    "Step 5: Add fetch_loosefruit_targets() slot following fetch_duplicate_targets() pattern",
+    "Step 6: Add run_loosefruit_delete() slot using RunnerBridge with operation='delete_loosefruit'",
+    "Step 7: Wire up button.clicked signals in _build_duplicate_cleanup_tab()"
+  ],
+  "reference": {
+    "pattern": "TaskRegister pattern + DuplicateCleanup pattern combined",
+    "files": ["app/ui/main_window.py", "app/core/query_gateway.py", "app/core/runner_bridge.py"],
+    "examples": "TaskRegister section L1168-1199 for groupbox layout; DuplicateFetchWorker L619 for worker pattern; runner_bridge L22-72 for payload execution"
+  },
+  "convergence": {
+    "criteria": [
+      "fetch_loosefruit_duplicate_docids(5, 2026, '', 100) returns list of PR_LOOSEFRUIT records where DocID contains '_' for May 2026 across all locations",
+      "Third QGroupBox appears in Duplicate Cleanup tab below Task Register section",
+      "Fetch button populates loosefruit_table with rows; all checkboxes default checked",
+      "Delete button shows 'Delete X records' text and is enabled after fetch",
+      "Dry run: runner_bridge executes with delete_dry_run=True, Message column shows 'DRY RUN OK' for all rows",
+      "Real delete: runner_bridge executes delete-loosefruit mode, browser automation searches each DocID, clicks detail, clicks delete, Message column shows 'DELETED' or 'ERROR: <reason>'",
+      "Runner events (loosefruit.*) are handled and update UI status"
+    ]
+  },
+  "depends_on": [],
+  "test": {
+    "unit": ["test_fetch_loosefruit_returns_list_with_underscore_docids"],
+    "integration": ["test_loosefruit_runner_search_detail_delete_workflow"],
+    "manual_checks": [
+      "Build runner: npm run build from runner directory",
+      "Open Duplicate Cleanup tab, find third groupbox 'Loosefruit duplicate DocID'",
+      "Set AccMonth=5, AccYear=2026, LocCode empty, click Fetch",
+      "Verify table populates with DocIDs containing underscore",
+      "Click Delete with dry_run=True, verify Message='DRY RUN OK'",
+      "Click Delete with dry_run=False, verify browser automation runs and Message='DELETED'"
+    ],
+    "success_metrics": [
+      "Fetch completes in < 5 seconds for 1000 records",
+      "Dry run completes in < 10 seconds for 50 records",
+      "Real delete completes: ~2-3 seconds per record (search + detail + delete)"
+    ]
+  },
+  "cli_execution_id": "loosefruit-duplicate-delete-2026-05-31-TASK-002",
+  "cli_execution": {
+    "strategy": "new"
+  }
+}

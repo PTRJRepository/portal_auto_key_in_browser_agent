@@ -1,0 +1,39 @@
+{
+  "id": "TASK-004",
+  "title": "Add cli.ts routing for delete_loosefruit_duplicates operation",
+  "description": "Extend cli.ts to route operation='delete_loosefruit_duplicates' to runDeleteLoosefruit from delete-loosefruit-runner.ts. Follows same pattern as existing delete_duplicates routing. Read the existing import and routing pattern, then add loosefruit case.",
+  "scope": "runner/src/cli.ts",
+  "priority": "high",
+  "files": [
+    {
+      "path": "runner/src/cli.ts",
+      "change": "Add 1 new import and 1 new case branch. No existing code modified."
+    }
+  ],
+  "steps": [
+    {
+      "order": 1,
+      "action": "Read runner/src/cli.ts to find: (a) existing import for delete-duplicates-runner.ts and runDeleteDuplicates, (b) the switch/case block that routes by payload.operation, (c) how the delete_duplicates case builds the session and calls runDeleteDuplicates.",
+      "verification": "Import pattern and routing structure identified"
+    },
+    {
+      "order": 2,
+      "action": "Add import for LoosefruitDeletePayload and runDeleteLoosefruit from delete-loosefruit-runner.ts.",
+      "verification": "Import added"
+    },
+    {
+      "order": 3,
+      "action": "Add case 'delete_loosefruit_duplicates': in the operation routing switch. Extract targets: LoosefruitTarget[] from payload.targets. Build BrowserSession (reuse session_or_new()). Call runDeleteLoosefruit(session, { targets, dry_run: payload.dry_run ?? true, emit }). Handle errors with try/catch.",
+      "verification": "Case added and routes to runDeleteLoosefruit with correct payload"
+    }
+  ],
+  "convergence": {
+    "criteria": [
+      "cli.ts routes operation='delete_loosefruit_duplicates' to runDeleteLoosefruit()",
+      "Targets extracted from payload.targets as LoosefruitTarget[]",
+      "dry_run flag passed from payload.delete_dry_run",
+      "runDeleteLoosefruit called with session, targets, dry_run, emit",
+      "No existing routing broken"
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "critical_files": [
+    "app/core/query_gateway.py",
+    "app/core/task_register_gateway.py",
+    "app/core/loosefruit_gateway.py",
+    "app/ui/main_window.py",
+    "app/core/models.py",
+    "runner/src/types.ts",
+    "runner/src/cli.ts",
+    "runner/src/orchestration/delete-loosefruit-runner.ts",
+    "runner/src/plantware/loosefruit-page.ts",
+    "runner/src/session/browser-session.ts",
+    "tests/test_task_register_gateway.py",
+    "tests/test_api_models.py",
+    "runner/src/orchestration/delete-loosefruit-runner.test.ts"
+  ],
+  "patterns": [
+    {
+      "name": "Query Gateway repository",
+      "evidence": "TaskRegisterGatewayRepository builds parameterized SELECT TOP queries and maps rows to DuplicateDocIdTarget. Loosefruit should follow same repository shape using DocID LIKE '%[_]%'."
+    },
+    {
+      "name": "Duplicate cleanup fetch worker",
+      "evidence": "DuplicateFetchWorker and TaskRegisterFetchWorker use QObject + QThread + completed/failed signals; Loosefruit fetch should follow this pattern."
+    },
+    {
+      "name": "Shared duplicate target table",
+      "evidence": "Task Register reuses duplicate_table with DuplicateDocIdTarget rows, then run_duplicate_cleanup builds RunPayload. Loosefruit can reuse table and event update path with source/category detection."
+    },
+    {
+      "name": "Browser delete runner",
+      "evidence": "runner/src/orchestration/delete-loosefruit-runner.ts already supports operation delete_loosefruit, uses saved BrowserSession, searchLoosefruitByDocId, detail validation, delete, and post-delete absence verification."
+    }
+  ],
+  "dependencies": [
+    "PySide6 for desktop UI",
+    "requests for Query Gateway HTTP client",
+    "Playwright runner package for Plantware browser deletion",
+    "Saved Plantware session files per LocCode when loginFallback=false"
+  ],
+  "integration_points": [
+    {
+      "module": "gateway",
+      "files": ["app/core/loosefruit_gateway.py", "app/core/task_register_gateway.py"],
+      "contract": "list_duplicate_targets(loc_code=None, acc_month=None, acc_year=None, limit=1000) -> list[DuplicateDocIdTarget]"
+    },
+    {
+      "module": "ui",
+      "files": ["app/ui/main_window.py"],
+      "contract": "Fetch all-location Loosefruit targets, render as duplicate targets, validate sessions by LocCode, start RunPayload(operation='delete_loosefruit')."
+    },
+    {
+      "module": "runner",
+      "files": ["runner/src/orchestration/delete-loosefruit-runner.ts", "runner/src/cli.ts", "runner/src/types.ts"],
+      "contract": "Process Loosefruit targets across one or many LocCode groups, emit loosefruit.* events with doc_id/status/message."
+    },
+    {
+      "module": "tests",
+      "files": ["tests/test_task_register_gateway.py", "tests/test_api_models.py", "runner/src/orchestration/delete-loosefruit-runner.test.ts"],
+      "contract": "Unit tests cover SQL, mapping, UI payload, session validation, and runner loc grouping."
+    }
+  ],
+  "conflict_risk": "high",
+  "conflict_areas": [
+    "app/core/loosefruit_gateway.py exists but appears incomplete/truncated in current worktree; importing it may break tests until fixed.",
+    "app/core/task_register_gateway.py already contains LoosefruitGatewayRepository and LoosefruitDuplicateDocId, creating duplicate ownership with app/core/loosefruit_gateway.py.",
+    "Prior lite-plan session .workflow/.lite-plan/loosefruit-duplicate-delete-2026-05-31 contains conflicting direction: direct SQL delete vs browser runner delete. Current plan uses SQL SELECT for targets and existing browser runner for delete to preserve Plantware behavior.",
+    "runDeleteLoosefruit currently rejects multiple LocCode values. User request requires all-location cleanup, so runner or UI must group by LocCode."
+  ],
+  "constraints": [
+    "Use the user-provided SELECT semantics: PR_LOOSEFRUIT rows where DocID LIKE '%[_]%'.",
+    "Empty LocCode filter means all locations.",
+    "Do not raw DELETE from db_ptrj unless user explicitly confirms bypassing Plantware UI side effects.",
+    "Dry run remains default and destructive delete requires confirmation.",
+    "Do not overwrite unrelated dirty worktree changes. Stop on file conflicts."
+  ],
+  "recommended_tasks": [
+    "IMPL-1: Stabilize Loosefruit gateway and mapping.",
+    "IMPL-2: Support all-location Loosefruit runner grouping and events.",
+    "IMPL-3: Add proper Duplicate Cleanup UI layout and Loosefruit controls.",
+    "IMPL-4: Add tests, docs, and verification."
+  ]
+}

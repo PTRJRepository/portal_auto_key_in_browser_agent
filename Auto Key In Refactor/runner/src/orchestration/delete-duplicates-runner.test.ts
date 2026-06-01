@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { deleteDocIdActionSupported, duplicateCleanupCategorySupported, targetWithMatchedMasterId } from "./delete-duplicates-runner.js";
+import { deleteDocIdActionSupported, deleteRunnerFreshLoginFirst, deleteRunnerLoginFallback, duplicateCleanupCategorySupported, targetWithMatchedMasterId } from "./delete-duplicates-runner.js";
 
 assert.equal(duplicateCleanupCategorySupported("spsi"), true);
 assert.equal(duplicateCleanupCategorySupported("masa_kerja"), true);
 assert.equal(duplicateCleanupCategorySupported("tunjangan_jabatan"), true);
+assert.equal(duplicateCleanupCategorySupported("task_register"), true);
+assert.equal(duplicateCleanupCategorySupported("pph21"), true);
 assert.equal(duplicateCleanupCategorySupported("premi"), true);
 assert.equal(duplicateCleanupCategorySupported("premi_tunjangan"), true);
 assert.equal(duplicateCleanupCategorySupported("potongan_upah_kotor"), true);
@@ -14,6 +16,10 @@ assert.equal(duplicateCleanupCategorySupported("unknown"), false);
 assert.equal(deleteDocIdActionSupported("DELETE_OLD"), true);
 assert.equal(deleteDocIdActionSupported("DELETE_RECORD"), true);
 assert.equal(deleteDocIdActionSupported("KEEP_NEWEST"), false);
+assert.equal(deleteRunnerFreshLoginFirst({ runner_mode: "fresh_login_single" } as never), false);
+assert.equal(deleteRunnerFreshLoginFirst({ runner_mode: "session_reuse_single" } as never), false);
+assert.equal(deleteRunnerLoginFallback({ runner_mode: "fresh_login_single" } as never), false);
+assert.equal(deleteRunnerLoginFallback({ runner_mode: "session_reuse_single" } as never), false);
 
 assert.deepEqual(
   targetWithMatchedMasterId(

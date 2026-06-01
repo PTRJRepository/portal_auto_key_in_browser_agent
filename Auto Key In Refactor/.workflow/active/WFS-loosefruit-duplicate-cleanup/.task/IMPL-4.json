@@ -1,0 +1,22 @@
+{
+  "id": "IMPL-4",
+  "title": "Tests docs and verification",
+  "description": "Add focused Python and TypeScript tests, update README Duplicate Cleanup docs, and run verification commands from the correct package directories.",
+  "depends_on": ["IMPL-1", "IMPL-2", "IMPL-3"],
+  "files": [
+    "tests/test_task_register_gateway.py",
+    "tests/test_loosefruit_gateway.py",
+    "tests/test_api_models.py",
+    "runner/src/orchestration/delete-loosefruit-runner.test.ts",
+    "README.md"
+  ],
+  "convergence": [
+    "Gateway SQL and mapping tests pass.",
+    "UI payload and session validation tests pass.",
+    "Runner LocCode grouping tests pass.",
+    "README explains Loosefruit all-location dry-run/delete flow.",
+    "python -m pytest focused tests pass.",
+    "npm run build passes from runner directory."
+  ],
+  "meta": {"type": "validation", "agent": "validation_archivist", "risk": "low"}
+}

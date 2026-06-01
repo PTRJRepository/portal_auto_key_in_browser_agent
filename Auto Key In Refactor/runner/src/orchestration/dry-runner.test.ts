@@ -58,3 +58,22 @@ assert.match(String(result.error_summary), /PREMI detail row for G0352 \/ PREMI 
 assert.deepEqual(result.rows.map((row) => row.status), ["skipped", "failed", "skipped"]);
 assert.equal(events.filter((event) => event.event === "row.failed").length, 1);
 assert.equal(events.filter((event) => event.event === "tab.completed").length, 2);
+
+const capEvents: Record<string, unknown>[] = [];
+await runDryRun(
+  {
+    ...payload,
+    max_tabs: 9,
+    records: Array.from({ length: 9 }, (_, index) =>
+      premiumRecord({
+        emp_code: `G${String(index + 1).padStart(4, "0")}`,
+        detail_key: `cap-row-${index + 1}`,
+        subblok: `P08${String(index + 1).padStart(2, "0")}`
+      })
+    )
+  },
+  (event) => capEvents.push(event)
+);
+
+assert.equal(capEvents.find((event) => event.event === "run.started")?.tabs, 8);
+assert.equal(capEvents.filter((event) => event.event === "tab.completed").length, 8);

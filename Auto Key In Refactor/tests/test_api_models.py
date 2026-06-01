@@ -4,16 +4,17 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from PySide6.QtCore import Qt
 
 from app.core.category_registry import AdjustmentCategory, CategoryRegistry
 from app.core.api_client import ManualAdjustmentApiClient, ManualAdjustmentQuery
 from app.core.config import AppConfig, DivisionOption, load_app_config, load_divisions
 from PySide6.QtWidgets import QApplication
 
-from app.ui.division_monitor import CategoryStatus, DetailDialog, DivisionCard, DivisionMonitorWorker, MissDetail
+from app.ui.division_monitor import CategoryStatus, DetailDialog, DivisionCard, DivisionMonitorWorker, MissDetail, SyncWorker
 from app.ui.division_run_dialog import DivisionFetchWorker, DivisionRunDialog
-from app.ui.main_window import FetchWorker, MainWindow, build_premium_retry_plan, build_premium_retry_plan_from_sync_status, sync_status_ids_for_records, verified_sync_status_ids
-from app.core.models import AutomationOption, DuplicateDocIdTarget, RunPayload, normalize_record
+from app.ui.main_window import FetchWorker, MainWindow, ResetDocIdFetchWorker, TaskRegisterFetchWorker, build_premium_retry_plan, build_premium_retry_plan_from_sync_status, record_is_stale_miss, sync_status_ids_for_records, verified_sync_status_ids
+from app.core.models import AutomationOption, DuplicateDocIdTarget, RunPayload, enrich_records_with_automation_options, normalize_record
 from app.core.run_service import DbVerificationDecision, apply_row_limit, division_mismatch_warning, evaluate_db_ptrj_status, filter_by_category, filter_records_by_division_prefix
 
 
@@ -94,6 +95,27 @@ def test_load_divisions_uses_location_labels(tmp_path):
     assert divisions[0].code == "P1B"
     assert divisions[0].label == "ESTATE PARIT GUNUNG 1B"
     assert divisions[0].aliases == ("PG1B",)
+
+def test_load_divisions_reads_virtual_parent_session(tmp_path):
+    divisions_path = tmp_path / "divisions.json"
+    divisions_path.write_text(json.dumps([
+        {
+            "code": "INF",
+            "label": "VIRTUAL INFRASTRUKTUR",
+            "aliases": ["INFRA", "INFRASTRUKTUR"],
+            "location_code": "P1A",
+            "session_code": "P1A",
+            "virtual": True,
+        }
+    ]), encoding="utf-8")
+
+    divisions = load_divisions(divisions_path)
+
+    assert divisions[0].code == "INF"
+    assert divisions[0].aliases == ("INFRA", "INFRASTRUKTUR")
+    assert divisions[0].location_code == "P1A"
+    assert divisions[0].session_code == "P1A"
+    assert divisions[0].virtual is True
 
 
 def test_normalize_record_uppercases_codes_and_preserves_name():
@@ -235,6 +257,35 @@ def test_normalize_record_reads_vehicle_detail_from_metadata_json():
     assert record.expense_code == "DRIVER"
     assert record.vehicle_expense_code == "DRIVER"
     assert record.amount == 684355
+
+def test_enrich_records_backfills_manual_adcode_from_same_adjustment_batch():
+    detailed = normalize_record({
+        "emp_code": "B0548",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "KOREKSI PANEN",
+        "amount": 63023,
+        "ad_code": "DE0004",
+        "ad_code_desc": "(DE) POTONGAN PREMI",
+        "description": "(DE) POTONGAN PREMI",
+        "task_desc": "(DE) POTONGAN PREMI",
+    }, "potongan_upah_kotor")
+    missing = normalize_record({
+        "emp_code": "B0699",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "KOREKSI PANEN",
+        "amount": 39020,
+        "ad_code": "KOREKSI PANEN",
+        "ad_code_desc": "KOREKSI PANEN",
+        "description": "KOREKSI PANEN",
+        "task_desc": "KOREKSI PANEN",
+    }, "potongan_upah_kotor")
+
+    enriched = enrich_records_with_automation_options([detailed, missing], [])
+
+    assert enriched[1].ad_code == "DE0004"
+    assert enriched[1].ad_code_desc == "(DE) POTONGAN PREMI"
+    assert enriched[1].description == "(DE) POTONGAN PREMI"
+    assert enriched[1].task_desc == "(DE) POTONGAN PREMI"
 
 def test_get_adjustments_flattens_grouped_premium_transactions():
     registry = CategoryRegistry([
@@ -549,6 +600,15 @@ def test_category_registry_detects_auto_buffer_names():
     assert registry.detect("AUTO MASA KERJA", "AUTO_BUFFER") == "masa_kerja"
 
 
+def test_category_registry_detects_pph21_auto_buffer_name():
+    registry = CategoryRegistry([
+        AdjustmentCategory("pph21", "PPh21", "AUTO_BUFFER", ("PPH",), "(DE) POTONGAN PPH21", "(DE) POTONGAN PPH21"),
+    ])
+
+    assert registry.detect("POTONGAN PPH", "AUTO_BUFFER") == "pph21"
+    assert registry.detect("POTONGAN PPH21", "AUTO_BUFFER") == "pph21"
+
+
 def test_filter_and_row_limit_helpers():
     records = [normalize_record({"emp_code": f"B{i}", "adjustment_name": "AUTO SPSI"}, "spsi") for i in range(3)]
     records.append(normalize_record({"emp_code": "B9", "adjustment_name": "AUTO MASA KERJA"}, "masa_kerja"))
@@ -661,6 +721,106 @@ def test_manual_record_adcode_prefers_api_field_before_category_default():
     window.close()
 
 
+def test_pph21_preset_sets_auto_buffer_scope_and_display_values():
+    config = AppConfig(default_division_code="P1B")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("pph21", "PPh21", "AUTO_BUFFER", ("PPH",), "(DE) POTONGAN PPH21", "(DE) POTONGAN PPH21"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("P1B", "Estate")])
+    window.category.setCurrentIndex(window.category.findData("pph21"))
+    window.apply_category_preset()
+    record = normalize_record({
+        "id": 90,
+        "adjustment_type": "AUTO_BUFFER",
+        "adjustment_name": "POTONGAN PPH",
+        "amount": 93435,
+    }, "pph21")
+
+    assert window.adjustment_type.currentText() == "AUTO_BUFFER"
+    assert window.adjustment_name.text() == "POTONGAN PPH"
+    assert window.only_missing.isChecked() is True
+    assert window._adjustment_name_option_type() is None
+    assert window._default_filter_for_category_key("pph21") == "pph"
+    assert window._description_for_record(record) == "(DE) POTONGAN PPH21"
+    assert window._adcode_for_record(record) == "(DE) POTONGAN PPH21"
+    window.close()
+
+
+def test_sync_status_helpers_include_auto_buffer_pph21_ids():
+    config = AppConfig(default_division_code="P1B")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("pph21", "PPh21", "AUTO_BUFFER", ("PPH",), "(DE) POTONGAN PPH21", "(DE) POTONGAN PPH21"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("P1B", "Estate")])
+    window.category.setCurrentIndex(window.category.findData("pph21"))
+    window.apply_category_preset()
+    record = normalize_record({
+        "id": 90,
+        "adjustment_type": "AUTO_BUFFER",
+        "adjustment_name": "POTONGAN PPH",
+        "amount": 93435,
+    }, "pph21")
+    payload = RunPayload(
+        period_month=4,
+        period_year=2026,
+        division_code="P1B",
+        gang_code=None,
+        emp_code=None,
+        adjustment_type=None,
+        adjustment_name=None,
+        category_key="pph21",
+        runner_mode="mock",
+        max_tabs=1,
+        headless=True,
+        only_missing_rows=True,
+        row_limit=None,
+        records=[record],
+    )
+
+    window.records = [record]
+    assert sync_status_ids_for_records([record]) == [90]
+    assert window._sync_status_id_for_record(record) == 90
+    assert window._sync_status_adjustment_type_for_ids({90}) == "AUTO_BUFFER"
+    assert window._sync_status_scope_for_category("pph21", payload) == ("AUTO_BUFFER", "POTONGAN PPH")
+    window.close()
+
+
+def test_division_monitor_maps_pph21_filter():
+    from app.ui.division_monitor import FILTER_TO_CATEGORY, filters_for_categories
+
+    assert filters_for_categories(["pph21"]) == ["pph"]
+    assert FILTER_TO_CATEGORY["pph"] == "pph21"
+
+
+def test_division_run_dialog_builds_pph21_auto_buffer_payload():
+    config = AppConfig(default_division_code="P1B")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("pph21", "PPh21", "AUTO_BUFFER", ("PPH",), "(DE) POTONGAN PPH21", "(DE) POTONGAN PPH21"),
+    ])
+    dialog = DivisionRunDialog(
+        config=config,
+        categories=registry,
+        api_client=Mock(),
+        division_code="P1B",
+        division_label="Estate",
+        category_key="pph21",
+        category_label="PPh21",
+        mode="mock",
+        month=4,
+        year=2026,
+    )
+
+    payload = dialog._build_payload("mock", [])
+
+    assert payload.adjustment_type == "AUTO_BUFFER"
+    assert payload.adjustment_name == "POTONGAN PPH"
+    assert payload.category_key == "pph21"
+    dialog.close()
+
+
 def test_potongan_upah_bersih_preset():
     config = AppConfig(default_division_code="P1B")
     QApplication.instance() or QApplication([])
@@ -676,7 +836,7 @@ def test_potongan_upah_bersih_preset():
     assert window.adjustment_type.currentText() == "POTONGAN_BERSIH"
     assert window.adjustment_name.text() == ""
     assert window.only_missing.isChecked() is False
-    assert window.process_only_miss.isChecked() is False
+    assert window.process_only_miss.isChecked() is True
     window.close()
 
 
@@ -695,6 +855,18 @@ def test_filter_for_record_maps_all_category_keys():
     assert [filter_for_record(r) for r in records] == expected
 
 
+def test_filter_for_record_maps_pph21_to_pph():
+    from app.ui.main_window import filter_for_record
+
+    record = normalize_record({
+        "adjustment_type": "AUTO_BUFFER",
+        "adjustment_name": "POTONGAN PPH",
+        "amount": 93435,
+    }, "pph21")
+
+    assert filter_for_record(record) == "pph"
+
+
 def test_potongan_upah_bersih_preset():
     config = AppConfig(default_division_code="P1B")
     QApplication.instance() or QApplication([])
@@ -710,7 +882,7 @@ def test_potongan_upah_bersih_preset():
     assert window.adjustment_type.currentText() == "POTONGAN_BERSIH"
     assert window.adjustment_name.text() == ""
     assert window.only_missing.isChecked() is False
-    assert window.process_only_miss.isChecked() is False
+    assert window.process_only_miss.isChecked() is True
     window.close()
 
 
@@ -1073,6 +1245,52 @@ def test_fetch_completed_drops_records_with_wrong_emp_prefix_for_selected_divisi
     assert [record.emp_code for record in payload.records] == ["H0200"]
     window.close()
 
+def test_main_window_uses_concurrent_tabs_only_for_auto_key_in_multi_tab_payloads():
+    config = AppConfig(default_division_code="P1B", default_max_tabs=5)
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("P1B", "Estate")])
+    record = normalize_record({"emp_code": "B0065", "adjustment_name": "AUTO SPSI", "amount": 4000}, "spsi")
+
+    window.max_tabs.setValue(4)
+
+    auto_key_in_payload = window.build_payload("multi_tab_shared_session", [record])
+    session_payload = window.build_payload("get_session", [])
+    single_payload = window.build_payload("session_reuse_single", [record])
+
+    assert auto_key_in_payload.max_tabs == 4
+    assert session_payload.max_tabs == 1
+    assert single_payload.max_tabs == 1
+    window.close()
+
+def test_concurrent_tabs_controls_are_capped_at_eight():
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi"),
+    ])
+    window = MainWindow(AppConfig(default_division_code="P1B", default_max_tabs=9), registry, [DivisionOption("P1B", "Estate")])
+    dialog = DivisionRunDialog(
+        config=AppConfig(default_division_code="P1B", default_max_tabs=9),
+        categories=registry,
+        api_client=Mock(),
+        division_code="P1B",
+        division_label="Estate",
+        category_key="spsi",
+        category_label="SPSI",
+        mode="multi_tab_shared_session",
+        month=4,
+        year=2026,
+    )
+
+    assert window.max_tabs.maximum() == 8
+    assert window.max_tabs.value() == 8
+    assert dialog.concurrent_tabs.maximum() == 8
+    assert dialog.concurrent_tabs.value() == 8
+    dialog.close()
+    window.close()
+
 def test_fetch_completed_keeps_category_count_clear_after_miss_filter():
     config = AppConfig(default_division_code="AB2")
     QApplication.instance() or QApplication([])
@@ -1321,6 +1539,26 @@ def test_sync_status_posts_verification_payload():
     )
     assert result == payload
 
+
+def test_sync_status_uses_manual_division_alias_for_p1b_premium():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
+    response = Mock()
+    response.json.return_value = {"success": True, "data": {"rows": []}}
+
+    with patch("app.core.api_client.requests.post", return_value=response) as post:
+        client.sync_status(
+            period_month=4,
+            period_year=2026,
+            division_code="p1b",
+            adjustment_type="PREMI",
+            ids=[55989],
+            dry_run=True,
+        )
+
+    assert post.call_args.kwargs["json"]["division_code"] == "PG1B"
+
+
 def test_reverse_compare_adtrans_posts_division_payload():
     registry = CategoryRegistry([])
     client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
@@ -1453,6 +1691,44 @@ def test_division_card_enables_sync_for_mismatch_and_run_for_extra():
     card.close()
 
 
+def test_division_monitor_sync_worker_uses_missing_only():
+    client = Mock()
+    client.sync_adtrans.return_value = {"success": True, "data": {"synced_count": 1}}
+    worker = SyncWorker(client, 4, 2026, "AB1", ["jabatan"])
+    completed = []
+    worker.completed.connect(completed.append)
+
+    worker.run()
+
+    client.sync_adtrans.assert_called_once_with(4, 2026, "AB1", filters=["jabatan"], sync_mode="MISSING_ONLY")
+    assert completed == [{"success": True, "data": {"synced_count": 1}}]
+
+def test_division_run_dialog_sync_missing_uses_missing_only():
+    QApplication.instance() or QApplication([])
+    client = Mock()
+    client.sync_adtrans.return_value = {"success": True, "data": {"synced_count": 1, "skipped_match": 0}, "message": "ok"}
+    registry = CategoryRegistry([
+        AdjustmentCategory("tunjangan_jabatan", "Jabatan", "AUTO_BUFFER", ("JABATAN",), "jabatan"),
+    ])
+    dialog = DivisionRunDialog(
+        AppConfig(default_division_code="AB1"),
+        registry,
+        client,
+        "AB1",
+        "Estate",
+        "tunjangan_jabatan",
+        "Jabatan",
+        "dry_run",
+        4,
+        2026,
+    )
+
+    with patch("app.ui.division_run_dialog.QMessageBox.information"):
+        dialog._on_sync_missing()
+
+    client.sync_adtrans.assert_called_once_with(4, 2026, "AB1", filters=["jabatan"], sync_mode="MISSING_ONLY")
+    dialog.close()
+
 def test_division_run_dialog_filters_fetched_records_to_extra_details():
     QApplication.instance() or QApplication([])
     registry = CategoryRegistry([AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi")])
@@ -1473,6 +1749,32 @@ def test_division_run_dialog_filters_fetched_records_to_extra_details():
     unrelated = normalize_record({"emp_code": "B0070", "adjustment_name": "AUTO SPSI", "amount": 4000}, "spsi")
 
     assert dialog._filter_extra_records([extra, unrelated]) == [extra]
+    dialog.close()
+
+def test_division_run_dialog_uses_selected_concurrent_tabs_only_for_auto_key_in():
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([AdjustmentCategory("spsi", "SPSI", "AUTO_BUFFER", ("SPSI",), "spsi")])
+    dialog = DivisionRunDialog(
+        config=AppConfig(default_division_code="P1B", default_max_tabs=5),
+        categories=registry,
+        api_client=Mock(),
+        division_code="P1B",
+        division_label="Estate",
+        category_key="spsi",
+        category_label="SPSI",
+        mode="multi_tab_shared_session",
+        month=4,
+        year=2026,
+    )
+    record = normalize_record({"emp_code": "B0065", "adjustment_name": "AUTO SPSI", "amount": 4000}, "spsi")
+
+    dialog.concurrent_tabs.setValue(3)
+
+    auto_key_in_payload = dialog._build_payload("multi_tab_shared_session", [record])
+    session_payload = dialog._build_payload("get_session", [])
+
+    assert auto_key_in_payload.max_tabs == 3
+    assert session_payload.max_tabs == 1
     dialog.close()
 
 def test_division_fetch_worker_enriches_manual_records_with_automation_options():
@@ -1557,6 +1859,37 @@ def test_check_adtrans_report_posts_division_payload_and_preserves_duplicate_rep
     assert result == payload
 
 
+def test_check_adtrans_report_posts_specific_manual_adjustment_scope_without_filters():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
+    payload = {"success": True, "data": {"duplicate_report": {"duplicates": []}}}
+    response = Mock()
+    response.json.return_value = payload
+
+    with patch("app.core.api_client.requests.post", return_value=response) as post:
+        result = client.check_adtrans_report(
+            4,
+            2026,
+            [],
+            division_code="p1a",
+            adjustment_type="POTONGAN_KOTOR",
+            adjustment_name="Koreksi Brondol",
+        )
+
+    post.assert_called_once_with(
+        "http://localhost:8002/payroll/manual-adjustment/check-adtrans/by-api-key",
+        json={
+            "period_month": 4,
+            "period_year": 2026,
+            "division_code": "P1A",
+            "adjustment_type": "POTONGAN_KOTOR",
+            "adjustment_name": "Koreksi Brondol",
+        },
+        headers={"Content-Type": "application/json", "X-API-Key": "secret"},
+        timeout=30,
+    )
+    assert result == payload
+
 def test_get_duplicate_delete_targets_extracts_only_delete_old_records():
     registry = CategoryRegistry([])
     client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
@@ -1633,6 +1966,56 @@ def test_get_duplicate_delete_targets_keeps_newest_per_premium_doc_desc():
     assert [target.doc_id for target in targets] == ["ADIJL26044012", "ADIJL26044030"]
     assert [target.keep_doc_id for target in targets] == ["ADIJL26044346", "ADIJL26044355"]
 
+def test_get_duplicate_delete_targets_uses_specific_manual_adjustment_scope_without_filters():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "data": {
+            "duplicate_report": {
+                "duplicates": [
+                    {
+                        "emp_code": "a0970",
+                        "emp_name": "ASMAN",
+                        "category": "koreksi",
+                        "keep_doc_id": "ADP1A26044841",
+                        "records": [
+                            {"id": "677999", "doc_id": "ADP1A26044824", "doc_date": "2026-04-30", "doc_desc": "Koreksi Brondol", "amount": 28000, "action": "DELETE_OLD"},
+                            {"id": "678016", "doc_id": "ADP1A26044841", "doc_date": "2026-04-30", "doc_desc": "Koreksi Brondol", "amount": 28000, "action": "KEEP_NEWEST"},
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+
+    with patch("app.core.api_client.requests.post", return_value=response) as post:
+        targets = client.get_duplicate_delete_targets(
+            4,
+            2026,
+            "P1A",
+            [],
+            adjustment_type="POTONGAN_KOTOR",
+            adjustment_name="Koreksi Brondol",
+        )
+
+    post.assert_called_once_with(
+        "http://localhost:8002/payroll/manual-adjustment/check-adtrans/by-api-key",
+        json={
+            "period_month": 4,
+            "period_year": 2026,
+            "division_code": "P1A",
+            "adjustment_type": "POTONGAN_KOTOR",
+            "adjustment_name": "Koreksi Brondol",
+        },
+        headers={"Content-Type": "application/json", "X-API-Key": "secret"},
+        timeout=30,
+    )
+    assert [target.doc_id for target in targets] == ["ADP1A26044824"]
+    assert targets[0].keep_doc_id == "ADP1A26044841"
+    assert targets[0].category == "koreksi"
+
 def test_get_adtrans_doc_id_delete_targets_posts_config_payload():
     registry = CategoryRegistry([])
     client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
@@ -1673,6 +2056,53 @@ def test_get_adtrans_doc_id_delete_targets_posts_config_payload():
     assert targets[0].doc_desc == "PREMI TBS"
 
 
+def test_get_mismatch_doc_id_delete_targets_uses_compare_details():
+    registry = CategoryRegistry([])
+    client = ManualAdjustmentApiClient("http://localhost:8002", "secret", registry)
+    client.compare_adtrans = Mock(return_value={
+        "success": True,
+        "data": {
+            "comparisons": [
+                {
+                    "emp_code": "G0010",
+                    "gang_code": "G1H",
+                    "category": "jabatan",
+                    "adjustment_name": "AUTO TUNJANGAN JABATAN",
+                    "status": "MISMATCH",
+                    "source_amount": 150000,
+                    "stored_amount": 100000,
+                    "db_ptrj_doc_desc_details": [
+                        {"doc_id": "ADAB126040123", "doc_desc": "(AL) TUNJANGAN JABATAN", "amount": 150000},
+                        {"doc_id": "ADAB126040123", "doc_desc": "(AL) TUNJANGAN JABATAN", "amount": 150000},
+                    ],
+                },
+                {
+                    "emp_code": "G0020",
+                    "category": "jabatan",
+                    "adjustment_name": "AUTO TUNJANGAN JABATAN",
+                    "status": "MATCH",
+                    "db_ptrj_doc_desc_details": [{"doc_id": "MATCHDOC"}],
+                },
+            ]
+        },
+    })
+
+    targets = client.get_mismatch_doc_id_delete_targets(
+        4,
+        2026,
+        "ab1",
+        filters=["jabatan"],
+        category_key="tunjangan_jabatan",
+    )
+
+    client.compare_adtrans.assert_called_once_with(4, 2026, "AB1", filters=["jabatan"])
+    assert [target.doc_id for target in targets] == ["ADAB126040123"]
+    assert targets[0].action == "DELETE_RECORD"
+    assert targets[0].emp_code == "G0010"
+    assert targets[0].doc_desc == "(AL) TUNJANGAN JABATAN"
+    assert targets[0].amount == 150000
+    assert targets[0].raw["source"] == "compare-adtrans"
+
 def test_duplicate_cleanup_category_can_target_premi_filter():
     config = AppConfig(default_division_code="IJL")
     QApplication.instance() or QApplication([])
@@ -1707,7 +2137,76 @@ def test_duplicate_cleanup_button_text_tracks_dry_run_state():
     assert window.delete_duplicates_button.text() == "Delete Selected Duplicates"
     window.close()
 
-def test_reset_docid_request_uses_current_premium_config():
+
+def test_task_register_controls_use_query_gateway_config_and_location_code():
+    config = AppConfig(
+        default_division_code="DME",
+        query_gateway_base_url="http://10.0.0.110:8001",
+        query_gateway_api_key="gateway-secret",
+    )
+    QApplication.instance() or QApplication([])
+    window = MainWindow(config, CategoryRegistry([]), [DivisionOption("DME", "Damai Estate")])
+
+    assert window.task_register_gateway_base_url.text() == "http://10.0.0.110:8001"
+    assert window.task_register_gateway_api_key.text() == "gateway-secret"
+    assert window.task_register_gateway_server.text() == "SERVER_PROFILE_2"
+    assert window.task_register_gateway_database.text() == "db_ptrj"
+    assert window.task_register_loc_code.text() == "DME"
+    window.close()
+
+
+def test_task_register_fetch_worker_loads_targets_from_repository():
+    target = DuplicateDocIdTarget("4834465", "70897930_01", "2026-05-08", "", "", "TASK REGISTER", 201750, "DELETE_RECORD", "", "task_register", {"source": "task-register-pr-taskreg", "loc_code": "DME"})
+    repository = Mock()
+    repository.list_duplicate_targets.return_value = [target]
+    worker = TaskRegisterFetchWorker(repository, loc_code="DME", acc_month=2, acc_year=2027, limit=1000)
+    completed = []
+    worker.completed.connect(completed.append)
+
+    worker.run()
+
+    repository.list_duplicate_targets.assert_called_once_with(loc_code="DME", acc_month=2, acc_year=2027, limit=1000)
+    assert completed == [[target]]
+
+
+def test_task_register_fetch_completion_renders_delete_record_targets():
+    config = AppConfig(default_division_code="DME")
+    QApplication.instance() or QApplication([])
+    window = MainWindow(config, CategoryRegistry([]), [DivisionOption("DME", "Damai Estate")])
+    target = DuplicateDocIdTarget("4834465", "70897930_01", "2026-05-08", "", "", "TASK REGISTER", 201750, "DELETE_RECORD", "", "task_register", {"source": "task-register-pr-taskreg", "loc_code": "DME"})
+
+    window._handle_task_register_fetch_completed([target])
+
+    assert window.duplicate_table.rowCount() == 1
+    assert window.duplicate_table.item(0, 0).checkState() == Qt.CheckState.Checked
+    assert window.duplicate_table.item(0, 2).text() == "70897930_01"
+    assert window.duplicate_table.item(0, 3).text() == "DME"
+    assert window.delete_duplicates_button.isEnabled() is True
+    window.close()
+
+
+def test_task_register_duplicate_run_uses_loccode_session_and_category():
+    config = AppConfig(default_division_code="P1B")
+    QApplication.instance() or QApplication([])
+    window = MainWindow(config, CategoryRegistry([]), [DivisionOption("P1B", "Parit 1B"), DivisionOption("DME", "Damai Estate")])
+    target = DuplicateDocIdTarget("4834465", "70897930_01", "2026-05-08", "", "", "TASK REGISTER", 201750, "DELETE_RECORD", "", "task_register", {"source": "task-register-pr-taskreg", "loc_code": "DME", "acc_month": 2, "acc_year": 2027})
+    window._handle_task_register_fetch_completed([target])
+
+    with patch.object(window, "_session_active_for_code", return_value=True), patch.object(window, "start_runner") as start_runner:
+        window.run_duplicate_cleanup()
+
+    payload = start_runner.call_args.args[0]
+    assert payload.operation == "delete_duplicates"
+    assert payload.category_key == "task_register"
+    assert payload.division_code == "DME"
+    assert payload.session_division_code == "DME"
+    assert payload.period_month == 2
+    assert payload.period_year == 2027
+    assert payload.duplicate_targets == [target]
+    assert payload.delete_dry_run is True
+    window.close()
+
+def test_reset_docid_request_defaults_to_diff_source_with_current_premium_config():
     config = AppConfig(default_division_code="IJL")
     QApplication.instance() or QApplication([])
     registry = CategoryRegistry([
@@ -1726,14 +2225,125 @@ def test_reset_docid_request_uses_current_premium_config():
         "period_month": 4,
         "period_year": 2026,
         "division_code": "IJL",
+        "gang_code": None,
         "emp_code": None,
         "filters": ["premi"],
         "adjustment_type": "PREMI",
         "adjustment_name": "PREMI TBS",
         "category_key": "premi",
+        "source_mode": "diff",
+    }
+    assert window.reset_docid_source.count() == 1
+    assert window.reset_docid_source.currentData() == "diff"
+    window.close()
+
+
+def test_reset_docid_diff_request_marks_source_and_allows_gang_filter():
+    config = AppConfig(default_division_code="AB1")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("tunjangan_jabatan", "Jabatan", "AUTO_BUFFER", ("JABATAN",), "jabatan"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("AB1", "Estate")])
+    window.category.setCurrentIndex(window.category.findData("tunjangan_jabatan"))
+    window.gang_code.setText("G1H")
+    window.reset_docid_source.setCurrentText("DIFF/MISMATCH DocIDs")
+
+    request = window._reset_docid_request()
+
+    assert request["source_mode"] == "diff"
+    assert request["gang_code"] == "G1H"
+    assert request["filters"] == ["jabatan"]
+    window.close()
+
+def test_reset_fetch_worker_uses_compare_for_diff_source():
+    client = Mock()
+    client.get_mismatch_doc_id_delete_targets.return_value = []
+    client.get_adtrans_doc_id_delete_targets.return_value = []
+    worker = ResetDocIdFetchWorker(client, {
+        "source_mode": "diff",
+        "period_month": 4,
+        "period_year": 2026,
+        "division_code": "AB1",
+        "gang_code": "G1H",
+        "emp_code": None,
+        "filters": ["jabatan"],
+        "adjustment_type": None,
+        "adjustment_name": None,
+        "category_key": "tunjangan_jabatan",
+    })
+
+    completed = []
+    worker.completed.connect(completed.append)
+    worker.run()
+
+    client.get_mismatch_doc_id_delete_targets.assert_called_once_with(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        gang_code="G1H",
+        emp_code=None,
+        filters=["jabatan"],
+        adjustment_type=None,
+        adjustment_name=None,
+        category_key="tunjangan_jabatan",
+    )
+    client.get_adtrans_doc_id_delete_targets.assert_not_called()
+    assert completed == [[]]
+
+def test_duplicate_cleanup_request_uses_current_manual_config_without_broad_filters():
+    config = AppConfig(default_division_code="P1A")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("potongan_upah_kotor", "Potongan Upah Kotor", "POTONGAN_KOTOR", ("POTONGAN", "KOREKSI"), "potongan"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("P1A", "Parit Gunung 1A")])
+    window.category.setCurrentIndex(window.category.findData("potongan_upah_kotor"))
+    window.duplicate_category.setCurrentIndex(window.duplicate_category.findData("potongan_upah_kotor"))
+    window.period_month.setValue(4)
+    window.period_year.setValue(2026)
+    window.adjustment_type.setCurrentText("POTONGAN_KOTOR")
+    window.adjustment_name.setText("Koreksi Brondol")
+
+    request = window._duplicate_cleanup_request()
+
+    assert request == {
+        "period_month": 4,
+        "period_year": 2026,
+        "division_code": "P1A",
+        "filters": [],
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "Koreksi Brondol",
+        "doc_desc": None,
     }
     window.close()
 
+def test_duplicate_cleanup_request_uses_current_manual_type_when_name_is_blank():
+    config = AppConfig(default_division_code="P1A")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("potongan_upah_kotor", "Potongan Upah Kotor", "POTONGAN_KOTOR", ("POTONGAN", "KOREKSI"), "potongan"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("P1A", "Parit Gunung 1A")])
+    window.category.setCurrentIndex(window.category.findData("potongan_upah_kotor"))
+    window.duplicate_category.setCurrentIndex(window.duplicate_category.findData("potongan_upah_kotor"))
+    window.period_month.setValue(4)
+    window.period_year.setValue(2026)
+    window.adjustment_type.setCurrentText("POTONGAN_KOTOR")
+    window.adjustment_name.setText("")
+
+    request = window._duplicate_cleanup_request()
+
+    assert request == {
+        "period_month": 4,
+        "period_year": 2026,
+        "division_code": "P1A",
+        "filters": [],
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": None,
+        "doc_desc": None,
+    }
+    window.close()
 
 def test_reset_docid_fetch_completion_renders_delete_record_targets():
     config = AppConfig(default_division_code="IJL")
@@ -1764,8 +2374,9 @@ def test_reset_docid_run_uses_delete_record_targets():
     window = MainWindow(config, registry, [DivisionOption("IJL", "Ijuk")])
     target = DuplicateDocIdTarget("", "ADIJL26041001", "", "", "", "PREMI TBS", None, "DELETE_RECORD", "", "premi", {"source": "adtrans-doc-ids"})
     window._handle_reset_docid_fetch_completed([target])
+    window.runner_mode.setCurrentText("fresh_login_single")
 
-    with patch.object(window, "start_runner") as start_runner:
+    with patch.object(window, "_selected_session_active", return_value=True), patch.object(window, "start_runner") as start_runner:
         window.run_reset_docid_delete()
 
     payload = start_runner.call_args.args[0]
@@ -1773,6 +2384,46 @@ def test_reset_docid_run_uses_delete_record_targets():
     assert payload.delete_dry_run is True
     assert payload.duplicate_targets == [target]
     assert payload.category_key == "premi"
+    assert payload.runner_mode == "session_reuse_single"
+    window.close()
+
+def test_reset_docid_run_blocks_when_saved_session_missing_even_in_dry_run():
+    config = AppConfig(default_division_code="IJL")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("IJL", "Ijuk")])
+    target = DuplicateDocIdTarget("", "ADIJL26041001", "", "", "", "PREMI TBS", None, "DELETE_RECORD", "", "premi", {"source": "compare-adtrans"})
+    window._handle_reset_docid_fetch_completed([target])
+    window.runner_mode.setCurrentText("fresh_login_single")
+
+    with patch.object(window, "_selected_session_active", return_value=False), patch.object(window, "start_runner") as start_runner, patch("app.ui.main_window.QMessageBox.warning"):
+        window.run_reset_docid_delete()
+
+    start_runner.assert_not_called()
+    assert "Session aktif" in window.reset_docid_status_label.text()
+    assert "fresh_login_single" not in window.reset_docid_status_label.text()
+    window.close()
+
+def test_duplicate_cleanup_forces_saved_session_runner_mode():
+    config = AppConfig(default_division_code="IJL")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("IJL", "Ijuk")])
+    target = DuplicateDocIdTarget("1", "ADIJL26041001", "", "", "", "PREMI TBS", None, "DELETE_OLD", "", "premi", {"source": "duplicate"})
+    window._handle_duplicate_fetch_completed([target])
+    window.runner_mode.setCurrentText("fresh_login_single")
+
+    with patch.object(window, "_selected_session_active", return_value=True), patch.object(window, "start_runner") as start_runner:
+        window.run_duplicate_cleanup()
+
+    payload = start_runner.call_args.args[0]
+    assert payload.operation == "delete_duplicates"
+    assert payload.runner_mode == "session_reuse_single"
+    assert payload.duplicate_targets == [target]
     window.close()
 
 
@@ -1784,6 +2435,51 @@ def test_run_payload_serializes_duplicate_targets():
     assert payload.to_json_dict()["delete_dry_run"] is False
     assert payload.to_json_dict()["duplicate_targets"][0]["doc_id"] == "AD1"
 
+
+def test_completed_actual_diff_reset_applies_sync_status_audit():
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("tunjangan_jabatan", "Jabatan", "AUTO_BUFFER", ("JABATAN",), "jabatan"),
+    ])
+    window = MainWindow(AppConfig(default_division_code="AB1"), registry, [DivisionOption("AB1", "Estate")])
+    window.category.setCurrentIndex(window.category.findData("tunjangan_jabatan"))
+    client = Mock()
+    client.sync_status.return_value = {"success": True, "data": {"updated_count": 1, "skipped_count": 0}}
+    window._api_client = Mock(return_value=client)
+    window.active_run_payload = RunPayload(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        gang_code=None,
+        emp_code=None,
+        adjustment_type="AUTO_BUFFER",
+        adjustment_name="AUTO TUNJANGAN JABATAN",
+        category_key="tunjangan_jabatan",
+        runner_mode="mock",
+        max_tabs=1,
+        headless=True,
+        only_missing_rows=True,
+        row_limit=None,
+        records=[],
+        operation="delete_duplicates",
+        duplicate_targets=[
+            DuplicateDocIdTarget("", "ADAB1", "", "G0010", "", "JABATAN", 150000, "DELETE_RECORD", "", "tunjangan_jabatan", {"source": "compare-adtrans"})
+        ],
+        delete_dry_run=False,
+    )
+
+    window._handle_run_completed({"success": True})
+
+    client.sync_status.assert_called_once()
+    kwargs = client.sync_status.call_args.kwargs
+    assert kwargs["period_month"] == 4
+    assert kwargs["period_year"] == 2026
+    assert kwargs["division_code"] == "AB1"
+    assert kwargs["adjustment_type"] == "AUTO_BUFFER"
+    assert kwargs["adjustment_name"] == "AUTO TUNJANGAN JABATAN"
+    assert kwargs["dry_run"] is False
+    assert kwargs["only_if_adtrans_exists"] is True
+    window.close()
 
 def test_add_job_button_registers_current_config_in_job_table():
     config = AppConfig(default_division_code="P1B")
@@ -1820,7 +2516,7 @@ def test_premi_preset_fetches_all_premi_names():
     window.close()
 
 
-def test_non_premium_manual_fetch_preview_ignores_miss_only_filter():
+def test_non_premium_manual_fetch_preview_applies_miss_only_filter():
     config = AppConfig(default_division_code="P1B")
     QApplication.instance() or QApplication([])
     registry = CategoryRegistry([
@@ -1842,9 +2538,42 @@ def test_non_premium_manual_fetch_preview_ignores_miss_only_filter():
 
     window._handle_fetch_completed([record], {})
 
+    assert window.records_table.rowCount() == 0
+    assert window.records == []
+    window.close()
+
+def test_manual_fetch_miss_only_excludes_diff_records():
+    config = AppConfig(default_division_code="P1B")
+    QApplication.instance() or QApplication([])
+    registry = CategoryRegistry([
+        AdjustmentCategory("potongan_upah_kotor", "Potongan Upah Kotor", "POTONGAN_KOTOR", ("POTONGAN",), "potongan"),
+    ])
+    window = MainWindow(config, registry, [DivisionOption("P1B", "Estate")])
+    window.category.setCurrentIndex(window.category.findData("potongan_upah_kotor"))
+    window.process_only_miss.setChecked(True)
+    miss = normalize_record({
+        "emp_code": "B0732",
+        "gang_code": "B1H",
+        "division_code": "PG1B",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "POTONGAN LAIN",
+        "amount": 1000,
+        "remarks": "POTONGAN LAIN | DE0001 | 1000 | sync:MISS | match:MISMATCH",
+    }, "potongan_upah_kotor")
+    diff = normalize_record({
+        "emp_code": "B0733",
+        "gang_code": "B1H",
+        "division_code": "PG1B",
+        "adjustment_type": "POTONGAN_KOTOR",
+        "adjustment_name": "POTONGAN LAIN",
+        "amount": 2000,
+        "remarks": "POTONGAN LAIN | DE0001 | 2000 | sync:DIFF | match:MISMATCH",
+    }, "potongan_upah_kotor")
+
+    window._handle_fetch_completed([miss, diff], {})
+
+    assert [record.emp_code for record in window.records] == ["B0732"]
     assert window.records_table.rowCount() == 1
-    assert window.records_table.item(0, 4).text() == "B0732"
-    assert window.records_table.item(0, 7).text() == "POTONGAN LAIN"
     window.close()
 
 def test_premi_fetch_preview_filters_verified_match_in_retry_safe_mode():
@@ -2181,6 +2910,38 @@ def test_scan_session_status_detects_active_division_session(tmp_path):
     assert p2a["status"] == "— None"
     assert p2a["active"] is False
 
+def test_virtual_division_reuses_parent_session_and_payload_location(tmp_path):
+    session_dir = tmp_path / "runner" / "data" / "sessions"
+    session_dir.mkdir(parents=True)
+    saved_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+    (session_dir / "session-P1A.json").write_text(json.dumps({
+        "sessionId": "session-P1A",
+        "division": "P1A",
+        "savedAt": saved_at.isoformat(),
+        "storageState": {"cookies": [{"name": "ASP.NET_SessionId"}]},
+    }), encoding="utf-8")
+    config = AppConfig(
+        runner_command=f"node {tmp_path / 'runner' / 'dist' / 'cli.js'}",
+        default_division_code="INF",
+    )
+    QApplication.instance() or QApplication([])
+    window = MainWindow(config, CategoryRegistry([]), [
+        DivisionOption("P1A", "ESTATE PARIT GUNUNG 1A"),
+        DivisionOption("INF", "VIRTUAL INFRASTRUKTUR", ("INFRA",), location_code="P1A", session_code="P1A", virtual=True),
+    ])
+
+    statuses = window._scan_session_status()
+    payload = window.build_payload("get_session", [], division_code="INF")
+    window.close()
+
+    infra = next(item for item in statuses if item["code"] == "INF")
+    assert infra["session_code"] == "P1A"
+    assert infra["active"] is True
+    assert infra["status"] == "Active"
+    assert "P1A" in str(infra["label"])
+    assert payload.division_code == "INF"
+    assert payload.session_division_code == "P1A"
+
 
 def test_scan_session_status_marks_expired_session(tmp_path):
     session_dir = tmp_path / "runner" / "data" / "sessions"
@@ -2212,6 +2973,47 @@ def test_verified_match_and_mismatch_are_not_treated_as_missing():
     assert window._record_is_miss(record) is True
     window.close()
 
+
+def test_record_is_stale_miss_excludes_diff_and_mismatch():
+    miss = normalize_record({
+        "remarks": "AUTO SPSI | spsi | 4000 | sync:MISS | match:MISMATCH",
+    }, "spsi")
+    diff = normalize_record({
+        "remarks": "AUTO SPSI | spsi | 4000 | sync:DIFF | match:MISMATCH",
+    }, "spsi")
+    mismatch = normalize_record({
+        "remarks": "AUTO SPSI | spsi | 4000 | sync:MANUAL | match:MISMATCH",
+    }, "spsi")
+
+    assert record_is_stale_miss(miss) is True
+    assert record_is_stale_miss(diff) is False
+    assert record_is_stale_miss(mismatch) is False
+
+def test_sync_status_diff_verification_is_not_treated_as_missing():
+    QApplication.instance() or QApplication([])
+    window = MainWindow(AppConfig(default_division_code="AB1"), CategoryRegistry([]), [DivisionOption("AB1", "Estate")])
+    record = normalize_record({
+        "id": 10,
+        "emp_code": "G0597",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI PRUNING",
+        "amount": 500000,
+        "remarks": "PREMI PRUNING | AL3PM0601 | 500000 | sync:MISS | match:MISMATCH",
+    }, "premi")
+    window.fetch_verification_status = {
+        "source": "sync-status",
+        "sync_status_payload": {
+            "data": {
+                "rows": [
+                    {"id": 10, "status": "UPDATED", "new_sync_status": "DIFF", "target_amount": 500000, "adtrans_amount": 350000}
+                ]
+            }
+        },
+    }
+
+    assert window._record_is_miss(record) is False
+    assert window._db_status_for_record(record) == "DB Mismatch"
+    window.close()
 
 def test_fetch_worker_verifies_stale_missing_records_against_db_ptrj():
     record = normalize_record({"emp_code": "B0065", "adjustment_name": "AUTO SPSI", "amount": 4000, "remarks": "sync:MISS"}, "spsi")
@@ -2275,6 +3077,37 @@ def test_fetch_worker_prefers_sync_status_for_premium_retry_plan():
     client.sync_status.assert_called_once()
     client.check_adtrans.assert_not_called()
 
+def test_fetch_worker_uses_virtual_api_code_and_parent_automation_options():
+    record = normalize_record({
+        "period_month": 4,
+        "period_year": 2026,
+        "emp_code": "A0010",
+        "gang_code": "INF",
+        "division_code": "INF",
+        "adjustment_type": "PREMI",
+        "adjustment_name": "PREMI INFRA",
+        "amount": 100000,
+        "remarks": "PREMI INFRA | sync:SYNC | match:MATCH",
+    }, "premi")
+    client = Mock()
+    client.get_adjustments.return_value = [record]
+    client.get_automation_options.return_value = []
+    worker = FetchWorker(
+        client,
+        ManualAdjustmentQuery(period_month=4, period_year=2026, division_code="INF", adjustment_type="PREMI"),
+        automation_division_code="P1A",
+    )
+    completed = []
+    worker.completed.connect(lambda records, verification: completed.append((records, verification)))
+
+    worker.run()
+
+    fetch_query = client.get_adjustments.call_args.args[0]
+    assert fetch_query.params()["division_code"] == "INF"
+    client.get_automation_options.assert_called_once()
+    assert client.get_automation_options.call_args.kwargs["division_code"] == "P1A"
+    assert completed[0][0] == [record]
+
 def test_fetch_worker_does_not_reverify_premium_records_already_sync_in_remarks():
     record = normalize_record({
         "period_month": 4,
@@ -2299,7 +3132,7 @@ def test_fetch_worker_does_not_reverify_premium_records_already_sync_in_remarks(
     client.sync_status.assert_not_called()
     client.check_adtrans.assert_not_called()
 
-def test_fetch_worker_sums_duplicate_emp_filter_before_verification():
+def test_fetch_worker_excludes_mismatch_rows_from_missing_verification_total():
     records = [
         normalize_record({"emp_code": "B0065", "adjustment_name": "AUTO SPSI", "amount": 2000, "remarks": "sync:MISS"}, "spsi"),
         normalize_record({"emp_code": "B0065", "adjustment_name": "AUTO SPSI", "amount": 2000, "remarks": "match:MISMATCH"}, "spsi"),
@@ -2313,8 +3146,8 @@ def test_fetch_worker_sums_duplicate_emp_filter_before_verification():
 
     worker.run()
 
-    assert completed[0][1][("B0065", "spsi")]["expected"] == 4000
-    assert completed[0][1][("B0065", "spsi")]["status"] == "VERIFIED_MATCH"
+    assert completed[0][1][("B0065", "spsi")]["expected"] == 2000
+    assert completed[0][1][("B0065", "spsi")]["status"] == "VERIFIED_MISMATCH"
 
 
 def test_fetch_worker_keeps_records_when_db_ptrj_verification_fails():

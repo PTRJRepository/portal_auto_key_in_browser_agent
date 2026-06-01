@@ -1,5 +1,6 @@
 import type { DeleteDuplicateRowResult, DuplicateDocIdTarget, RunPayload, RunResult } from "../types.js";
 import { BrowserSession } from "../session/browser-session.js";
+import { sessionDivisionCode } from "../payload.js";
 import { findVisibleTargetMatches, goToNextListPage, gotoListPage, targetKey, visibleDocumentRows } from "../plantware/duplicate-docids.js";
 
 type Emit = (event: Record<string, unknown>) => void;
@@ -13,18 +14,19 @@ export async function runDebugDuplicateScan(payload: RunPayload, emit: Emit): Pr
   const rows: DeleteDuplicateRowResult[] = [];
   const matchedKeys = new Set<string>();
 
-  emit({ event: "duplicate.debug.started", division_code: payload.division_code, total_targets: targets.length, max_pages: MAX_DEBUG_SCAN_PAGES, target_keys: [...pending.keys()].slice(0, 50), message: `Debug duplicate scan started for ${payload.division_code}: targets=${targets.length}, max_pages=${MAX_DEBUG_SCAN_PAGES}` });
+  const sessionDivision = sessionDivisionCode(payload);
+  emit({ event: "duplicate.debug.started", division_code: payload.division_code, session_division_code: sessionDivision, total_targets: targets.length, max_pages: MAX_DEBUG_SCAN_PAGES, target_keys: [...pending.keys()].slice(0, 50), message: `Debug duplicate scan started for ${payload.division_code}: targets=${targets.length}, max_pages=${MAX_DEBUG_SCAN_PAGES}` });
 
   const session = new BrowserSession({
     headless: payload.headless,
     freshLoginFirst: payload.runner_mode === "fresh_login_single",
-    division: payload.division_code
+    division: sessionDivision
   });
 
   let pageIndex = 1;
   try {
     await session.start();
-    emit({ event: "session.ready", reused: session.sessionReused, session_path: session.getSessionPath(), message: session.sessionReused ? "Session reused" : "Fresh session login completed" });
+    emit({ event: "session.ready", division_code: payload.division_code, session_division_code: sessionDivision, reused: session.sessionReused, session_path: session.getSessionPath(), message: session.sessionReused ? "Session reused" : "Fresh session login completed" });
     const page = await session.newPage();
     await gotoListPage(page);
 

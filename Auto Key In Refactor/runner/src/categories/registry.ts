@@ -59,6 +59,7 @@ function fieldExpense(): string {
  * - SPSI          → "POTONGAN SPSI" (bukan "SPSI")
  * - Masa Kerja    → "TUNJANGAN MASA KERJA" (bukan "MASA KERJA")
  * - Tunjangan Jabatan → "TUNJANGAN JABATAN" (sudah benar dari cleanDescription)
+ * - PPh21        -> "(DE) POTONGAN PPH21"
  *
  * Non-AUTO_BUFFER categories:
  * - Ikuti adjustment_name apa adanya (strip prefix "AUTO " jika ada)
@@ -83,6 +84,13 @@ export const CATEGORY_STRATEGIES: CategoryStrategy[] = [
     adcode: () => "tunjangan jabatan",
     matches: (record) => record.adjustment_name.toUpperCase().includes("JABATAN"),
     description: () => "TUNJANGAN JABATAN",
+    expenseCode: labourExpense
+  },
+  {
+    key: "pph21",
+    adcode: () => "(DE) POTONGAN PPH21",
+    matches: (record) => record.adjustment_type === "AUTO_BUFFER" && record.adjustment_name.toUpperCase().includes("PPH"),
+    description: () => "(DE) POTONGAN PPH21",
     expenseCode: labourExpense
   },
   {

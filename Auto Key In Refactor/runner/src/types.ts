@@ -48,6 +48,24 @@ export interface DuplicateDocIdTarget {
   raw?: Record<string, unknown>;
 }
 
+export interface LoosefruitTarget {
+  doc_id: string;
+  master_id?: string | null;
+  loc_code: string;
+  doc_date?: string | null;
+  action: string;
+  raw?: Record<string, unknown>;
+}
+
+export interface DeleteLoosefruitRowResult {
+  doc_id: string;
+  master_id?: string | null;
+  loc_code: string;
+  status: "deleted" | "dry_run" | "not_found" | "failed";
+  message: string;
+  page_index?: number;
+}
+
 export interface RunPayload {
   period_month: number;
   period_year: number;
@@ -63,7 +81,8 @@ export interface RunPayload {
   only_missing_rows: boolean;
   row_limit?: number | null;
   records: ManualAdjustmentRecord[];
-  operation?: "input" | "delete_duplicates" | "debug_duplicate_scan";
+  session_division_code?: string | null;
+  operation?: "input" | "delete_duplicates" | "delete_loosefruit" | "debug_duplicate_scan";
   duplicate_targets?: DuplicateDocIdTarget[];
   delete_dry_run?: boolean;
 }
@@ -99,8 +118,9 @@ export interface RunResult {
   skipped_existing_rows: number;
   failed_rows: number;
   error_summary: string | null;
-  rows: RowResult[] | DeleteDuplicateRowResult[];
+  rows: RowResult[] | DeleteDuplicateRowResult[] | DeleteLoosefruitRowResult[];
   deleted_rows?: number;
   dry_run_rows?: number;
   not_found_rows?: number;
 }
+

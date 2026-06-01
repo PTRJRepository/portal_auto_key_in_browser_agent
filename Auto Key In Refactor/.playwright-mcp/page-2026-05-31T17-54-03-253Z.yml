@@ -1,0 +1,220 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - link [ref=e6] [cursor=pointer]:
+      - /url: /en/system/user/frmSystemUserSetlocation.aspx?FROM=OK
+      - img [ref=e7]
+      - img [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img "Company" [ref=e11]
+        - text: PT. REBINMAS JAYA
+      - generic [ref=e12]:
+        - img "Location" [ref=e13]
+        - text: ESTATE AIR RUAK B1 (AB1)
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - img "User ID" [ref=e16]
+        - text: Atha Rizki Pangestu
+        - img "Date Time" [ref=e17]
+        - text: Monday, 1 June 2026
+      - generic [ref=e18]:
+        - link "Change Location" [ref=e19] [cursor=pointer]:
+          - /url: javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$lnkLocation", "", true, "", "", false, true))
+          - img "Change Location" [ref=e20]
+        - text: "|"
+        - link "Change Password" [ref=e21] [cursor=pointer]:
+          - /url: javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$lnkPassword", "", true, "", "", false, true))
+          - img "Change Password" [ref=e22]
+        - text: "|"
+        - link "Change Email Address" [ref=e23] [cursor=pointer]:
+          - /url: javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$lnkChangeEmail", "", true, "", "", false, true))
+          - img "Change Email Address" [ref=e24]
+        - text: "|"
+        - link "Logout" [ref=e25] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLogout','')
+          - img "Logout" [ref=e26]
+    - generic [ref=e27]:
+      - link "Skip Navigation Links":
+        - /url: "#NavigationMenu_SkipLink"
+        - img "Skip Navigation Links"
+      - menubar [ref=e29]:
+        - menuitem "Admin" [ref=e30]:
+          - generic [ref=e31]: Admin
+        - menuitem "Financials" [ref=e32]:
+          - generic [ref=e33]: Financials
+        - menuitem "Procurement" [ref=e34]:
+          - generic [ref=e35]: Procurement
+        - menuitem "Human Resource" [ref=e36]:
+          - generic [ref=e37]: Human Resource
+        - menuitem "Budget" [ref=e38]:
+          - generic [ref=e39]: Budget
+        - menuitem "Expansion" [ref=e40]:
+          - generic [ref=e41]: Expansion
+        - menuitem "Reports" [ref=e42]:
+          - generic [ref=e43]: Reports
+  - generic [ref=e45]: Human Resource > Payroll > Loose Fruit Collector List > Details
+  - table [ref=e47]:
+    - rowgroup [ref=e48]:
+      - row [ref=e49]:
+        - cell [ref=e50]
+      - row "LOOSE FRUIT COLLECTOR DETAILS" [ref=e51]:
+        - cell "LOOSE FRUIT COLLECTOR DETAILS" [ref=e52]
+      - row [ref=e53]:
+        - cell [ref=e54]:
+          - separator [ref=e55]
+      - 'row "Document ID :* LF90563812_01 Period : 2/2027(May/2026)" [ref=e56]':
+        - cell "Document ID :*" [ref=e57]
+        - cell "LF90563812_01" [ref=e58]:
+          - textbox [disabled] [ref=e59]: LF90563812_01
+        - cell [ref=e60]
+        - cell "Period :" [ref=e61]
+        - cell "2/2027(May/2026)" [ref=e62]
+        - cell [ref=e63]
+      - 'row "Document Date : * 02/05/2026 Created By : adm075" [ref=e64]':
+        - 'cell "Document Date : *" [ref=e65]'
+        - cell "02/05/2026" [ref=e66]:
+          - textbox [disabled] [ref=e67]: 02/05/2026
+        - cell [ref=e68]
+        - cell "Created By :" [ref=e69]
+        - cell "adm075" [ref=e70]
+        - cell [ref=e71]
+      - 'row "Total MT : 1.00000 Created Date : 23/05/2026 23:44:57" [ref=e72]':
+        - cell "Total MT :" [ref=e73]
+        - cell "1.00000" [ref=e74]:
+          - textbox [disabled] [ref=e75]: "1.00000"
+        - cell [ref=e76]
+        - cell "Created Date :" [ref=e77]
+        - cell "23/05/2026 23:44:57" [ref=e78]
+        - cell [ref=e79]
+      - 'row "Updated By : adm075" [ref=e80]':
+        - cell [ref=e81]
+        - cell [ref=e82]
+        - cell [ref=e83]
+        - cell "Updated By :" [ref=e84]
+        - cell "adm075" [ref=e85]
+        - cell [ref=e86]
+      - 'row "Updated Date : 23/05/2026 23:44:57" [ref=e87]':
+        - cell [ref=e88]
+        - cell [ref=e89]
+        - cell [ref=e90]
+        - cell "Updated Date :" [ref=e91]
+        - cell "23/05/2026 23:44:57" [ref=e92]
+        - cell [ref=e93]
+      - 'row "Status : Active" [ref=e94]':
+        - cell [ref=e95]
+        - cell [ref=e96]
+        - cell [ref=e97]
+        - cell "Status :" [ref=e98]
+        - cell "Active" [ref=e99]
+        - cell [ref=e100]
+      - 'row "Charge To :* ESTATE AIR RUAK B1 Employee :* Transaction Date :* 02/05/2026 Task Code :* Select Task Code MT :* Rate :* 0.00000 Work Hours :* 0 Total Amount : Add" [ref=e101]':
+        - 'cell "Charge To :* ESTATE AIR RUAK B1 Employee :* Transaction Date :* 02/05/2026 Task Code :* Select Task Code MT :* Rate :* 0.00000 Work Hours :* 0 Total Amount : Add" [ref=e102]':
+          - table [ref=e103]:
+            - rowgroup [ref=e104]:
+              - 'row "Charge To :* ESTATE AIR RUAK B1 Employee :* Transaction Date :* 02/05/2026 Task Code :* Select Task Code MT :* Rate :* 0.00000 Work Hours :* 0 Total Amount : Add" [ref=e105]':
+                - 'cell "Charge To :* ESTATE AIR RUAK B1 Employee :* Transaction Date :* 02/05/2026 Task Code :* Select Task Code MT :* Rate :* 0.00000 Work Hours :* 0 Total Amount : Add" [ref=e106]':
+                  - table [ref=e107]:
+                    - rowgroup [ref=e108]:
+                      - row "Charge To :* ESTATE AIR RUAK B1" [ref=e109]:
+                        - cell "Charge To :*" [ref=e110]
+                        - cell "ESTATE AIR RUAK B1" [ref=e111]:
+                          - combobox [ref=e112]:
+                            - option
+                            - option "ESTATE AIR RUAK B1" [selected]
+                            - option "ESTATE AIR RUAK B2"
+                            - option "ESTATE AIR RUAK A"
+                            - option "ESTATE AIR RUAK C"
+                            - option "ESTATE DARUR MAKMUR"
+                            - option "PTRJ HQ"
+                            - option "ESTATE IMPIAN JAYA LESTARI"
+                            - option "ESTATE PARIT GUNUNG 1A"
+                            - option "ESTATE PARIT GUNUNG 1B"
+                            - option "ESTATE PARIT GUNUNG 2A"
+                            - option "ESTATE PARIT GUNUNG 2B"
+                      - row "Employee :*" [ref=e113]:
+                        - cell "Employee :*" [ref=e114]
+                        - cell [ref=e115]:
+                          - textbox [ref=e116]
+                      - row "Transaction Date :* 02/05/2026" [ref=e117]:
+                        - cell "Transaction Date :*" [ref=e118]
+                        - cell "02/05/2026" [ref=e119]:
+                          - textbox [ref=e120]: 02/05/2026
+                      - row "Task Code :* Select Task Code" [ref=e121]:
+                        - cell "Task Code :*" [ref=e122]
+                        - cell "Select Task Code" [ref=e123]:
+                          - combobox [ref=e124]:
+                            - option "Select Task Code" [selected]
+                            - option "(CT2202AB1) (PM) LOOSE FRUIT COLLECTION"
+                            - option "(PM2202AB1) (PM) LOOSE FRUIT COLLECTION"
+                      - row "MT :*" [ref=e125]:
+                        - cell "MT :*" [ref=e126]
+                        - cell [ref=e127]:
+                          - textbox [ref=e128]
+                      - row "Rate :* 0.00000" [ref=e129]:
+                        - cell "Rate :*" [ref=e130]
+                        - cell "0.00000" [ref=e131]:
+                          - textbox [ref=e132]: "0.00000"
+                      - row "Work Hours :* 0" [ref=e133]:
+                        - cell "Work Hours :*" [ref=e134]
+                        - cell "0" [ref=e135]:
+                          - textbox [ref=e136]: "0"
+                      - row "Total Amount :" [ref=e137]:
+                        - cell "Total Amount :" [ref=e138]
+                        - cell [ref=e139]
+                      - row [ref=e140]:
+                        - cell [ref=e141]
+                        - cell [ref=e142]
+                        - cell [ref=e143]
+                        - cell [ref=e144]
+                        - cell [ref=e145]
+                        - cell [ref=e146]
+                      - row "Add" [ref=e147]:
+                        - cell "Add" [ref=e148]:
+                          - button "Add" [ref=e149] [cursor=pointer]
+      - 'row "Task Code Transaction Date Employee Code Employee Name Field No Code : Staff Ref MT Rate Amount PM2202AB1 02/05/2026 G0286 SAHID ( NENGWATI ) PM0804G2 1.00000 1,750.00 1,750.00000 Edit Delete" [ref=e150]':
+        - 'cell "Task Code Transaction Date Employee Code Employee Name Field No Code : Staff Ref MT Rate Amount PM2202AB1 02/05/2026 G0286 SAHID ( NENGWATI ) PM0804G2 1.00000 1,750.00 1,750.00000 Edit Delete" [ref=e151]':
+          - table [ref=e153]:
+            - rowgroup [ref=e154]:
+              - 'row "Task Code Transaction Date Employee Code Employee Name Field No Code : Staff Ref MT Rate Amount" [ref=e155]':
+                - columnheader "Task Code" [ref=e156]
+                - columnheader "Transaction Date" [ref=e157]
+                - columnheader "Employee Code" [ref=e158]
+                - columnheader "Employee Name" [ref=e159]
+                - columnheader "Field No Code :" [ref=e160]
+                - columnheader "Staff Ref" [ref=e161]
+                - columnheader "MT" [ref=e162]
+                - columnheader "Rate" [ref=e163]
+                - columnheader "Amount" [ref=e164]
+                - columnheader [ref=e165]
+                - columnheader [ref=e166]
+              - row "PM2202AB1 02/05/2026 G0286 SAHID ( NENGWATI ) PM0804G2 1.00000 1,750.00 1,750.00000 Edit Delete" [ref=e167]:
+                - cell "PM2202AB1" [ref=e168]
+                - cell "02/05/2026" [ref=e169]
+                - cell "G0286" [ref=e170]
+                - cell "SAHID ( NENGWATI )" [ref=e171]
+                - cell "PM0804G2" [ref=e172]
+                - cell [ref=e173]
+                - cell "1.00000" [ref=e174]
+                - cell "1,750.00" [ref=e175]
+                - cell "1,750.00000" [ref=e176]
+                - cell "Edit" [ref=e177]:
+                  - link "Edit" [ref=e178] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine$ctl02$lbEdit','')
+                - cell "Delete" [ref=e179]:
+                  - link "Delete" [ref=e180] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine$ctl02$lbDelete','')
+      - row "Prev Page 1 Next" [ref=e181]:
+        - cell "Prev Page 1 Next" [ref=e182]:
+          - button "Prev" [disabled] [ref=e183]
+          - combobox [ref=e184]:
+            - option "Page 1" [selected]
+          - button "Next" [disabled] [ref=e185]
+      - row [ref=e186]:
+        - cell [ref=e187]
+      - row "Save Delete New Back" [ref=e188]:
+        - cell "Save Delete New Back" [ref=e189]:
+          - button "Save" [ref=e190] [cursor=pointer]
+          - button "Delete" [ref=e191] [cursor=pointer]
+          - button "New" [ref=e192] [cursor=pointer]
+          - button "Back" [ref=e193] [cursor=pointer]
+  - generic [ref=e194]: eFlex Plantware © 2011

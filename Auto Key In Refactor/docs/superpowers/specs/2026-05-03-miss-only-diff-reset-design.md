@@ -37,7 +37,7 @@ This applies to manual categories as well as AUTO_BUFFER categories. `MATCH` and
 
 ### DIFF Reset/Delete
 
-The Reset/Delete DocID tab gets a DIFF/MISMATCH fetch mode. In that mode it calls:
+The Reset/Delete DocID tab uses only a DIFF/MISMATCH fetch mode. It calls:
 
 ```text
 POST /payroll/manual-adjustment/compare-adtrans/by-api-key
@@ -45,13 +45,7 @@ POST /payroll/manual-adjustment/compare-adtrans/by-api-key
 
 with the active period, division, and category filters. It keeps only `status == "MISMATCH"` comparisons and converts every non-empty `db_ptrj_doc_desc_details[].doc_id` into a `DELETE_RECORD` target. Duplicate DocIDs are removed.
 
-The existing config DocID mode can continue to use:
-
-```text
-POST /payroll/manual-adjustment/adtrans-doc-ids/by-api-key
-```
-
-because that mode is for deleting all DocIDs that match a known safe scope/config, not for discovering mismatch rows.
+The tab must not use `adtrans-doc-ids/by-api-key` for this delete flow because that endpoint does not compare nominal values. That endpoint can remain in the API client for other maintenance flows, but the reset/delete UI should target DIFF/MISMATCH only.
 
 ### Audit After Delete
 
@@ -95,10 +89,8 @@ This inserts missing manual adjustment rows from Plantware without updating mism
 
 - Rename process checkbox text to `Input MISS only`.
 - Update tooltip to state that DIFF/MISMATCH is excluded and must be handled from Reset/Delete DocID.
-- Add a Reset/Delete source control with two modes:
-  - `Config DocIDs`: use `adtrans-doc-ids/by-api-key`.
-  - `DIFF/MISMATCH DocIDs`: use `compare-adtrans/by-api-key`.
-- Reset table status text should say whether targets came from config or mismatch compare.
+- The Reset/Delete source is fixed to `DIFF/MISMATCH DocIDs`.
+- Reset table status text should say targets came from mismatch compare.
 
 ## Data Flow
 

@@ -49,14 +49,18 @@ function record(extra: Partial<ManualAdjustmentRecord>): ManualAdjustmentRecord 
 
 function fakePageForDescriptionOrder(options: {
   delayedSubblokReady?: boolean;
-  domDetailKind?: "blok" | "kendaraan" | "";
+  domDetailKind?: "blok" | "blok_no_expense" | "kendaraan" | "kendaraan_no_expense" | "";
   hiddenSelectMissKeys?: string[];
+  hiddenSelectMissValues?: Array<{ key: string; value: string }>;
+  initialValues?: Record<string, string>;
+  ignoreDescriptionFill?: boolean;
 } = {}) {
-  const values = new Map<string, string>();
+  const values = new Map<string, string>(Object.entries(options.initialValues ?? {}));
   const fills: string[] = [];
   const clears: string[] = [];
   const keyPresses: string[] = [];
   const menuClicks: string[] = [];
+  const addClicks: string[] = [];
   const networkIdleAfterFields: string[] = [];
   const waitForFunctionLabels: string[] = [];
   let lastSelectedField = "";
@@ -76,6 +80,9 @@ function fakePageForDescriptionOrder(options: {
       lastSelectedField = "key" in field ? String((field as { key: string }).key) : field.inputSelector;
       if (field.key === "subblok" && !subblokReady) return false;
       if (field.key && options.hiddenSelectMissKeys?.includes(field.key)) return false;
+      if (field.key && options.hiddenSelectMissValues?.some((miss) =>
+        miss.key === field.key && miss.value.toUpperCase() === field.value.toUpperCase()
+      )) return false;
       values.set(field.inputSelector, field.value);
       return true;
     },
@@ -93,15 +100,34 @@ function fakePageForDescriptionOrder(options: {
         first: () => locator,
         nth: () => locator,
         last: () => locator,
-        waitFor: async () => {},
+        waitFor: async () => {
+          if (
+            options.domDetailKind === "blok_no_expense" &&
+            (selector.includes("ddlExpCode") || selector.includes("trExpCode"))
+          ) {
+            throw new Error(`not attached: ${selector}`);
+          }
+        },
         isVisible: async () => {
-          if (selector.includes("ddlSubBlk") || selector.includes("trSubBlkCode")) return options.domDetailKind === "blok";
-          if (selector.includes("ddlVehCode") || selector.includes("trVehCode")) return options.domDetailKind === "kendaraan";
+          if (
+            selector.includes("ddlBlock") ||
+            selector.includes("trBlock")
+          ) return options.domDetailKind === "blok" || options.domDetailKind === "blok_no_expense";
+          if (selector.includes("ddlExpCode") || selector.includes("trExpCode")) return options.domDetailKind === "blok";
+          if (selector.includes("ddlSubBlk") || selector.includes("trSubBlkCode")) {
+            return options.domDetailKind === "blok" || options.domDetailKind === "blok_no_expense";
+          }
+          if (
+            selector.includes("ddlVehCode") ||
+            selector.includes("trVehCode")
+          ) return options.domDetailKind === "kendaraan" || options.domDetailKind === "kendaraan_no_expense";
+          if (selector.includes("ddlVehExpCode") || selector.includes("trVehExpCode")) return options.domDetailKind === "kendaraan";
           return true;
         },
         inputValue: async () => values.get(selector) ?? "",
         fill: async (value: string) => {
           fills.push(`${selector}=${value}`);
+          if (options.ignoreDescriptionFill && selector === "#MainContent_txtDocDesc") return;
           values.set(selector, value);
         },
         clear: async () => {
@@ -121,7 +147,10 @@ function fakePageForDescriptionOrder(options: {
               : "PM0903B2";
             values.set(lastSelectedField, fallbackValue);
           }
-          if (selector.includes("btnAdd")) lastSelectedField = "add";
+          if (selector.includes("btnAdd")) {
+            addClicks.push(selector);
+            lastSelectedField = "add";
+          }
         },
         selectOption: async (value: string) => {
           values.set(selector, value);
@@ -137,12 +166,12 @@ function fakePageForDescriptionOrder(options: {
           }
           if (optionField === "vehicle" || optionField === "vehicle_expense") {
             waitForFunctionLabels.push(optionField);
-            return 1;
+            return optionField === "vehicle_expense" && options.domDetailKind === "kendaraan_no_expense" ? 0 : 1;
           }
           if (selector.includes(".ui-menu-item:visible")) return 1;
           if (optionField === "expense") {
             waitForFunctionLabels.push("expense");
-            return 1;
+            return options.domDetailKind === "blok_no_expense" ? 0 : 1;
           }
           return 0;
         },
@@ -153,13 +182,21 @@ function fakePageForDescriptionOrder(options: {
           if (!selector.includes("MainContent_MultiDimAcc_tbAccount")) return [];
           const ids = options.domDetailKind === "blok"
             ? ["MainContent_MultiDimAcc_ddlBlock", "MainContent_MultiDimAcc_ddlSubBlk", "MainContent_MultiDimAcc_ddlExpCode"]
+            : options.domDetailKind === "blok_no_expense"
+              ? ["MainContent_MultiDimAcc_ddlBlock", "MainContent_MultiDimAcc_ddlSubBlk"]
             : options.domDetailKind === "kendaraan"
               ? ["MainContent_MultiDimAcc_ddlVehCode", "MainContent_MultiDimAcc_ddlVehExpCode"]
+            : options.domDetailKind === "kendaraan_no_expense"
+              ? ["MainContent_MultiDimAcc_ddlVehCode"]
               : [];
           const labels = options.domDetailKind === "blok"
             ? ["Division Code", "Field No Code", "Expense Code"]
+            : options.domDetailKind === "blok_no_expense"
+              ? ["Division Code", "Field No Code"]
             : options.domDetailKind === "kendaraan"
               ? ["Vehicle Code", "Vehicle Expense Code"]
+            : options.domDetailKind === "kendaraan_no_expense"
+              ? ["Vehicle Code"]
               : [];
           return fn({
             querySelectorAll: (query: string) => {
@@ -172,7 +209,7 @@ function fakePageForDescriptionOrder(options: {
       return locator;
     }
   };
-  return { page, fills, clears, keyPresses, menuClicks, networkIdleAfterFields, waitForFunctionLabels };
+  return { page, values, fills, clears, keyPresses, menuClicks, addClicks, networkIdleAfterFields, waitForFunctionLabels };
 }
 
 assert.equal(
@@ -306,6 +343,104 @@ assert.equal(vehicleAutocompleteValue(vehicleRecord), "BE003");
 assert.equal(vehicleExpenseAutocompleteValue(vehicleRecord), "11");
 assert.equal(vehicleExpenseAutocompleteValue({ ...vehicleRecord, vehicle_expense_code: "", expense_code: "driver" }), "DRIVER");
 
+const helperVehicleExpenseRecord = {
+  ...vehicleRecord,
+  ad_code: "AL3PT2304AB1",
+  ad_code_desc: "(AL) TUNJANGAN PREMI ((PM) DRIVER - ANGKUT TBK)",
+  vehicle_expense_code: "HELPER",
+  expense_code: ""
+};
+const {
+  page: helperVehicleExpensePage,
+  values: helperVehicleExpenseValues,
+  keyPresses: helperVehicleExpenseKeyPresses
+} = fakePageForDescriptionOrder({
+  domDetailKind: "kendaraan",
+  hiddenSelectMissValues: [{ key: "vehicle_expense", value: "HELPER" }]
+});
+await fillAdjustmentRow(
+  helperVehicleExpensePage as never,
+  helperVehicleExpenseRecord,
+  resolveCategory(helperVehicleExpenseRecord, "premi"),
+  true,
+  "P1B"
+);
+assert.equal(
+  helperVehicleExpenseKeyPresses.includes("#MainContent_MultiDimAcc_ddlVehExpCode + input.ui-autocomplete-input:HELPER"),
+  true
+);
+assert.equal(
+  helperVehicleExpenseValues.get(monthlyAllowanceInputMappings.vehicleExpense.inputSelector),
+  "OTHER EXPENSES"
+);
+
+const vehicleWithoutExpenseRecord = {
+  ...vehicleRecord,
+  ad_code: "AL3PT2304AB1",
+  ad_code_desc: "(AL) TUNJANGAN PREMI ((PM) DRIVER - ANGKUT TBK)",
+  vehicle_code: "BE003",
+  vehicle_expense_code: "11",
+  amount: 175000
+};
+const {
+  page: vehicleWithoutExpensePage,
+  values: vehicleWithoutExpenseValues,
+  keyPresses: vehicleWithoutExpenseKeyPresses,
+  addClicks: vehicleWithoutExpenseAddClicks
+} = fakePageForDescriptionOrder({ domDetailKind: "kendaraan_no_expense" });
+await fillAdjustmentRow(
+  vehicleWithoutExpensePage as never,
+  vehicleWithoutExpenseRecord,
+  resolveCategory(vehicleWithoutExpenseRecord, "premi"),
+  true,
+  "P1B"
+);
+assert.equal(vehicleWithoutExpenseValues.get("#MainContent_txtAmount"), "175000");
+assert.equal(
+  vehicleWithoutExpenseKeyPresses.some((press) => press.includes("ddlVehExpCode")),
+  false
+);
+assert.deepEqual(vehicleWithoutExpenseAddClicks, ["#MainContent_btnAdd"]);
+
+const premiumDescriptionRecord = {
+  ...blockRecord,
+  ad_code: "AL3PM0601",
+  ad_code_desc: "(AL) TUNJANGAN PREMI ((PM) PRUNING)"
+};
+const {
+  page: partialDescriptionPage,
+  fills: partialDescriptionFills
+} = fakePageForDescriptionOrder({
+  initialValues: { "#MainContent_txtDocDesc": "PREMI" }
+});
+await fillAdjustmentRow(
+  partialDescriptionPage as never,
+  premiumDescriptionRecord,
+  resolveCategory(premiumDescriptionRecord, "premi"),
+  true,
+  "P1B"
+);
+assert.equal(
+  partialDescriptionFills.includes("#MainContent_txtDocDesc=PREMI PRUNING"),
+  true
+);
+
+const {
+  page: rejectedDescriptionPage,
+  addClicks: rejectedDescriptionAddClicks
+} = fakePageForDescriptionOrder({ ignoreDescriptionFill: true });
+await assert.rejects(
+  () => fillAdjustmentRow(
+    rejectedDescriptionPage as never,
+    premiumDescriptionRecord,
+    resolveCategory(premiumDescriptionRecord, "premi"),
+    true,
+    "P1B"
+  ),
+  /Description .* must be "PREMI PRUNING"/
+);
+assert.deepEqual(rejectedDescriptionAddClicks, []);
+
 const grossDeductionRecord = record({
   adjustment_type: "POTONGAN_KOTOR",
   adjustment_name: "KOREKSI PANEN",
@@ -325,6 +460,31 @@ assert.throws(
   () => subBlockAutocompleteValue(grossDeductionRecord),
   /Sub block is required for block-based adjustment row/
 );
+
+const {
+  page: amountOnlyPage,
+  values: amountOnlyValues,
+  fills: amountOnlyFills,
+  keyPresses: amountOnlyKeyPresses,
+  addClicks: amountOnlyAddClicks
+} = fakePageForDescriptionOrder({ domDetailKind: "" });
+const metadataDetailOnAmountOnlyUiRecord = {
+  ...grossDeductionRecord,
+  detail_type: "blok",
+  subblok: "P0903",
+  subblok_raw: "P09/03"
+};
+await fillAdjustmentRow(
+  amountOnlyPage as never,
+  metadataDetailOnAmountOnlyUiRecord,
+  resolveCategory(metadataDetailOnAmountOnlyUiRecord, "potongan_upah_kotor"),
+  true,
+  "P1B"
+);
+assert.equal(amountOnlyFills.includes("#MainContent_txtAmount=4000"), true);
+assert.equal([...amountOnlyValues.keys()].some((key) => key.includes("MultiDimAcc")), false);
+assert.equal(amountOnlyKeyPresses.some((press) => press.includes("MultiDimAcc") || press.startsWith("input.CBOBox")), false);
+assert.deepEqual(amountOnlyAddClicks, ["#MainContent_btnAdd"]);
 
 const {
   page: missingMetadataBlockPage,
@@ -366,7 +526,7 @@ const {
   page: descriptionOrderPage,
   fills: descriptionOrderFills,
   keyPresses: descriptionOrderKeyPresses
-} = fakePageForDescriptionOrder();
+} = fakePageForDescriptionOrder({ domDetailKind: "blok" });
 const missingSubblockGrossDeductionRecord = { ...grossDeductionRecord, detail_type: "blok" };
 await fillAdjustmentRow(
   descriptionOrderPage as never,
@@ -384,7 +544,7 @@ assert.equal(
 const {
   page: blockWaitPage,
   networkIdleAfterFields: blockNetworkIdleAfterFields
-} = fakePageForDescriptionOrder();
+} = fakePageForDescriptionOrder({ domDetailKind: "blok" });
 const completeGrossDeductionRecord = {
   ...grossDeductionRecord,
   subblok: "P0903",
@@ -405,7 +565,7 @@ assert.equal(blockNetworkIdleAfterFields.includes("expense"), false);
 const {
   page: delayedSubblokPage,
   waitForFunctionLabels: delayedSubblokWaits
-} = fakePageForDescriptionOrder({ delayedSubblokReady: true });
+} = fakePageForDescriptionOrder({ delayedSubblokReady: true, domDetailKind: "blok" });
 await fillAdjustmentRow(
   delayedSubblokPage as never,
   completeGrossDeductionRecord,
@@ -419,7 +579,7 @@ const {
   clears: subblokNoSearchResultClears,
   keyPresses: subblokNoSearchResultKeyPresses,
   menuClicks: subblokNoSearchResultMenuClicks
-} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["subblok"] });
+} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["subblok"], domDetailKind: "blok" });
 await fillAdjustmentRow(
   subblokNoSearchResultPage as never,
   completeGrossDeductionRecord,
@@ -440,7 +600,7 @@ assert.equal(subblokNoSearchResultMenuClicks.includes(".ui-menu-item:visible"), 
 const {
   page: blockDivisionNoSearchResultPage,
   keyPresses: blockDivisionNoSearchResultKeyPresses
-} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["block"] });
+} = fakePageForDescriptionOrder({ hiddenSelectMissKeys: ["block"], domDetailKind: "blok" });
 await fillAdjustmentRow(
   blockDivisionNoSearchResultPage as never,
   completeGrossDeductionRecord,
@@ -457,7 +617,7 @@ const noMatchExpenseRecord = { ...completeGrossDeductionRecord, expense_code: "B
 const {
   page: expenseNoSearchResultPage,
   keyPresses: expenseNoSearchResultKeyPresses
-} = fakePageForDescriptionOrder();
+} = fakePageForDescriptionOrder({ domDetailKind: "blok" });
 await fillAdjustmentRow(
   expenseNoSearchResultPage as never,
   noMatchExpenseRecord,
@@ -469,6 +629,41 @@ assert.equal(
   expenseNoSearchResultKeyPresses.includes("#MainContent_MultiDimAcc_ddlExpCode + input.ui-autocomplete-input: "),
   true
 );
+
+const premiJagaRecord = {
+  ...blockRecord,
+  adjustment_name: "PREMI JAGA",
+  ad_code: "AL0018P1A",
+  ad_code_desc: "(AL) TUNJANGAN JAGA GENSET",
+  description: "PREMI JAGA",
+  task_desc: "(AL) TUNJANGAN JAGA GENSET",
+  subblok: "P1201",
+  subblok_raw: "P12/01",
+  amount: 350000,
+  expense_code: "L"
+};
+const {
+  page: premiJagaNoExpensePage,
+  values: premiJagaNoExpenseValues,
+  keyPresses: premiJagaNoExpenseKeyPresses,
+  addClicks: premiJagaNoExpenseAddClicks
+} = fakePageForDescriptionOrder({ domDetailKind: "blok_no_expense" });
+await fillAdjustmentRow(
+  premiJagaNoExpensePage as never,
+  premiJagaRecord,
+  resolveCategory(premiJagaRecord, "premi"),
+  true,
+  "P1B"
+);
+assert.equal(
+  premiJagaNoExpenseValues.get("#MainContent_txtAmount"),
+  "350000"
+);
+assert.equal(
+  premiJagaNoExpenseKeyPresses.some((press) => press.includes("ddlExpCode")),
+  false
+);
+assert.deepEqual(premiJagaNoExpenseAddClicks, ["#MainContent_btnAdd"]);
 
 const {
   page: adcodeNoSearchResultPage,

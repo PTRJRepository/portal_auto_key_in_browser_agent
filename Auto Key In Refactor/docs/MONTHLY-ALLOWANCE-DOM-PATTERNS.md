@@ -100,6 +100,7 @@ API-to-form mapping for vehicle-based rows:
 
 - If grouped premium metadata/detail has `vehicle_code`, `nomor_kendaraan`, `NOMOR_KENDARAAN`, `nomorKendaraan`, `no_kendaraan`, or `vehicle_number`, map it to Plantware `Vehicle Code`.
 - If the same metadata item has `expense_code`, map it to Plantware `Vehicle Expense Code` unless an explicit `vehicle_expense_code` is present.
+- If the vehicle expense metadata is `HELPER` but `HELPER` is not available in the Plantware search options, retry `Vehicle Expense Code` with `OTHER EXPENSES`.
 - A row with `subblok` is block-based. A row with `nomor_kendaraan`/`vehicle_code` is vehicle-based.
 - Example P1B gang B1T `PREMI ANGKUT`: `metadata_json.items[].nomor_kendaraan = "T0020"` becomes runner `vehicle_code = "T0020"` and `metadata_json.items[].expense_code = "DRIVER"` becomes runner `vehicle_expense_code = "DRIVER"`.
 
@@ -170,6 +171,8 @@ Tab assignment must preserve the employee group. If a run uses 5 concurrent tabs
 ## Runner Implementation Notes
 
 - Treat mode detection as a post-AD-Code step. The multi-dimensional rows are determined by the selected AD Code and ASP.NET postback.
+- Do not assume every block-based or vehicle-based AD Code shows the full set of dimensional controls. Read the visible controls after AD Code and again after fields that can post back. Fill only controls that are visible; missing optional controls must not block Amount input.
+- If the post-AD-Code UI does not show known dimensional controls such as Division Code, Field No Code/SubBlk, block Expense Code, Vehicle Code, or Vehicle Expense Code, and the Amount field is visible, treat the row as amount-only and fill only Amount before Add.
 - Never map autocomplete fields by global position such as `input.ui-autocomplete-input.nth(0)` or `.nth(1)`. Plantware generates adjacent autocomplete inputs for hidden `<select>` controls, and the order can change after postbacks or between block/vehicle layouts.
 - Map each value to its owning hidden select, then type into that select's adjacent autocomplete input:
 

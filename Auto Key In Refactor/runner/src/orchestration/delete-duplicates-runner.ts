@@ -1,6 +1,9 @@
 import type { DeleteDuplicateRowResult, DuplicateDocIdTarget, RunPayload, RunResult } from "../types.js";
 import { BrowserSession } from "../session/browser-session.js";
+import { sessionDivisionCode } from "../payload.js";
 import { deleteVisibleDocId, gotoListPage, searchVisibleTargetByDocId, type VisibleDocumentRow } from "../plantware/duplicate-docids.js";
+import { isTaskRegisterTarget } from "../plantware/task-register-duplicates.js";
+import { runDeleteTaskRegisterDuplicates } from "./delete-task-register-runner.js";
 
 type Emit = (event: Record<string, unknown>) => void;
 
@@ -8,6 +11,8 @@ const DUPLICATE_CLEANUP_CATEGORIES = new Set([
   "spsi",
   "masa_kerja",
   "tunjangan_jabatan",
+  "task_register",
+  "pph21",
   "premi",
   "premi_tunjangan",
   "potongan_upah_kotor",
@@ -30,10 +35,25 @@ export function targetWithMatchedMasterId(target: DuplicateDocIdTarget, row: Vis
   return { ...target, master_id: row.masterId };
 }
 
+export function deleteRunnerFreshLoginFirst(_payload: RunPayload): boolean {
+  return false;
+}
+
+export function deleteRunnerLoginFallback(_payload: RunPayload): boolean {
+  return false;
+}
+
 export async function runDeleteDuplicates(payload: RunPayload, emit: Emit): Promise<RunResult> {
   const started = new Date().toISOString();
   const dryRun = payload.delete_dry_run ?? true;
   const targets = (payload.duplicate_targets ?? []).filter((target) => deleteDocIdActionSupported(target.action) && target.doc_id);
+  const taskRegisterTargets = targets.filter(isTaskRegisterTarget);
+  if (taskRegisterTargets.length > 0) {
+    if (taskRegisterTargets.length !== targets.length) {
+      throw new Error("Cannot mix Task Register duplicate targets with AD Transaction duplicate targets in one run");
+    }
+    return runDeleteTaskRegisterDuplicates(payload, emit, taskRegisterTargets);
+  }
   const rows: DeleteDuplicateRowResult[] = [];
   let deletedRows = 0;
   let dryRunRows = 0;
@@ -46,15 +66,17 @@ export async function runDeleteDuplicates(payload: RunPayload, emit: Emit): Prom
     throw new Error(`Duplicate cleanup is not enabled for category ${payload.category_key}`);
   }
 
+  const sessionDivision = sessionDivisionCode(payload);
   const session = new BrowserSession({
     headless: payload.headless,
-    freshLoginFirst: payload.runner_mode === "fresh_login_single",
-    division: payload.division_code
+    freshLoginFirst: deleteRunnerFreshLoginFirst(payload),
+    loginFallback: deleteRunnerLoginFallback(payload),
+    division: sessionDivision
   });
 
   try {
     await session.start();
-    emit({ event: "session.ready", reused: session.sessionReused, session_path: session.getSessionPath(), message: session.sessionReused ? "Session reused" : "Fresh session login completed" });
+    emit({ event: "session.ready", division_code: payload.division_code, session_division_code: sessionDivision, reused: session.sessionReused, session_path: session.getSessionPath(), message: session.sessionReused ? "Session reused" : "Fresh session login completed" });
     const page = await session.newPage();
     await gotoListPage(page);
 

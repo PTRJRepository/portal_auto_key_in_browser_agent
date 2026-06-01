@@ -104,18 +104,18 @@ export async function fillAdjustmentRow(
     await page.waitForTimeout(3000);
   }
 
-  await fillDescriptionField(page, record, category);
+  await ensureDescriptionField(page, record, category);
 
   const detailKind = await resolvePremiumDetailKindAfterAdCode(page, record);
   if (detailKind === "blok") {
     await fillBlockBasedMonthlyAllowanceDetails(page, record);
   } else if (detailKind === "kendaraan") {
     await fillVehicleBasedMonthlyAllowanceDetails(page, record);
-  } else if (category.requiresGangAfterAdCode) {
+  } else if (detailKind !== "amount_only" && category.requiresGangAfterAdCode) {
     await selectGangAutocompleteAfterAdCode(page, record, autocompleteCountBeforeAdCode);
   }
 
-  await fillDescriptionField(page, record, category);
+  await ensureDescriptionField(page, record, category);
 
   await form.amountField.waitFor({ state: "visible", timeout: 15000 });
   await form.amountField.clear();
@@ -133,6 +133,7 @@ export async function fillAdjustmentRow(
   const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span[style*='color: red']").textContent().catch(() => null);
   if (errorMsg) throw new Error(`Validation error: ${errorMsg}`);
 
+  await ensureDescriptionField(page, record, category);
   await form.addButton.waitFor({ state: "visible", timeout: 5000 });
   await form.addButton.click({ noWaitAfter: true });
   await waitForAddCompleted(page, record, category, detailKind);
@@ -228,7 +229,7 @@ function amountTextTokens(amount: number): string[] {
   ];
 }
 
-export type PremiumDetailKind = "blok" | "kendaraan" | "";
+export type PremiumDetailKind = "blok" | "kendaraan" | "amount_only" | "";
 
 export function premiumDetailKind(record: ManualAdjustmentRecord): PremiumDetailKind {
   const detailType = (record.detail_type ?? "").trim().toLowerCase();
@@ -364,6 +365,45 @@ export const monthlyAllowanceInputMappings = {
     inputSelector: "#MainContent_MultiDimAcc_ddlVehExpCode + input.ui-autocomplete-input"
   }
 } as const;
+
+const monthlyAllowanceFieldSelectors = {
+  blockDivision: [
+    "#MainContent_MultiDimAcc_trBlkCode",
+    "#MainContent_MultiDimAcc_lblBlkCode",
+    monthlyAllowanceInputMappings.blockDivision.inputSelector,
+    monthlyAllowanceInputMappings.blockDivision.selectSelector
+  ].join(", "),
+  subblok: [
+    "#MainContent_MultiDimAcc_trSubBlkCode",
+    "#MainContent_MultiDimAcc_lblSubBlk",
+    monthlyAllowanceInputMappings.subblok.inputSelector,
+    monthlyAllowanceInputMappings.subblok.selectSelector
+  ].join(", "),
+  blockExpense: [
+    "#MainContent_MultiDimAcc_trExpCode",
+    "#MainContent_MultiDimAcc_lblExpCode",
+    monthlyAllowanceInputMappings.blockExpense.inputSelector,
+    monthlyAllowanceInputMappings.blockExpense.selectSelector
+  ].join(", "),
+  vehicle: [
+    "#MainContent_MultiDimAcc_trVehCode",
+    "#MainContent_MultiDimAcc_lblVehCode",
+    monthlyAllowanceInputMappings.vehicle.inputSelector,
+    monthlyAllowanceInputMappings.vehicle.selectSelector
+  ].join(", "),
+  vehicleExpense: [
+    "#MainContent_MultiDimAcc_trVehExpCode",
+    "#MainContent_MultiDimAcc_lblVehExpCode",
+    monthlyAllowanceInputMappings.vehicleExpense.inputSelector,
+    monthlyAllowanceInputMappings.vehicleExpense.selectSelector
+  ].join(", ")
+} as const;
+
+type MonthlyAllowanceFieldKey = keyof typeof monthlyAllowanceFieldSelectors;
+
+interface MonthlyAllowanceFieldPresence extends Record<MonthlyAllowanceFieldKey, boolean> {
+  amount: boolean;
+}
 
 export function monthlyAllowanceDetailKindFromDomSnapshot(controlIds: string[], labels: string[]): PremiumDetailKind {
   const idText = controlIds.join(" ").toLowerCase();
@@ -526,50 +566,76 @@ async function fillBlockBasedMonthlyAllowanceDetails(page: Page, record: ManualA
   const blockField = blockDivisionAutocompleteFieldOrAnyAvailable(record);
   const subBlockField = subBlockAutocompleteFieldOrAnyAvailable(record);
   const expenseField = blockExpenseAutocompleteField(record);
+  let fields = await monthlyAllowanceFieldPresence(page);
 
-  await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlSubBlk, #MainContent_MultiDimAcc_trSubBlkCode", "block/sub block");
-  await selectAutocompleteField(page, blockField, 2000);
-  await page.waitForTimeout(1000);
-  await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlSubBlk, #MainContent_MultiDimAcc_trSubBlkCode", "block/sub block after division");
-  await selectAutocompleteFieldAfterOptionsReady(page, subBlockField, 2000, "sub block after division");
-  await page.waitForTimeout(1000);
-  await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlExpCode, #MainContent_MultiDimAcc_trExpCode", "block expense after sub block");
-  await selectAutocompleteFieldAfterOptionsReady(page, expenseField, 1000, "block expense after sub block");
+  if (fields.blockDivision) {
+    await selectAutocompleteField(page, blockField, 2000);
+    await waitForAnyMonthlyAllowanceField(page, ["subblok", "blockExpense"], 3000);
+    fields = await monthlyAllowanceFieldPresence(page);
+  }
+
+  if (fields.subblok) {
+    await selectAutocompleteFieldAfterOptionsReady(page, subBlockField, 2000, "sub block after division");
+    await waitForAnyMonthlyAllowanceField(page, ["blockExpense"], 3000);
+    fields = await monthlyAllowanceFieldPresence(page);
+  }
+
+  if (fields.blockExpense) {
+    await selectAutocompleteFieldAfterOptionsReady(page, expenseField, 1000, "block expense after sub block");
+  }
 }
 
-async function fillDescriptionField(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
+async function ensureDescriptionField(page: Page, record: ManualAdjustmentRecord, category: CategoryStrategy): Promise<void> {
   const descField = page.locator("#MainContent_txtDocDesc");
-  if (await descField.isVisible({ timeout: 15000 }).catch(() => false)) {
-    const description = category.description(record);
-    const currentDescription = await descField.inputValue().catch(() => "");
-    if (shouldFillAutocompleteValue(currentDescription, description)) {
-      await descField.fill(description);
-      await descField.press("Tab").catch(() => {});
-    }
+  const description = category.description(record).trim();
+  if (!description) {
+    throw new Error(`Description is required before Add for ${record.emp_code} / ${record.adjustment_name}`);
+  }
+  if (!(await descField.isVisible({ timeout: 15000 }).catch(() => false))) {
+    throw new Error(`Description field is not visible before Add for ${record.emp_code} / ${record.adjustment_name}`);
+  }
+
+  const currentDescription = (await descField.inputValue().catch(() => "")).trim();
+  if (currentDescription !== description) {
+    await descField.fill(description);
+    await descField.press("Tab").catch(() => {});
+  }
+
+  const confirmedDescription = (await descField.inputValue().catch(() => "")).trim();
+  if (confirmedDescription !== description) {
+    throw new Error(`Description #MainContent_txtDocDesc must be "${description}" before Add for ${record.emp_code} / ${record.adjustment_name}; current value "${confirmedDescription}"`);
   }
 }
 
 async function fillVehicleBasedMonthlyAllowanceDetails(page: Page, record: ManualAdjustmentRecord): Promise<void> {
-  await waitForMonthlyAllowanceSelector(page, "#MainContent_MultiDimAcc_ddlVehCode, #MainContent_MultiDimAcc_trVehCode", "vehicle");
-  await selectAutocompleteField(page, vehicleAutocompleteFieldOrAnyAvailable(record), 2000);
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
-  await selectAutocompleteField(page, vehicleExpenseAutocompleteFieldOrAnyAvailable(record), 1000);
+  let fields = await monthlyAllowanceFieldPresence(page);
+
+  if (fields.vehicle) {
+    await selectAutocompleteField(page, vehicleAutocompleteFieldOrAnyAvailable(record), 2000);
+    await waitForAnyMonthlyAllowanceField(page, ["vehicleExpense"], 3000);
+    fields = await monthlyAllowanceFieldPresence(page);
+  }
+
+  if (fields.vehicleExpense) {
+    await selectAutocompleteField(page, vehicleExpenseAutocompleteFieldOrAnyAvailable(record), 1000);
+  }
 }
 
 async function resolvePremiumDetailKindAfterAdCode(page: Page, record: ManualAdjustmentRecord): Promise<PremiumDetailKind> {
-  const metadataKind = premiumDetailKind(record);
-  if (metadataKind) return metadataKind;
-
-  return detectMonthlyAllowanceDetailKind(page);
+  const fields = await monthlyAllowanceFieldPresence(page);
+  const domKind = await detectMonthlyAllowanceDetailKind(page, fields);
+  if (domKind) return domKind;
+  if (isAmountOnlyMonthlyAllowanceLayout(fields)) return "amount_only";
+  return premiumDetailKind(record);
 }
 
-async function detectMonthlyAllowanceDetailKind(page: Page): Promise<PremiumDetailKind> {
-  if (await page.locator("#MainContent_MultiDimAcc_ddlSubBlk, #MainContent_MultiDimAcc_trSubBlkCode").first().isVisible({ timeout: 1000 }).catch(() => false)) {
-    return "blok";
-  }
-  if (await page.locator("#MainContent_MultiDimAcc_ddlVehCode, #MainContent_MultiDimAcc_trVehCode").first().isVisible({ timeout: 1000 }).catch(() => false)) {
+async function detectMonthlyAllowanceDetailKind(page: Page, fields?: MonthlyAllowanceFieldPresence): Promise<PremiumDetailKind> {
+  const currentFields = fields ?? await monthlyAllowanceFieldPresence(page);
+  if (currentFields.vehicle || currentFields.vehicleExpense) {
     return "kendaraan";
+  }
+  if (currentFields.blockDivision || currentFields.subblok || currentFields.blockExpense) {
+    return "blok";
   }
   const labels = await Promise.all([
     page.locator("#MainContent_MultiDimAcc_lblSubBlk").textContent({ timeout: 500 }).catch(() => ""),
@@ -578,17 +644,39 @@ async function detectMonthlyAllowanceDetailKind(page: Page): Promise<PremiumDeta
   return monthlyAllowanceDetailKindFromDomSnapshot([], labels.map((label) => label ?? ""));
 }
 
-function comboboxInputForSelect(page: Page, selectSelector: string) {
-  return page.locator(`${selectSelector} + input.ui-autocomplete-input`).first();
+async function monthlyAllowanceFieldPresence(page: Page): Promise<MonthlyAllowanceFieldPresence> {
+  const [blockDivision, subblok, blockExpense, vehicle, vehicleExpense, amount] = await Promise.all([
+    isMonthlyAllowanceFieldVisible(page, "blockDivision"),
+    isMonthlyAllowanceFieldVisible(page, "subblok"),
+    isMonthlyAllowanceFieldVisible(page, "blockExpense"),
+    isMonthlyAllowanceFieldVisible(page, "vehicle"),
+    isMonthlyAllowanceFieldVisible(page, "vehicleExpense"),
+    page.locator("#MainContent_txtAmount").isVisible({ timeout: 1000 }).catch(() => false)
+  ]);
+  return { blockDivision, subblok, blockExpense, vehicle, vehicleExpense, amount };
 }
 
-async function waitForMonthlyAllowanceSelector(page: Page, selector: string, label: string): Promise<void> {
-  await page.locator(selector).first().waitFor({ state: "attached", timeout: 15000 }).catch(async () => {
-    const available = await page.locator("[id^='MainContent_MultiDimAcc_']").evaluateAll((nodes) =>
-      nodes.map((node) => (node as HTMLElement).id).filter(Boolean).slice(0, 30)
-    ).catch(() => []);
-    throw new Error(`Monthly allowance ${label} controls not found after AD code; available controls: ${available.join(", ") || "-"}`);
-  });
+async function isMonthlyAllowanceFieldVisible(page: Page, field: MonthlyAllowanceFieldKey): Promise<boolean> {
+  return page.locator(monthlyAllowanceFieldSelectors[field]).first().isVisible({ timeout: 1000 }).catch(() => false);
+}
+
+async function waitForAnyMonthlyAllowanceField(
+  page: Page,
+  fields: MonthlyAllowanceFieldKey[],
+  timeoutMs: number
+): Promise<boolean> {
+  const selector = fields.map((field) => monthlyAllowanceFieldSelectors[field]).join(", ");
+  await page.locator(selector).first().waitFor({ state: "visible", timeout: timeoutMs }).catch(() => {});
+  const refreshed = await monthlyAllowanceFieldPresence(page);
+  return fields.some((field) => refreshed[field]);
+}
+
+function isAmountOnlyMonthlyAllowanceLayout(fields: MonthlyAllowanceFieldPresence): boolean {
+  return fields.amount && !fields.blockDivision && !fields.subblok && !fields.blockExpense && !fields.vehicle && !fields.vehicleExpense;
+}
+
+function comboboxInputForSelect(page: Page, selectSelector: string) {
+  return page.locator(`${selectSelector} + input.ui-autocomplete-input`).first();
 }
 
 async function waitForAutocompleteOptionReady(page: Page, field: AutocompleteFieldPlan, label: string): Promise<void> {
@@ -740,7 +828,13 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
   try {
     await typeAutocompleteAndChooseMatchingItem(locator, page, field);
   } catch (error) {
-    if (shouldUseSingleRemainingAutocompleteFallback(field)) {
+    if (explicitAutocompleteFallbackValue(field)) {
+      try {
+        await selectExplicitAutocompleteFallback(page, locator, field, waitMs);
+      } catch (fallbackError) {
+        await selectAnyAvailableAutocompleteField(page, field, waitMs, fallbackError);
+      }
+    } else if (shouldUseSingleRemainingAutocompleteFallback(field)) {
       try {
         await typeAutocompleteSlowlyAndChooseSingleRemainingItem(locator, page, field, error);
       } catch (fallbackError) {
@@ -761,6 +855,34 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
 
 function shouldUseAnyAvailableAutocompleteFallback(field: AutocompleteFieldPlan): boolean {
   return field.key !== "employee" && field.key !== "adcode";
+}
+
+function explicitAutocompleteFallbackValue(field: AutocompleteFieldPlan): string {
+  if (field.key !== "vehicle_expense") return "";
+  return normalizeText(field.value) === "HELPER" ? "OTHER EXPENSES" : "";
+}
+
+async function selectExplicitAutocompleteFallback(
+  page: Page,
+  locator: ReturnType<Page["locator"]>,
+  field: AutocompleteFieldPlan,
+  waitMs: number
+): Promise<void> {
+  const fallbackField = { ...field, value: explicitAutocompleteFallbackValue(field) };
+  if (!fallbackField.value) throw new Error(`No explicit autocomplete fallback for ${field.key}: ${field.value}`);
+
+  const selectedBySelect = await selectPairedHiddenSelect(page, fallbackField);
+  if (selectedBySelect) {
+    if (fallbackField.waitForNetworkIdle === false) {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    } else {
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    }
+    await page.waitForTimeout(waitMs);
+    return;
+  }
+
+  await typeAutocompleteAndChooseMatchingItem(locator, page, fallbackField);
 }
 
 async function selectAnyAvailableAutocompleteField(

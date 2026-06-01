@@ -1,0 +1,20 @@
+{
+  "id": "IMPL-3",
+  "title": "Add proper UI layout and Loosefruit flow",
+  "description": "Add Loosefruit controls to the Duplicate Cleanup tab, improve the layout for multiple cleanup sources, fetch all-location Loosefruit targets, validate sessions per LocCode, and start RunPayload(operation='delete_loosefruit').",
+  "depends_on": ["IMPL-1", "IMPL-2"],
+  "files": [
+    "app/ui/main_window.py",
+    "tests/test_api_models.py"
+  ],
+  "convergence": [
+    "Duplicate Cleanup tab shows distinct ADTRANS, Task Register, and Loosefruit sections without crowding the table.",
+    "Loosefruit fetch uses Query Gateway worker and renders targets in duplicate_table.",
+    "Blank LocCode fetches all locations.",
+    "Dry run is checked by default.",
+    "Actual delete confirms selected target count and LocCode count.",
+    "Payload operation is delete_loosefruit and category_key is loosefruit.",
+    "loosefruit.* runner events update duplicate target rows and run log."
+  ],
+  "meta": {"type": "implementation", "agent": "code_developer", "risk": "medium"}
+}

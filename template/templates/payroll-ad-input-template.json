@@ -1,0 +1,219 @@
+{
+  "schemaVersion": "1.0.0",
+  "template": {
+    "id": "payroll-ad-input-template",
+    "name": "Payroll AD Lists Input Template",
+    "description": "Input tunjangan dan potongan ke Millware AD Lists - Otomatis cari ADCode dari Venus Master",
+    "version": "1.0.0",
+    "createdAt": "2026-05-11T00:00:00.000Z"
+  },
+  "entry": {
+    "url": "http://millwarep3.rebinmas.com:8003/en/PR/trx/frmPrTrxADLists.aspx"
+  },
+  "variables": [
+    {
+      "name": "employeeCode",
+      "label": "Employee Code",
+      "defaultValue": "POM00007"
+    },
+    {
+      "name": "description",
+      "label": "Description",
+      "defaultValue": ""
+    },
+    {
+      "name": "adCode",
+      "label": "AD Code",
+      "defaultValue": ""
+    },
+    {
+      "name": "amount",
+      "label": "Amount",
+      "defaultValue": "0"
+    }
+  ],
+  "flow": [
+    {
+      "id": "step-open-ad-list",
+      "type": "openPage",
+      "label": "Open AD Lists Page",
+      "value": "http://millwarep3.rebinmas.com:8003/en/PR/trx/frmPrTrxADLists.aspx",
+      "timeoutMs": 30000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-click-new",
+      "type": "click",
+      "label": "Click New Button",
+      "selector": "input[value='New']",
+      "timeoutMs": 10000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-type-description",
+      "type": "type",
+      "label": "Type Description",
+      "selector": "#MainContent_txtDocDesc",
+      "value": "",
+      "variableRef": "description",
+      "timeoutMs": 5000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-type-employee",
+      "type": "type",
+      "label": "Type Employee Code",
+      "selector": "[id*='ucEmployee'] input[type='text']",
+      "value": "",
+      "variableRef": "employeeCode",
+      "timeoutMs": 5000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-wait-employee",
+      "type": "wait",
+      "label": "Wait for Employee Suggestions",
+      "value": "1500",
+      "timeoutMs": 3000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-select-employee",
+      "type": "pressKey",
+      "label": "Select Employee from Dropdown",
+      "value": "ArrowDown",
+      "timeoutMs": 1000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-confirm-employee",
+      "type": "pressKey",
+      "label": "Confirm Employee Selection",
+      "value": "Enter",
+      "timeoutMs": 1000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-type-ad-code",
+      "type": "type",
+      "label": "Type AD Code Keyword",
+      "selector": "[id*='ucADCode'] input[type='text']",
+      "value": "",
+      "variableRef": "adCode",
+      "timeoutMs": 3000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-wait-ad-dropdown",
+      "type": "wait",
+      "label": "Wait for AD Code Suggestions",
+      "value": "1000",
+      "timeoutMs": 2000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-select-ad-option",
+      "type": "pressKey",
+      "label": "Select AD Code Option",
+      "value": "ArrowDown",
+      "timeoutMs": 1000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-confirm-ad",
+      "type": "pressKey",
+      "label": "Confirm AD Code Selection",
+      "value": "Enter",
+      "timeoutMs": 1000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-type-amount",
+      "type": "type",
+      "label": "Type Amount",
+      "selector": "[id*='ucADCode'] input[type='text']",
+      "value": "",
+      "variableRef": "amount",
+      "timeoutMs": 3000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-click-add",
+      "type": "click",
+      "label": "Click Add Button",
+      "selector": "input[value='Add']",
+      "timeoutMs": 5000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-wait-add",
+      "type": "wait",
+      "label": "Wait for Add to Complete",
+      "value": "1000",
+      "timeoutMs": 2000,
+      "continueOnError": false
+    },
+    {
+      "id": "step-click-save",
+      "type": "click",
+      "label": "Click Save",
+      "selector": "input[value='Save']",
+      "timeoutMs": 10000,
+      "continueOnError": false
+    }
+  ],
+  "runtime": {
+    "defaultTimeoutMs": 15000,
+    "sessionMode": "fresh"
+  },
+  "adCodeMapping": {
+    "masa_kerja": {
+      "venusKeywords": ["MASA KERJA", "MASAKE"],
+      "adKeyword": "masa",
+      "description": "Tunjangan Masa Kerja",
+      "hasDropdown": true
+    },
+    "jabatan": {
+      "venusKeywords": ["JABATAN"],
+      "adKeyword": "jab",
+      "description": "Tunjangan Jabatan",
+      "hasDropdown": true
+    },
+    "lembur": {
+      "venusKeywords": ["LEMBUR", "OT"],
+      "adKeyword": "lembur",
+      "description": "Tunjangan Lembur",
+      "hasDropdown": false
+    },
+    "pph21": {
+      "venusKeywords": ["PPH21"],
+      "adKeyword": "pph",
+      "description": "PPH21",
+      "hasDropdown": false
+    },
+    "spsi": {
+      "venusKeywords": ["SPSI"],
+      "adKeyword": "spsi",
+      "description": "SPSI",
+      "hasDropdown": false
+    },
+    "transport": {
+      "venusKeywords": ["TRANSPORT"],
+      "adKeyword": "transport",
+      "description": "Tunjangan Transport",
+      "hasDropdown": false
+    },
+    "bpjs_kes": {
+      "venusKeywords": ["KESEHATAN"],
+      "adKeyword": "bpjs",
+      "description": "BPJS Kesehatan",
+      "hasDropdown": false
+    },
+    "bpjs_tk": {
+      "venusKeywords": ["TENAGA KERJA", "JAMINAN", "JHT"],
+      "adKeyword": "bpjs",
+      "description": "BPJS TK",
+      "hasDropdown": false
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "sessionId": "session-AB1",
+  "division": "AB1",
+  "savedAt": "2026-05-01T09:21:09.880Z",
+  "storageState": {
+    "cookies": [
+      {
+        "name": "ASP.NET_SessionId",
+        "value": "buzgcuq3oz1fmtpfgpi44y0r",
+        "domain": "plantwarep3",
+        "path": "/",
+        "expires": -1,
+        "httpOnly": true,
+        "secure": false,
+        "sameSite": "Lax"
+      },
+      {
+        "name": "CK_USERCOLOR",
+        "value": "1",
+        "domain": "plantwarep3",
+        "path": "/",
+        "expires": 1780219246.013112,
+        "httpOnly": false,
+        "secure": false,
+        "sameSite": "Lax"
+      }
+    ],
+    "origins": []
+  }
+}

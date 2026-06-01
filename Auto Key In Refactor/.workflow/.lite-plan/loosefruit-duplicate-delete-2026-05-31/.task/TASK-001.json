@@ -1,0 +1,19 @@
+{
+  "id": "TASK-001",
+  "title": "DRY RUN: Inspect loosefruit list page structure (frmPrTrxLooseFruitList.aspx)",
+  "scope": "runner/src/plantware/",
+  "description": "Inspect the loosefruit list page at http://plantwarep3:8001/en/PR/trx/frmPrTrxLooseFruitList.aspx. Identify: URL path constant, column structure (DocID, LocCode, Status, etc.), how to search by DocID pattern (LIKE '%[_]%'), how to select rows, how to trigger delete action, delete confirmation mechanism. Mirror page-actions.ts and duplicate-docids.ts pattern.",
+  "convergence": {
+    "criteria": [
+      "Page URL constant added to plantware/urls.ts or page-actions.ts",
+      "Page actions file created: loosefruit-page-actions.ts with: gotoLoosefruitListPage, searchLoosefruitByDocId, getLoosefruitRowCount, selectLoosefruitRows, deleteSelectedLoosefruit, confirmDelete (or equivalent)",
+      "Page structure documented (columns, search inputs, action buttons)"
+    ]
+  },
+  "status": "in_progress",
+  "priority": "high",
+  "files": [
+    "runner/src/plantware/page-actions.ts",
+    "runner/src/plantware/duplicate-docids.ts"
+  ]
+}

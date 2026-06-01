@@ -1,0 +1,18 @@
+{
+  "task_ids": ["IMPL-1", "IMPL-2", "IMPL-3", "IMPL-4"],
+  "recommended_execution": "sequential",
+  "complexity": "medium-high",
+  "shared_context": {
+    "session_id": "WFS-loosefruit-duplicate-cleanup",
+    "goal": "Fetch and delete duplicate Loosefruit PR_LOOSEFRUIT transactions where DocID contains underscore, across all locations, with improved Duplicate Cleanup layout.",
+    "source_query": "SELECT TOP (1000) ... FROM [db_ptrj].[dbo].[PR_LOOSEFRUIT] WHERE [DocID] LIKE '%[_]%' ORDER BY [DocID]",
+    "delete_strategy": "Query Gateway SELECT for targets, existing Plantware browser runner for deletion",
+    "all_location_strategy": "Empty LocCode fetches all locations; runner groups selected targets by LocCode and processes each group with its saved session."
+  },
+  "quality_gate": "PROCEED_WITH_CAUTION",
+  "risk_notes": [
+    "Existing app/core/loosefruit_gateway.py appears incomplete and must be fixed before import.",
+    "Existing task_register_gateway.py already contains Loosefruit classes, so implementation must avoid duplicate ownership drift.",
+    "Current delete-loosefruit runner rejects multiple LocCodes; all-location support is required."
+  ]
+}

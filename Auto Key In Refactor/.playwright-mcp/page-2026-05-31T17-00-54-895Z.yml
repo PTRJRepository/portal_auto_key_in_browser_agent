@@ -1,0 +1,407 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - link [ref=e6] [cursor=pointer]:
+      - /url: /en/system/user/frmSystemUserSetlocation.aspx?FROM=OK
+      - img [ref=e7]
+      - img [ref=e8]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img "Company" [ref=e11]
+        - text: PT. REBINMAS JAYA
+      - generic [ref=e12]:
+        - img "Location" [ref=e13]
+        - text: ESTATE PARIT GUNUNG 1B (P1B)
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - img "User ID" [ref=e16]
+        - text: Atha Rizki Pangestu
+        - img "Date Time" [ref=e17]
+        - text: Monday, 1 June 2026
+      - generic [ref=e18]:
+        - link "Change Location" [ref=e19] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLocation','')
+          - img "Change Location" [ref=e20]
+        - text: "|"
+        - link "Change Password" [ref=e21] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkPassword','')
+          - img "Change Password" [ref=e22]
+        - text: "|"
+        - link "Change Email Address" [ref=e23] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkChangeEmail','')
+          - img "Change Email Address" [ref=e24]
+        - text: "|"
+        - link "Logout" [ref=e25] [cursor=pointer]:
+          - /url: javascript:__doPostBack('ctl00$lnkLogout','')
+          - img "Logout" [ref=e26]
+    - generic [ref=e27]:
+      - link "Skip Navigation Links":
+        - /url: "#NavigationMenu_SkipLink"
+        - img "Skip Navigation Links"
+      - menubar [ref=e29]:
+        - menuitem "Admin" [ref=e30]:
+          - generic [ref=e31]: Admin
+        - menuitem "Financials" [ref=e32]:
+          - generic [ref=e33]: Financials
+        - menuitem "Procurement" [ref=e34]:
+          - generic [ref=e35]: Procurement
+        - menuitem "Human Resource" [ref=e36]:
+          - generic [ref=e37]: Human Resource
+        - menuitem "Budget" [ref=e38]:
+          - generic [ref=e39]: Budget
+        - menuitem "Expansion" [ref=e40]:
+          - generic [ref=e41]: Expansion
+        - menuitem "Reports" [ref=e42]:
+          - generic [ref=e43]: Reports
+  - generic [ref=e45]: Human Resource > Payroll > Loose Fruit Collector List
+  - table [ref=e47]:
+    - rowgroup [ref=e48]:
+      - row [ref=e49]:
+        - cell [ref=e50]
+      - row "LOOSE FRUIT COLLECTOR LIST" [ref=e51]:
+        - cell "LOOSE FRUIT COLLECTOR LIST" [ref=e52]
+        - cell [ref=e53]
+      - row [ref=e54]:
+        - cell [ref=e55]:
+          - separator [ref=e56]
+      - 'row "Document ID : Accounting Month : 2 Accounting Year : 2027 Status : Active Updated By : Division Code : Field No Code : Staff Reference : Search" [ref=e57]':
+        - 'cell "Document ID : Accounting Month : 2 Accounting Year : 2027 Status : Active Updated By : Division Code : Field No Code : Staff Reference : Search" [ref=e58]':
+          - table [ref=e59]:
+            - rowgroup [ref=e60]:
+              - 'row "Document ID : Accounting Month : 2 Accounting Year : 2027 Status : Active Updated By : Division Code : Field No Code : Staff Reference : Search" [ref=e61]':
+                - cell "Document ID :" [ref=e62]:
+                  - text: "Document ID :"
+                  - textbox [ref=e63]
+                - 'cell "Accounting Month : 2" [ref=e64]':
+                  - text: "Accounting Month :"
+                  - textbox [ref=e65]: "2"
+                - 'cell "Accounting Year : 2027" [ref=e66]':
+                  - text: "Accounting Year :"
+                  - textbox [ref=e67]: "2027"
+                - 'cell "Status : Active" [ref=e68]':
+                  - text: "Status :"
+                  - combobox [ref=e69]:
+                    - option "All"
+                    - option "Active" [selected]
+                    - option "Confirmed"
+                    - option "Error"
+                - cell "Updated By :" [ref=e70]:
+                  - text: "Updated By :"
+                  - textbox [ref=e71]
+                - cell "Division Code :" [ref=e72]:
+                  - text: "Division Code :"
+                  - combobox [ref=e73]
+                - cell "Field No Code :" [ref=e74]:
+                  - text: "Field No Code :"
+                  - combobox [disabled] [ref=e75]
+                - cell "Staff Reference :" [ref=e76]:
+                  - text: "Staff Reference :"
+                  - combobox [disabled] [ref=e77]
+                - cell "Search" [ref=e78]:
+                  - button "Search" [ref=e79] [cursor=pointer]
+      - row [ref=e80]:
+        - cell [ref=e81]:
+          - table [ref=e83]:
+            - rowgroup [ref=e84]:
+              - row "Document ID Document Date Total MT No of Employee Total Working Hour Total Amount MT Per Hour Status Updated By" [ref=e85]:
+                - columnheader "Document ID" [ref=e86]:
+                  - link "Document ID" [ref=e87] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MDocID')
+                - columnheader "Document Date" [ref=e88]:
+                  - link "Document Date" [ref=e89] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MDocDate')
+                - columnheader "Total MT" [ref=e90]:
+                  - link "Total MT" [ref=e91] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$TotalMT')
+                - columnheader "No of Employee" [ref=e92]:
+                  - link "No of Employee" [ref=e93] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$TotalEmp')
+                - columnheader "Total Working Hour" [ref=e94]:
+                  - link "Total Working Hour" [ref=e95] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$WorkHour')
+                - columnheader "Total Amount" [ref=e96]:
+                  - link "Total Amount" [ref=e97] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$TotalAmt')
+                - columnheader "MT Per Hour" [ref=e98]:
+                  - link "MT Per Hour" [ref=e99] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MTPerHour')
+                - columnheader [ref=e100]
+                - columnheader "Status" [ref=e101]:
+                  - link "Status" [ref=e102] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MStatus')
+                - columnheader "Updated By" [ref=e103]:
+                  - link "Updated By" [ref=e104] [cursor=pointer]:
+                    - /url: javascript:__doPostBack('ctl00$MainContent$gvLine','Sort$MUpdatedBy')
+              - row "LF30663614 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e105]:
+                - cell "LF30663614" [ref=e106]:
+                  - link "LF30663614" [ref=e107] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357561
+                - cell "04/05/2026" [ref=e108]
+                - cell "5.00000" [ref=e109]
+                - cell "1" [ref=e110]
+                - cell "0.00" [ref=e111]
+                - cell "8750.00" [ref=e112]
+                - cell "0.00" [ref=e113]
+                - cell [ref=e114]
+                - cell "Active" [ref=e115]
+                - cell "itd002" [ref=e116]
+              - row "LF30663603 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e117]:
+                - cell "LF30663603" [ref=e118]:
+                  - link "LF30663603" [ref=e119] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357562
+                - cell "04/05/2026" [ref=e120]
+                - cell "5.00000" [ref=e121]
+                - cell "1" [ref=e122]
+                - cell "0.00" [ref=e123]
+                - cell "8750.00" [ref=e124]
+                - cell "0.00" [ref=e125]
+                - cell [ref=e126]
+                - cell "Active" [ref=e127]
+                - cell "itd002" [ref=e128]
+              - row "LF30663616 04/05/2026 4.00000 1 0.00 7000.00 0.00 Active itd002" [ref=e129]:
+                - cell "LF30663616" [ref=e130]:
+                  - link "LF30663616" [ref=e131] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357563
+                - cell "04/05/2026" [ref=e132]
+                - cell "4.00000" [ref=e133]
+                - cell "1" [ref=e134]
+                - cell "0.00" [ref=e135]
+                - cell "7000.00" [ref=e136]
+                - cell "0.00" [ref=e137]
+                - cell [ref=e138]
+                - cell "Active" [ref=e139]
+                - cell "itd002" [ref=e140]
+              - row "LF30663605 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e141]:
+                - cell "LF30663605" [ref=e142]:
+                  - link "LF30663605" [ref=e143] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357564
+                - cell "04/05/2026" [ref=e144]
+                - cell "5.00000" [ref=e145]
+                - cell "1" [ref=e146]
+                - cell "0.00" [ref=e147]
+                - cell "8750.00" [ref=e148]
+                - cell "0.00" [ref=e149]
+                - cell [ref=e150]
+                - cell "Active" [ref=e151]
+                - cell "itd002" [ref=e152]
+              - row "LF30880542 04/05/2026 2.00000 1 0.00 3500.00 0.00 Active itd002" [ref=e153]:
+                - cell "LF30880542" [ref=e154]:
+                  - link "LF30880542" [ref=e155] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357565
+                - cell "04/05/2026" [ref=e156]
+                - cell "2.00000" [ref=e157]
+                - cell "1" [ref=e158]
+                - cell "0.00" [ref=e159]
+                - cell "3500.00" [ref=e160]
+                - cell "0.00" [ref=e161]
+                - cell [ref=e162]
+                - cell "Active" [ref=e163]
+                - cell "itd002" [ref=e164]
+              - row "LF30880549 04/05/2026 1.00000 1 0.00 1750.00 0.00 Active itd002" [ref=e165]:
+                - cell "LF30880549" [ref=e166]:
+                  - link "LF30880549" [ref=e167] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357566
+                - cell "04/05/2026" [ref=e168]
+                - cell "1.00000" [ref=e169]
+                - cell "1" [ref=e170]
+                - cell "0.00" [ref=e171]
+                - cell "1750.00" [ref=e172]
+                - cell "0.00" [ref=e173]
+                - cell [ref=e174]
+                - cell "Active" [ref=e175]
+                - cell "itd002" [ref=e176]
+              - row "LF30663617 04/05/2026 4.00000 1 0.00 7000.00 0.00 Active itd002" [ref=e177]:
+                - cell "LF30663617" [ref=e178]:
+                  - link "LF30663617" [ref=e179] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357567
+                - cell "04/05/2026" [ref=e180]
+                - cell "4.00000" [ref=e181]
+                - cell "1" [ref=e182]
+                - cell "0.00" [ref=e183]
+                - cell "7000.00" [ref=e184]
+                - cell "0.00" [ref=e185]
+                - cell [ref=e186]
+                - cell "Active" [ref=e187]
+                - cell "itd002" [ref=e188]
+              - row "LF30663606 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e189]:
+                - cell "LF30663606" [ref=e190]:
+                  - link "LF30663606" [ref=e191] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357568
+                - cell "04/05/2026" [ref=e192]
+                - cell "5.00000" [ref=e193]
+                - cell "1" [ref=e194]
+                - cell "0.00" [ref=e195]
+                - cell "8750.00" [ref=e196]
+                - cell "0.00" [ref=e197]
+                - cell [ref=e198]
+                - cell "Active" [ref=e199]
+                - cell "itd002" [ref=e200]
+              - row "LF30663615 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e201]:
+                - cell "LF30663615" [ref=e202]:
+                  - link "LF30663615" [ref=e203] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357569
+                - cell "04/05/2026" [ref=e204]
+                - cell "5.00000" [ref=e205]
+                - cell "1" [ref=e206]
+                - cell "0.00" [ref=e207]
+                - cell "8750.00" [ref=e208]
+                - cell "0.00" [ref=e209]
+                - cell [ref=e210]
+                - cell "Active" [ref=e211]
+                - cell "itd002" [ref=e212]
+              - row "LF30663604 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e213]:
+                - cell "LF30663604" [ref=e214]:
+                  - link "LF30663604" [ref=e215] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357570
+                - cell "04/05/2026" [ref=e216]
+                - cell "5.00000" [ref=e217]
+                - cell "1" [ref=e218]
+                - cell "0.00" [ref=e219]
+                - cell "8750.00" [ref=e220]
+                - cell "0.00" [ref=e221]
+                - cell [ref=e222]
+                - cell "Active" [ref=e223]
+                - cell "itd002" [ref=e224]
+              - row "LF30663622 04/05/2026 4.00000 1 0.00 7000.00 0.00 Active itd002" [ref=e225]:
+                - cell "LF30663622" [ref=e226]:
+                  - link "LF30663622" [ref=e227] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357571
+                - cell "04/05/2026" [ref=e228]
+                - cell "4.00000" [ref=e229]
+                - cell "1" [ref=e230]
+                - cell "0.00" [ref=e231]
+                - cell "7000.00" [ref=e232]
+                - cell "0.00" [ref=e233]
+                - cell [ref=e234]
+                - cell "Active" [ref=e235]
+                - cell "itd002" [ref=e236]
+              - row "LF30663623 04/05/2026 2.00000 1 0.00 3500.00 0.00 Active itd002" [ref=e237]:
+                - cell "LF30663623" [ref=e238]:
+                  - link "LF30663623" [ref=e239] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357572
+                - cell "04/05/2026" [ref=e240]
+                - cell "2.00000" [ref=e241]
+                - cell "1" [ref=e242]
+                - cell "0.00" [ref=e243]
+                - cell "3500.00" [ref=e244]
+                - cell "0.00" [ref=e245]
+                - cell [ref=e246]
+                - cell "Active" [ref=e247]
+                - cell "itd002" [ref=e248]
+              - row "LF30663609 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e249]:
+                - cell "LF30663609" [ref=e250]:
+                  - link "LF30663609" [ref=e251] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357573
+                - cell "04/05/2026" [ref=e252]
+                - cell "5.00000" [ref=e253]
+                - cell "1" [ref=e254]
+                - cell "0.00" [ref=e255]
+                - cell "8750.00" [ref=e256]
+                - cell "0.00" [ref=e257]
+                - cell [ref=e258]
+                - cell "Active" [ref=e259]
+                - cell "itd002" [ref=e260]
+              - row "LF30663620 04/05/2026 3.00000 1 0.00 5250.00 0.00 Active itd002" [ref=e261]:
+                - cell "LF30663620" [ref=e262]:
+                  - link "LF30663620" [ref=e263] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357574
+                - cell "04/05/2026" [ref=e264]
+                - cell "3.00000" [ref=e265]
+                - cell "1" [ref=e266]
+                - cell "0.00" [ref=e267]
+                - cell "5250.00" [ref=e268]
+                - cell "0.00" [ref=e269]
+                - cell [ref=e270]
+                - cell "Active" [ref=e271]
+                - cell "itd002" [ref=e272]
+              - row "LF30663599 04/05/2026 5.00000 1 0.00 8750.00 0.00 Active itd002" [ref=e273]:
+                - cell "LF30663599" [ref=e274]:
+                  - link "LF30663599" [ref=e275] [cursor=pointer]:
+                    - /url: frmPrTrxLooseFruitDet.aspx?MasterID=4357575
+                - cell "04/05/2026" [ref=e276]
+                - cell "5.00000" [ref=e277]
+                - cell "1" [ref=e278]
+                - cell "0.00" [ref=e279]
+                - cell "8750.00" [ref=e280]
+                - cell "0.00" [ref=e281]
+                - cell [ref=e282]
+                - cell "Active" [ref=e283]
+                - cell "itd002" [ref=e284]
+      - row "Prev Page 1 Next" [ref=e285]:
+        - cell "Prev Page 1 Next" [ref=e286]:
+          - button "Prev" [ref=e287] [cursor=pointer]
+          - combobox [ref=e288]:
+            - option "Page 1" [selected]
+            - option "Page 2"
+            - option "Page 3"
+            - option "Page 4"
+            - option "Page 5"
+            - option "Page 6"
+            - option "Page 7"
+            - option "Page 8"
+            - option "Page 9"
+            - option "Page 10"
+            - option "Page 11"
+            - option "Page 12"
+            - option "Page 13"
+            - option "Page 14"
+            - option "Page 15"
+            - option "Page 16"
+            - option "Page 17"
+            - option "Page 18"
+            - option "Page 19"
+            - option "Page 20"
+            - option "Page 21"
+            - option "Page 22"
+            - option "Page 23"
+            - option "Page 24"
+            - option "Page 25"
+            - option "Page 26"
+            - option "Page 27"
+            - option "Page 28"
+            - option "Page 29"
+            - option "Page 30"
+            - option "Page 31"
+            - option "Page 32"
+            - option "Page 33"
+            - option "Page 34"
+            - option "Page 35"
+            - option "Page 36"
+            - option "Page 37"
+            - option "Page 38"
+            - option "Page 39"
+            - option "Page 40"
+            - option "Page 41"
+            - option "Page 42"
+            - option "Page 43"
+            - option "Page 44"
+            - option "Page 45"
+            - option "Page 46"
+            - option "Page 47"
+            - option "Page 48"
+            - option "Page 49"
+            - option "Page 50"
+            - option "Page 51"
+            - option "Page 52"
+            - option "Page 53"
+            - option "Page 54"
+            - option "Page 55"
+            - option "Page 56"
+            - option "Page 57"
+            - option "Page 58"
+            - option "Page 59"
+            - option "Page 60"
+            - option "Page 61"
+            - option "Page 62"
+            - option "Page 63"
+            - option "Page 64"
+            - option "Page 65"
+            - option "Page 66"
+            - option "Page 67"
+            - option "Page 68"
+          - button "Next" [ref=e289] [cursor=pointer]
+      - row [ref=e290]:
+        - cell [ref=e291]
+      - row "New" [ref=e292]:
+        - cell "New" [ref=e293]:
+          - button "New" [ref=e294] [cursor=pointer]
+  - generic [ref=e295]: eFlex Plantware © 2011

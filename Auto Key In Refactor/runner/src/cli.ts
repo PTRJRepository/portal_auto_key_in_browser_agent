@@ -5,6 +5,7 @@ import { runMock } from "./orchestration/mock-runner.js";
 import { runMultiTabSharedSession } from "./orchestration/multi-tab-runner.js";
 import { runGetSession, runTestSession } from "./orchestration/session-runner.js";
 import { runDeleteDuplicates } from "./orchestration/delete-duplicates-runner.js";
+import { runDeleteLoosefruit } from "./orchestration/delete-loosefruit-runner.js";
 import { runDebugDuplicateScan } from "./orchestration/debug-duplicate-scan-runner.js";
 
 function emit(event: Record<string, unknown>): void {
@@ -25,6 +26,8 @@ async function main(): Promise<void> {
   let result: RunResult;
   if (payload.operation === "debug_duplicate_scan") {
     result = await runDebugDuplicateScan(payload, emit);
+  } else if (payload.operation === "delete_loosefruit") {
+    result = await runDeleteLoosefruit(payload, emit);
   } else if (payload.operation === "delete_duplicates") {
     result = await runDeleteDuplicates(payload, emit);
   } else if (payload.runner_mode === "mock") {

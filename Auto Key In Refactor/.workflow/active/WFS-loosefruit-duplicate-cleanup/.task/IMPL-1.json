@@ -1,0 +1,20 @@
+{
+  "id": "IMPL-1",
+  "title": "Stabilize Loosefruit gateway and mapping",
+  "description": "Create or repair the Loosefruit Query Gateway repository for PR_LOOSEFRUIT duplicate target discovery. Resolve current duplicate/incomplete ownership between app/core/loosefruit_gateway.py and app/core/task_register_gateway.py.",
+  "depends_on": [],
+  "files": [
+    "app/core/loosefruit_gateway.py",
+    "app/core/task_register_gateway.py",
+    "tests/test_task_register_gateway.py",
+    "tests/test_loosefruit_gateway.py"
+  ],
+  "convergence": [
+    "Loosefruit gateway imports without syntax/runtime errors.",
+    "list_duplicate_doc_ids supports loc_code, acc_month, acc_year, limit.",
+    "Blank loc_code means all locations and does not add LocCode predicate.",
+    "SQL uses PR_LOOSEFRUIT, SELECT TOP, user-provided columns, and DocID LIKE '%[_]%'.",
+    "Rows map to DuplicateDocIdTarget with category loosefruit, source loosefruit-pr-loosefruit, action DELETE_RECORD."
+  ],
+  "meta": {"type": "implementation", "agent": "code_developer", "risk": "high"}
+}

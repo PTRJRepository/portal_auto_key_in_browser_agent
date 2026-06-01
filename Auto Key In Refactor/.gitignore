@@ -29,3 +29,6 @@ runner/data/runs/
 Thumbs.db
 .vscode/
 .idea/
+
+# Remember plugin
+.remember/

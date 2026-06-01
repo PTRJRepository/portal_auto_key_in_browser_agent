@@ -225,17 +225,28 @@ class ManualAdjustmentApiClient:
         filters: list[str],
         emp_codes: list[str] | None = None,
         division_code: str | None = None,
+        adjustment_type: str | None = None,
+        adjustment_name: str | None = None,
+        doc_desc: str | None = None,
     ) -> dict[str, Any]:
         url = f"{self.base_url}/payroll/manual-adjustment/check-adtrans/by-api-key"
         body: dict[str, Any] = {
             "period_month": period_month,
             "period_year": period_year,
-            "filters": filters,
         }
+        clean_filters = [item.strip() for item in filters or [] if item.strip()]
+        if clean_filters:
+            body["filters"] = clean_filters
         if division_code and division_code.strip():
             body["division_code"] = division_code.strip().upper()
         elif emp_codes is not None:
             body["emp_codes"] = emp_codes
+        if adjustment_type and adjustment_type.strip():
+            body["adjustment_type"] = adjustment_type.strip().upper()
+        if adjustment_name and adjustment_name.strip():
+            body["adjustment_name"] = adjustment_name.strip()
+        if doc_desc and doc_desc.strip():
+            body["doc_desc"] = doc_desc.strip()
         response = requests.post(
             url,
             json=body,
@@ -368,11 +379,13 @@ class ManualAdjustmentApiClient:
             "dry_run": dry_run,
             "updated_by": updated_by,
         }
+        normalized_adjustment_type = adjustment_type.strip().upper() if adjustment_type and adjustment_type.strip() else None
+        normalized_division_code = manual_adjustment_division_code(division_code, normalized_adjustment_type)
         optional = {
-            "division_code": division_code.strip().upper() if division_code and division_code.strip() else None,
+            "division_code": normalized_division_code.strip().upper() if normalized_division_code and normalized_division_code.strip() else None,
             "gang_code": gang_code.strip().upper() if gang_code and gang_code.strip() else None,
             "emp_code": emp_code.strip().upper() if emp_code and emp_code.strip() else None,
-            "adjustment_type": adjustment_type.strip().upper() if adjustment_type and adjustment_type.strip() else None,
+            "adjustment_type": normalized_adjustment_type,
             "adjustment_name": adjustment_name.strip() if adjustment_name and adjustment_name.strip() else None,
         }
         for key, value in optional.items():
@@ -467,13 +480,104 @@ class ManualAdjustmentApiClient:
             ))
         return targets
 
-    def get_duplicate_delete_targets(self, period_month: int, period_year: int, division_code: str, filters: list[str]) -> list[DuplicateDocIdTarget]:
-        payload = self.check_adtrans_report(period_month, period_year, filters, division_code=division_code)
+    def get_mismatch_doc_id_delete_targets(
+        self,
+        period_month: int,
+        period_year: int,
+        division_code: str,
+        filters: list[str] | None = None,
+        adjustment_type: str | None = None,
+        adjustment_name: str | None = None,
+        category_key: str = "",
+        gang_code: str | None = None,
+        emp_code: str | None = None,
+    ) -> list[DuplicateDocIdTarget]:
+        payload = self.compare_adtrans(
+            period_month,
+            period_year,
+            division_code.strip().upper(),
+            filters=filters,
+        )
+        data = payload.get("data", {})
+        comparisons = data.get("comparisons", []) if isinstance(data, dict) else []
+        if not isinstance(comparisons, list):
+            return []
+
+        targets: list[DuplicateDocIdTarget] = []
+        seen: set[str] = set()
+        for comparison in comparisons:
+            if not isinstance(comparison, dict):
+                continue
+            if str(comparison.get("status") or "").upper().strip() != "MISMATCH":
+                continue
+            if emp_code and str(comparison.get("emp_code") or "").upper().strip() != emp_code.strip().upper():
+                continue
+            if gang_code and str(comparison.get("gang_code") or "").upper().strip() != gang_code.strip().upper():
+                continue
+            if adjustment_type:
+                comparison_type = str(comparison.get("adjustment_type") or "").upper().strip()
+                if comparison_type and comparison_type != adjustment_type.strip().upper():
+                    continue
+            if adjustment_name:
+                comparison_name = self._normalized_compare_text(str(comparison.get("adjustment_name") or ""))
+                if comparison_name and comparison_name != self._normalized_compare_text(adjustment_name):
+                    continue
+
+            details = comparison.get("db_ptrj_doc_desc_details") or []
+            if not isinstance(details, list):
+                continue
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                doc_id = str(detail.get("doc_id") or detail.get("docId") or detail.get("DocID") or "").strip()
+                if not doc_id or doc_id.upper() in seen:
+                    continue
+                seen.add(doc_id.upper())
+                targets.append(DuplicateDocIdTarget(
+                    master_id="",
+                    doc_id=doc_id,
+                    doc_date="",
+                    emp_code=str(comparison.get("emp_code") or "").upper().strip(),
+                    emp_name="",
+                    doc_desc=str(detail.get("doc_desc") or comparison.get("adjustment_name") or "MISMATCH").strip(),
+                    amount=self._float_or_none(detail.get("amount")),
+                    action="DELETE_RECORD",
+                    keep_doc_id="",
+                    category=category_key,
+                    raw={
+                        "source": "compare-adtrans",
+                        "comparison": comparison,
+                        "detail": detail,
+                        "action": "DELETE_RECORD",
+                    },
+                ))
+        return targets
+
+    def get_duplicate_delete_targets(
+        self,
+        period_month: int,
+        period_year: int,
+        division_code: str,
+        filters: list[str] | None,
+        adjustment_type: str | None = None,
+        adjustment_name: str | None = None,
+        doc_desc: str | None = None,
+    ) -> list[DuplicateDocIdTarget]:
+        clean_filters = [item.strip() for item in filters or [] if item.strip()]
+        payload = self.check_adtrans_report(
+            period_month,
+            period_year,
+            clean_filters,
+            division_code=division_code,
+            adjustment_type=adjustment_type,
+            adjustment_name=adjustment_name,
+            doc_desc=doc_desc,
+        )
         data = payload.get("data", {})
         report = data.get("duplicate_report", {}) if isinstance(data, dict) else payload.get("duplicate_report", {})
         duplicates = report.get("duplicates", []) if isinstance(report, dict) else []
         targets: list[DuplicateDocIdTarget] = []
-        premium_filter = any(str(item).strip().lower() == "premi" for item in filters)
+        premium_filter = any(str(item).strip().lower() == "premi" for item in clean_filters) or (adjustment_type or "").strip().upper() == "PREMI"
         for duplicate in duplicates:
             if not isinstance(duplicate, dict):
                 continue
@@ -528,6 +632,17 @@ class ManualAdjustmentApiClient:
             numeric_id = 0
         doc_id = str(record.get("doc_id") or record.get("docId") or record.get("DocID") or "").strip()
         return (numeric_id, doc_id)
+
+    def _float_or_none(self, value: object) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _normalized_compare_text(self, value: str) -> str:
+        return " ".join((value or "").upper().split())
 
     def _normalize(self, raw: dict[str, Any]) -> ManualAdjustmentRecord:
         category_key = self.categories.detect(

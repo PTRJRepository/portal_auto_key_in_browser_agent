@@ -1,0 +1,12 @@
+{
+  "summary": "Add loosefruit duplicate DocID deletion via Plantware UI browser automation. Loosefruit list page: frmPrTrxLooseFruitList.aspx. Pattern mirrors existing duplicate cleanup: dry-run scan shows table, then delete selected rows via UI.",
+  "approach": "1) Create loosefruit page-actions runner module mirroring duplicate-docids.ts. 2) Extend delete-duplicates-runner.ts to handle loosefruit category. 3) Add LoosefruitFetchWorker + UI section in MainWindow._build_duplicate_cleanup_tab(). 4) Wire up dry-run + execute slots.",
+  "complexity": "Medium",
+  "estimated_time": "60-90 min",
+  "recommended_execution": "Auto",
+  "task_ids": ["TASK-001", "TASK-002", "TASK-003"],
+  "_metadata": {
+    "session_id": "loosefruit-duplicate-delete-2026-05-31",
+    "exploration_angles": ["patterns", "integration-points", "dependencies"]
+  }
+}

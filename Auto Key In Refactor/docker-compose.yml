@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: auto-key-in-runner:latest
+    container_name: auto-key-in-runner
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs
+      # Share Playwright browser cache dengan host
+      - ${PLAYWRIGHT_BROWSER_CACHE:-D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto_Key_In_Browser}:/home/runneruser/.cache/ms-playwright
+    environment:
+      - PLAYWRIGHT_BROWSERS=0
+      - DISPLAY=:99
+    shm_size: '2gb'
+
+# Build image:
+#   docker build -t auto-key-in-runner .
+
+# Run container:
+#   docker compose run runner python -m app
+#   atau untuk direct runner:
+#   docker compose run runner node runner/dist/cli.js --payload /app/data/cache/test.json

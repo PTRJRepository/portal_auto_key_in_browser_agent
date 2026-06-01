@@ -354,19 +354,19 @@ def enrich_records_with_automation_options(
     records: list[ManualAdjustmentRecord],
     options: list[AutomationOption],
 ) -> list[ManualAdjustmentRecord]:
-    if not records or not options:
+    if not records:
         return records
 
     option_index: dict[tuple[str, str], AutomationOption] = {}
     for option in options:
         for name in {option.adjustment_name, option.description}:
-            normalized_name = " ".join(name.upper().split())
+            normalized_name = _normalized_automation_text(name)
             if normalized_name:
                 option_index[(option.adjustment_type, normalized_name)] = option
 
     enriched: list[ManualAdjustmentRecord] = []
     for record in records:
-        normalized_name = " ".join(record.adjustment_name.upper().split())
+        normalized_name = _normalized_automation_text(record.adjustment_name)
         option = option_index.get((record.adjustment_type, normalized_name))
         if not option:
             enriched.append(record)
@@ -374,17 +374,89 @@ def enrich_records_with_automation_options(
         enriched.append(
             replace(
                 record,
-                ad_code=record.ad_code or option.ad_code,
-                ad_code_desc=record.ad_code_desc or option.task_desc,
-                description=record.description or option.description,
+                ad_code=_preferred_ad_code(record.ad_code, option.ad_code, record.adjustment_name),
+                ad_code_desc=_preferred_ad_description(record.ad_code_desc, option.task_desc or option.description, record.adjustment_name),
+                description=_preferred_ad_description(record.description, option.description or option.task_desc, record.adjustment_name),
                 task_code=record.task_code or option.task_code,
-                task_desc=record.task_desc or option.task_desc,
+                task_desc=_preferred_ad_description(record.task_desc, option.task_desc or option.description, record.adjustment_name),
                 base_task_code=record.base_task_code or option.base_task_code,
                 loc_code=record.loc_code or option.loc_code,
                 automation_category=record.automation_category or option.category,
             )
         )
+    return _backfill_automation_details_from_batch(enriched)
+
+def _backfill_automation_details_from_batch(records: list[ManualAdjustmentRecord]) -> list[ManualAdjustmentRecord]:
+    templates: dict[tuple[str, str], tuple[tuple[str, str, str, str], ManualAdjustmentRecord]] = {}
+    ambiguous: set[tuple[str, str]] = set()
+    for record in records:
+        if not _has_usable_automation_detail(record):
+            continue
+        key = _automation_detail_key(record)
+        signature = (
+            _normalized_automation_text(record.ad_code),
+            _normalized_automation_text(record.ad_code_desc),
+            _normalized_automation_text(record.description),
+            _normalized_automation_text(record.task_desc),
+        )
+        existing = templates.get(key)
+        if existing and existing[0] != signature:
+            ambiguous.add(key)
+            continue
+        templates.setdefault(key, (signature, record))
+
+    enriched: list[ManualAdjustmentRecord] = []
+    for record in records:
+        key = _automation_detail_key(record)
+        template = templates.get(key, (None, None))[1]
+        if not template or key in ambiguous or _has_usable_automation_detail(record):
+            enriched.append(record)
+            continue
+        enriched.append(
+            replace(
+                record,
+                ad_code=_preferred_ad_code(record.ad_code, template.ad_code, record.adjustment_name),
+                ad_code_desc=_preferred_ad_description(record.ad_code_desc, template.ad_code_desc or template.task_desc or template.description, record.adjustment_name),
+                description=_preferred_ad_description(record.description, template.description or template.task_desc or template.ad_code_desc, record.adjustment_name),
+                task_code=record.task_code or template.task_code,
+                task_desc=_preferred_ad_description(record.task_desc, template.task_desc or template.ad_code_desc or template.description, record.adjustment_name),
+                base_task_code=record.base_task_code or template.base_task_code,
+                loc_code=record.loc_code or template.loc_code,
+                automation_category=record.automation_category or template.automation_category,
+            )
+        )
     return enriched
+
+def _automation_detail_key(record: ManualAdjustmentRecord) -> tuple[str, str]:
+    return (record.adjustment_type, _normalized_automation_text(record.adjustment_name))
+
+def _normalized_automation_text(value: str) -> str:
+    return " ".join((value or "").upper().split())
+
+def _is_task_description_adcode(value: str) -> bool:
+    return value.strip().upper().startswith(("(AL) ", "(DE) "))
+
+def _is_usable_ad_code(value: str, adjustment_name: str) -> bool:
+    normalized = _normalized_automation_text(value)
+    return bool(normalized) and normalized != _normalized_automation_text(adjustment_name)
+
+def _has_usable_automation_detail(record: ManualAdjustmentRecord) -> bool:
+    return (
+        _is_task_description_adcode(record.ad_code_desc)
+        or _is_task_description_adcode(record.description)
+        or _is_task_description_adcode(record.task_desc)
+        or _is_usable_ad_code(record.ad_code, record.adjustment_name)
+    )
+
+def _preferred_ad_code(current: str, fallback: str, adjustment_name: str) -> str:
+    return current if _is_usable_ad_code(current, adjustment_name) else fallback or current
+
+def _preferred_ad_description(current: str, fallback: str, adjustment_name: str) -> str:
+    if _is_task_description_adcode(current):
+        return current
+    if _normalized_automation_text(current) and _normalized_automation_text(current) != _normalized_automation_text(adjustment_name):
+        return current
+    return fallback or current
 
 @dataclass(frozen=True)
 class DuplicateDocIdTarget:
@@ -462,6 +534,7 @@ class RunPayload:
     only_missing_rows: bool
     row_limit: int | None
     records: list[ManualAdjustmentRecord]
+    session_division_code: str | None = None
     operation: str = "input"
     duplicate_targets: list[DuplicateDocIdTarget] | None = None
     delete_dry_run: bool = True

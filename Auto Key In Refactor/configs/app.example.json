@@ -1,6 +1,10 @@
 {
   "api_base_url": "http://localhost:8002",
   "api_key": "",
+  "query_gateway_base_url": "http://localhost:8001",
+  "query_gateway_api_key": "",
+  "query_gateway_server": "SERVER_PROFILE_2",
+  "query_gateway_database": "db_ptrj",
   "runner_command": "node runner/dist/cli.js",
   "default_period_month": 4,
   "default_period_year": 2026,

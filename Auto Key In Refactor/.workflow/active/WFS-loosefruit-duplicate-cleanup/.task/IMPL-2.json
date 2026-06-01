@@ -1,0 +1,20 @@
+{
+  "id": "IMPL-2",
+  "title": "Support all-location Loosefruit runner",
+  "description": "Update the existing delete_loosefruit runner so selected targets from multiple LocCodes are grouped and processed sequentially, one saved Plantware session per LocCode, while preserving dry-run and delete verification behavior.",
+  "depends_on": ["IMPL-1"],
+  "files": [
+    "runner/src/orchestration/delete-loosefruit-runner.ts",
+    "runner/src/plantware/loosefruit-page.ts",
+    "runner/src/types.ts",
+    "runner/src/orchestration/delete-loosefruit-runner.test.ts"
+  ],
+  "convergence": [
+    "Single LocCode payload behavior remains unchanged.",
+    "Multiple LocCodes no longer throw before processing.",
+    "Runner emits loosefruit group and target events with doc_id, loc_code, status, message.",
+    "Aggregate RunResult counts all groups.",
+    "Dry run and actual delete verification still work."
+  ],
+  "meta": {"type": "implementation", "agent": "code_developer", "risk": "medium"}
+}

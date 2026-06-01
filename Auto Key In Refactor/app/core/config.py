@@ -9,6 +9,7 @@ import os
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "configs"
+MAX_CONCURRENT_TABS = 8
 
 
 def load_dotenv(path: Path | None = None) -> None:
@@ -48,12 +49,27 @@ class DivisionOption:
     code: str
     label: str
     aliases: tuple[str, ...] = ()
+    location_code: str = ""
+    session_code: str = ""
+    virtual: bool = False
+
+    @property
+    def effective_location_code(self) -> str:
+        return (self.location_code or self.session_code or self.code).strip().upper()
+
+    @property
+    def effective_session_code(self) -> str:
+        return (self.session_code or self.location_code or self.code).strip().upper()
 
 
 @dataclass(frozen=True)
 class AppConfig:
     api_base_url: str = "http://localhost:8002"
     api_key: str = ""
+    query_gateway_base_url: str = "http://localhost:8001"
+    query_gateway_api_key: str = ""
+    query_gateway_server: str = "SERVER_PROFILE_2"
+    query_gateway_database: str = "db_ptrj"
     runner_command: str = "node runner/dist/cli.js"
     default_period_month: int = 4
     default_period_year: int = 2026
@@ -73,8 +89,18 @@ def load_divisions(path: Path | None = None) -> list[DivisionOption]:
         code = str(item.get("code") or "").strip().upper()
         label = str(item.get("label") or code).strip()
         aliases = tuple(str(alias).strip() for alias in item.get("aliases", []) if str(alias).strip())
+        location_code = str(item.get("location_code") or item.get("locationCode") or "").strip().upper()
+        session_code = str(item.get("session_code") or item.get("sessionCode") or location_code).strip().upper()
+        virtual = bool(item.get("virtual", False))
         if code:
-            divisions.append(DivisionOption(code=code, label=label, aliases=aliases))
+            divisions.append(DivisionOption(
+                code=code,
+                label=label,
+                aliases=aliases,
+                location_code=location_code,
+                session_code=session_code,
+                virtual=virtual,
+            ))
     return divisions
 
 
@@ -92,6 +118,10 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     return AppConfig(
         api_base_url=str(os.getenv("AUTO_KEY_IN_API_BASE_URL") or data.get("api_base_url", "http://localhost:8002")).rstrip("/"),
         api_key=str(os.getenv("AUTO_KEY_IN_API_KEY") or data.get("api_key", "")),
+        query_gateway_base_url=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_BASE_URL") or data.get("query_gateway_base_url", "http://localhost:8001")).rstrip("/"),
+        query_gateway_api_key=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_API_KEY") or data.get("query_gateway_api_key", "")),
+        query_gateway_server=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_SERVER") or data.get("query_gateway_server", "SERVER_PROFILE_2")),
+        query_gateway_database=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_DATABASE") or data.get("query_gateway_database", "db_ptrj")),
         runner_command=str(os.getenv("AUTO_KEY_IN_RUNNER_COMMAND") or data.get("runner_command", "node runner/dist/cli.js")),
         default_period_month=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_MONTH", int(data.get("default_period_month", 4))),
         default_period_year=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_YEAR", int(data.get("default_period_year", 2026))),
