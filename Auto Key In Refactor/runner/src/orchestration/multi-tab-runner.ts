@@ -45,6 +45,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
     }
 
     await Promise.all(pages.map(async (page, index) => {
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, index * 1500));
       emit({ event: "tab.open.started", tab_index: index });
       try {
         await openDetailPage(page);
@@ -58,6 +59,7 @@ export async function runMultiTabSharedSession(payload: RunPayload, emit: EmitEv
 
     const stoppedTabs = new Set<number>();
     const tabResults = await Promise.allSettled(pages.map(async (page, tabIndex) => {
+      if (tabIndex > 0) await new Promise((resolve) => setTimeout(resolve, tabIndex * 800));
       const rowsForTab = assignedRows[tabIndex];
       const tabStats = { done: 0, skipped: 0, failed: 0, total: rowsForTab.length };
       let activePremiumEmployeeGroupKey = "";

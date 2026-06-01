@@ -1236,6 +1236,10 @@ class MainWindow(QMainWindow):
         self.loosefruit_limit = QSpinBox()
         self.loosefruit_limit.setRange(1, 10000)
         self.loosefruit_limit.setValue(1000)
+        self.loosefruit_tabs = QSpinBox()
+        self.loosefruit_tabs.setRange(1, 20)
+        self.loosefruit_tabs.setValue(10)
+        self.loosefruit_tabs.setToolTip("Jumlah tab paralel untuk delete Loosefruit")
         self.fetch_loosefruit_duplicates_button = QPushButton("Fetch Loosefruit DocIDs")
         self.delete_loosefruit_button = QPushButton("Scan Selected (Dry Run)")
         self.delete_loosefruit_button.setEnabled(False)
@@ -1253,6 +1257,7 @@ class MainWindow(QMainWindow):
         loosefruit_action_row.addWidget(self.loosefruit_status_label, 1)
         loosefruit_form.addRow("LocCode (kosong=all)", self.loosefruit_loc_code)
         loosefruit_form.addRow("Limit", self.loosefruit_limit)
+        loosefruit_form.addRow("Parallel Tabs", self.loosefruit_tabs)
         loosefruit_form.addRow(loosefruit_action_row)
 
         cleanup_grid = QGridLayout()
@@ -2458,7 +2463,7 @@ class MainWindow(QMainWindow):
             adjustment_name=None,
             category_key="loosefruit",
             runner_mode="delete_loosefruit",
-            max_tabs=8,
+            max_tabs=max(1, self.loosefruit_tabs.value()),
             headless=False,
             only_missing_rows=False,
             row_limit=None,

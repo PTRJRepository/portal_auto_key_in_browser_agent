@@ -11,7 +11,7 @@ export interface LoosefruitRow {
   totalMt: string;
 }
 
-const loosefruitListUrl = PLANTWARE_CONFIG.baseUrl + "/en/PR/trx/frmPrTrxLooseFruitList.aspx";
+export const loosefruitListUrl = PLANTWARE_CONFIG.baseUrl + "/en/PR/trx/frmPrTrxLooseFruitList.aspx";
 const LIST_READY_SELECTOR = "#MainContent_gvLine, a[href*='frmPrTrxLooseFruitDet']";
 const SEARCH_INPUT_SELECTOR = "#MainContent_txtDocID";
 const SEARCH_BUTTON_SELECTOR = "#MainContent_btnSearch";

@@ -1,13 +1,16 @@
+import type { Page } from "playwright";
 import type { DeleteLoosefruitRowResult, DuplicateDocIdTarget, LoosefruitTarget, RunPayload, RunResult } from "../types.js";
 import { BrowserSession } from "../session/browser-session.js";
 import { sessionDivisionCode } from "../payload.js";
 import { deleteLoosefruitDocId, gotoLoosefruitListPage, searchLoosefruitByDocId } from "../plantware/loosefruit-page.js";
+import { loosefruitListUrl } from "../plantware/loosefruit-page.js";
 
 type Emit = (event: Record<string, unknown>) => void;
 type LoosefruitPayload = RunPayload & { targets?: LoosefruitTarget[]; loosefruit_targets?: LoosefruitTarget[] };
 
 const LOOSEFRUIT_SOURCE = "loosefruit-pr-loosefruit";
 const DELETE_LOOSEFRUIT_ACTIONS = new Set(["DELETE_RECORD", "DELETE_OLD"]);
+const TARGETS_PER_PAGE_REFRESH = 5;
 
 export function isLoosefruitDuplicateTarget(target: DuplicateDocIdTarget): boolean {
   const category = String(target.category ?? "").trim().toLowerCase();
@@ -111,7 +114,9 @@ function processLoosefruitTarget(
 }
 
 async function processLoosefruitTab(
-  page: Awaited<ReturnType<BrowserSession["newPage"]>>,
+  session: BrowserSession,
+  page: Page,
+  sessionDivision: string,
   locCode: string,
   locCodes: string[],
   targets: LoosefruitTarget[],
@@ -120,10 +125,29 @@ async function processLoosefruitTab(
   emit: Emit,
 ): Promise<DeleteLoosefruitRowResult[]> {
   const tabRows: DeleteLoosefruitRowResult[] = [];
+
+  async function ensureFreshPage(): Promise<Page> {
+    const p = await session.newPage();
+    await gotoLoosefruitListPage(p);
+    emit({ event: "loosefruit.list.page.reloaded", tab_index: tabIndex, loc_code: locCode, url: p.url() });
+    return p;
+  }
+
+  let activePage = page;
   emit({ event: "loosefruit.tab.started", tab_index: tabIndex, loc_code: locCode, loc_codes: locCodes, total_targets: targets.length });
 
-  for (const target of targets) {
-    const row = await processLoosefruitTarget(page, target, locCode, dryRun, tabIndex, emit);
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+
+    // refresh page setiap TARGETS_PER_PAGE_REFRESH target biar speed konsisten
+    if (i > 0 && i % TARGETS_PER_PAGE_REFRESH === 0) {
+      emit({ event: "loosefruit.tab.refreshing", tab_index: tabIndex, loc_code: locCode, processed: i, total: targets.length, message: "Refreshing page at target " + (i + 1) + "/" + targets.length + " to maintain speed" });
+      await activePage.close().catch(() => {});
+      activePage = await ensureFreshPage();
+    }
+
+    const targetLocCode = loosefruitTargetLocCode(target) || sessionDivision;
+    const row = await processLoosefruitTarget(activePage, target, targetLocCode, dryRun, tabIndex, emit);
     tabRows.push(row);
   }
 
@@ -187,7 +211,7 @@ export async function runDeleteLoosefruit(payload: RunPayload, emit: Emit): Prom
   const session = new BrowserSession({
     headless: payload.headless,
     freshLoginFirst: false,
-    loginFallback: false,
+    loginFallback: true,
     division: sessionDivision
   });
 
@@ -196,20 +220,20 @@ export async function runDeleteLoosefruit(payload: RunPayload, emit: Emit): Prom
     sessionReused = session.sessionReused;
     emit({ event: "session.ready", division_code: payload.division_code, session_division_code: sessionDivision, reused: session.sessionReused, session_path: session.getSessionPath(), message: session.sessionReused ? "Session reused" : "Fresh session login completed" });
 
-    const pages: Array<Awaited<ReturnType<BrowserSession["newPage"]>>> = [];
+    // Create all pages SEQUENTIALLY — satu per satu, biar ga overload Plantware
+    const tabPages: Page[] = [];
     for (const entry of tabEntries) {
-      const page = await session.newPage();
       const primaryLocCode = entry.locCodes[0] || sessionDivision;
+      const page = await session.newPage();
       await gotoLoosefruitListPage(page);
-      emit({ event: "loosefruit.list.page.loaded", loc_code: primaryLocCode, url: page.url() });
-      pages.push(page);
+      emit({ event: "loosefruit.list.page.loaded", tab_index: tabPages.length, loc_code: primaryLocCode, url: page.url() });
+      tabPages.push(page);
     }
 
     const tabResults = await Promise.allSettled(
       tabEntries.map(async (entry, tabIndex) => {
-        const page = pages[tabIndex];
         const primaryLocCode = entry.locCodes[0] || sessionDivision;
-        return processLoosefruitTab(page, primaryLocCode, entry.locCodes, entry.targets, dryRun, tabIndex, emit);
+        return processLoosefruitTab(session, tabPages[tabIndex], sessionDivision, primaryLocCode, entry.locCodes, entry.targets, dryRun, tabIndex, emit);
       })
     );
 
@@ -230,7 +254,9 @@ export async function runDeleteLoosefruit(payload: RunPayload, emit: Emit): Prom
       }
     }
 
-    await Promise.all(pages.map((p) => p.close().catch(() => {})));
+    // Clean up all pages
+    await Promise.allSettled(tabPages.map((p) => p.close().catch(() => {})));
+
   } finally {
     await session.close();
   }

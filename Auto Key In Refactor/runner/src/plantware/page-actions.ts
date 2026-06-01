@@ -6,11 +6,11 @@ import type { CategoryStrategy } from "../categories/registry.js";
 export async function openDetailPage(page: Page): Promise<void> {
   await page.goto(`${PLANTWARE_CONFIG.baseUrl}${PLANTWARE_CONFIG.detailPage}`, {
     timeout: 30000,
-    waitUntil: "networkidle"
+    waitUntil: "domcontentloaded"
   }).catch(async () => {
     await page.goto(`${PLANTWARE_CONFIG.baseUrl}${PLANTWARE_CONFIG.detailPage}`, {
       timeout: 45000,
-      waitUntil: "domcontentloaded"
+      waitUntil: "load"
     });
   });
   await assertDetailFormReady(page);
@@ -72,15 +72,15 @@ export async function fillAdjustmentRow(
   division: string = PLANTWARE_CONFIG.division,
   options: { continueEmployeePremium?: boolean; continuePremiumDetails?: boolean } = {}
 ): Promise<void> {
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
+  await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
   const continuePremiumInput = shouldContinuePremiumInput(record, options);
 
   if (shouldOpenNewRow(record, isFirstRow, continuePremiumInput)) {
     const newBtn = page.locator("#MainContent_btnNew, #btnNew, input[id*='btnNew']").first();
     if (await newBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await newBtn.click();
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(800);
     }
   }
 
@@ -88,7 +88,7 @@ export async function fillAdjustmentRow(
 
   let autocompleteCountBeforeAdCode = 0;
   if (shouldFillHeaderField("employee", continuePremiumInput)) {
-    await selectAutocompleteField(page, employeeAutocompleteField(record), 2000);
+    await selectAutocompleteField(page, employeeAutocompleteField(record), 1000);
 
     const divisionSelect = page.locator("#MainContent_ddlChargeTo");
     if (await divisionSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -99,9 +99,9 @@ export async function fillAdjustmentRow(
 
   if (shouldFillHeaderField("adcode", continuePremiumInput)) {
     autocompleteCountBeforeAdCode = await page.locator("input.ui-autocomplete-input:not([disabled])").count();
-    await selectAutocompleteField(page, adcodeAutocompleteField(record, category), 2500);
-    await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(3000);
+    await selectAutocompleteField(page, adcodeAutocompleteField(record, category), 1500);
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1000);
   }
 
   await ensureDescriptionField(page, record, category);
@@ -121,12 +121,12 @@ export async function fillAdjustmentRow(
   await form.amountField.clear();
   await form.amountField.fill(String(record.amount || 0));
   await form.amountField.press("Tab").catch(() => {});
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(300);
 
   if (!detailKind) {
     const expenseField = page.locator("input.CBOBox.ui-autocomplete-input:not([disabled])").last();
     if (await expenseField.isVisible({ timeout: 15000 }).catch(() => false)) {
-      await selectAutocomplete(expenseField, page, category.expenseCode(record), 2000);
+      await selectAutocomplete(expenseField, page, category.expenseCode(record), 1000);
     }
   }
 
@@ -569,13 +569,13 @@ async function fillBlockBasedMonthlyAllowanceDetails(page: Page, record: ManualA
   let fields = await monthlyAllowanceFieldPresence(page);
 
   if (fields.blockDivision) {
-    await selectAutocompleteField(page, blockField, 2000);
+    await selectAutocompleteField(page, blockField, 1000);
     await waitForAnyMonthlyAllowanceField(page, ["subblok", "blockExpense"], 3000);
     fields = await monthlyAllowanceFieldPresence(page);
   }
 
   if (fields.subblok) {
-    await selectAutocompleteFieldAfterOptionsReady(page, subBlockField, 2000, "sub block after division");
+    await selectAutocompleteFieldAfterOptionsReady(page, subBlockField, 1000, "sub block after division");
     await waitForAnyMonthlyAllowanceField(page, ["blockExpense"], 3000);
     fields = await monthlyAllowanceFieldPresence(page);
   }
@@ -611,7 +611,7 @@ async function fillVehicleBasedMonthlyAllowanceDetails(page: Page, record: Manua
   let fields = await monthlyAllowanceFieldPresence(page);
 
   if (fields.vehicle) {
-    await selectAutocompleteField(page, vehicleAutocompleteFieldOrAnyAvailable(record), 2000);
+    await selectAutocompleteField(page, vehicleAutocompleteFieldOrAnyAvailable(record), 1000);
     await waitForAnyMonthlyAllowanceField(page, ["vehicleExpense"], 3000);
     fields = await monthlyAllowanceFieldPresence(page);
   }
@@ -751,7 +751,7 @@ async function selectGangAutocompleteAfterAdCode(page: Page, record: ManualAdjus
     throw new Error(`Gang autocomplete input not found after AD code for ${record.emp_code}; autocomplete count ${refreshedCount}`);
   }
 
-  await selectAutocomplete(gangInput, page, gangPrefix, 2000);
+  await selectAutocomplete(gangInput, page, gangPrefix, 1000);
 }
 
 async function waitForAddCompleted(
@@ -760,8 +760,8 @@ async function waitForAddCompleted(
   category: CategoryStrategy,
   submittedDetailKind: PremiumDetailKind = ""
 ): Promise<void> {
-  await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(1000);
+  await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(500);
   const errorMsg = await page.locator("span[id*='RFV'], span:has-text('Please select'), span:has-text('required'), span[style*='color: red']").textContent().catch(() => null);
   if (errorMsg) throw new Error(`Validation error after Add: ${errorMsg}`);
   const amountValue = await page.locator("#MainContent_txtAmount").inputValue().catch(() => "");
@@ -812,11 +812,7 @@ async function selectAutocompleteField(page: Page, field: AutocompleteFieldPlan,
 
   const selectedBySelect = await selectPairedHiddenSelect(page, field);
   if (selectedBySelect) {
-    if (field.waitForNetworkIdle === false) {
-      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-    } else {
-      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-    }
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(waitMs);
     const selectedValue = await locator.inputValue().catch(() => "");
     if (!selectedValue.trim()) {
@@ -873,11 +869,7 @@ async function selectExplicitAutocompleteFallback(
 
   const selectedBySelect = await selectPairedHiddenSelect(page, fallbackField);
   if (selectedBySelect) {
-    if (fallbackField.waitForNetworkIdle === false) {
-      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-    } else {
-      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-    }
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(waitMs);
     return;
   }
@@ -897,7 +889,7 @@ async function selectAnyAvailableAutocompleteField(
   await locator.clear();
   await page.locator(".ui-menu-item:visible").first().waitFor({ state: "hidden", timeout: 1000 }).catch(() => {});
   await locator.pressSequentially(" ", { delay: 100 });
-  await page.waitForTimeout(Math.max(1000, waitMs));
+  await page.waitForTimeout(Math.max(600, waitMs));
 
   const menuItems = page.locator(".ui-menu-item:visible");
   await menuItems.first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
@@ -951,7 +943,7 @@ async function typeAutocompleteAndChooseMatchingItem(
   await locator.clear();
   await page.locator(".ui-menu-item:visible").first().waitFor({ state: "hidden", timeout: 1000 }).catch(() => {});
   await locator.pressSequentially(field.value, { delay: 100 });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(600);
   const menuItems = page.locator(".ui-menu-item:visible");
   await menuItems.first().waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
   const count = await menuItems.count().catch(() => 0);
