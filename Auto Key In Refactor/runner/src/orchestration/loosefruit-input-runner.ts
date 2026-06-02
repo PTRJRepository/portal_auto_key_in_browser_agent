@@ -14,14 +14,18 @@ import {
   deriveDivisionFromGang,
   deriveTaskCodeFromLoc,
   getLoosefruitDetailUrl,
+  selectChargeTo,
+  setTransactionDate,
   selectEmployee,
   selectTaskCode,
   selectDivisionCode,
   selectFieldNoCode,
+  selectExpenseCode,
   setMT,
   setRate,
   clickAdd,
   getDocumentId,
+  ensurePageAlive,
 } from "../plantware/loosefruit-input.js";
 
 type Emit = (event: Record<string, unknown>) => void;
@@ -53,7 +57,7 @@ export async function runLoosefruitInput(
 
   // Step 1: Fetch staging comparison data
   emit({ event: "loosefruit.input.fetch.start", periode: staging_periode });
-  const stagingData = await fetchStagingComparison(staging_periode, staging_source_url);
+  const stagingData = await fetchStagingComparison(staging_periode, staging_source_url, loc_code);
   if (!stagingData || !stagingData.data) {
     emit({ event: "loosefruit.input.fetch.failed", message: "Failed to fetch staging data" });
     return {
@@ -79,8 +83,9 @@ export async function runLoosefruitInput(
   });
 
   // Step 2: Filter loose fruit employees (code starts with 'A') with positive selisih
-  const filteredRows = filterLooseFruitRows(stagingData.data.rows, estate_filter);
-  emit({ event: "loosefruit.input.filtered", filtered_count: filteredRows.length });
+  const eligibleRows = filterLooseFruitRows(stagingData.data.rows, estate_filter);
+  const filteredRows = payload.row_limit && payload.row_limit > 0 ? eligibleRows.slice(0, payload.row_limit) : eligibleRows;
+  emit({ event: "loosefruit.input.filtered", filtered_count: filteredRows.length, eligible_count: eligibleRows.length, row_limit: payload.row_limit ?? null });
 
   if (filteredRows.length === 0) {
     emit({ event: "loosefruit.input.no_rows", message: "No rows with positive selisih to input" });
@@ -142,6 +147,12 @@ export async function runLoosefruitInput(
       });
 
       try {
+        await selectChargeTo(page, loc_code);
+        await setTransactionDate(page, doc_date);
+        if (!(await ensurePageAlive(page, loc_code))) {
+          throw new Error("Page not ready after Charge To/Date selection");
+        }
+
         // Check if employee already exists in the grid before adding
         const empAlreadyAdded = await page.evaluate((empCode: string) => {
           const grid = document.querySelector("#MainContent_grvDetail");
@@ -184,7 +195,10 @@ export async function runLoosefruitInput(
         await page.waitForTimeout(500);
 
         // Select field no code
-        await selectFieldNoCode(page);
+        await selectFieldNoCode(page, field_code);
+        await page.waitForTimeout(300);
+
+        await selectExpenseCode(page);
         await page.waitForTimeout(300);
 
         // Set MT and Rate
@@ -210,6 +224,7 @@ export async function runLoosefruitInput(
             mt: row.selisih,
             amount: row.selisih * finalRate
           });
+          emit({ event: "loosefruit.input.row.success", emp_code: row.emp_code, doc_id: finalDocId, mt: row.selisih, amount: row.selisih * finalRate });
         } else {
           rows.push({
             emp_code: row.emp_code,
@@ -219,16 +234,19 @@ export async function runLoosefruitInput(
             status: "failed",
             message: "Document ID not generated after Add"
           });
+          emit({ event: "loosefruit.input.row.failed", emp_code: row.emp_code, message: "Document ID not generated after Add" });
         }
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         rows.push({
           emp_code: row.emp_code,
           emp_name: row.emp_name,
           gang: row.gang,
           selisih: row.selisih,
           status: "failed",
-          message: error instanceof Error ? error.message : String(error)
+          message
         });
+        emit({ event: "loosefruit.input.row.failed", emp_code: row.emp_code, message });
       }
 
       // Small delay between rows
@@ -243,6 +261,7 @@ export async function runLoosefruitInput(
 
   const successRows = rows.filter(r => r.status === "success").length;
   const failedRows = rows.filter(r => r.status === "failed").length;
+  const skippedRows = rows.filter(r => r.status === "skipped").length;
 
   return {
     success: failedRows === 0,
@@ -253,7 +272,7 @@ export async function runLoosefruitInput(
     total_records: filteredRows.length,
     attempted_rows: rows.length,
     inserted_rows: successRows,
-    skipped_existing_rows: 0,
+    skipped_existing_rows: skippedRows,
     failed_rows: failedRows,
     error_summary: failedRows > 0 ? `${failedRows} rows failed` : null,
     rows

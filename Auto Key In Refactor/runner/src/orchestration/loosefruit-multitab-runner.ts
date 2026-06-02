@@ -112,7 +112,7 @@ export async function runLoosefruitMultiTab(
 
   // Step 1: Fetch staging comparison data
   emit({ event: "loosefruit.multitab.fetch.start", periode: staging_periode });
-  const stagingData = await fetchStagingComparison(staging_periode, staging_source_url);
+  const stagingData = await fetchStagingComparison(staging_periode, staging_source_url, default_loc_code);
   if (!stagingData || !stagingData.data) {
     emit({ event: "loosefruit.multitab.fetch.failed", message: "Failed to fetch staging data" });
     return {
@@ -138,13 +138,16 @@ export async function runLoosefruitMultiTab(
   });
 
   // Step 2: Filter loose fruit employees
-  const filteredRows = uniqueRowsByEmployee(filterLooseFruitRows(stagingData.data.rows, estate_filter));
+  const eligibleRows = uniqueRowsByEmployee(filterLooseFruitRows(stagingData.data.rows, estate_filter));
+  const filteredRows = payload.row_limit && payload.row_limit > 0 ? eligibleRows.slice(0, payload.row_limit) : eligibleRows;
   const mixedEstates = estateSet(filteredRows);
   emit({
     event: "loosefruit.multitab.filtered",
     filtered_count: filteredRows.length,
     unique_estates: Array.from(mixedEstates),
-    duplicate_rows_skipped: filterLooseFruitRows(stagingData.data.rows, estate_filter).length - filteredRows.length,
+    duplicate_rows_skipped: filterLooseFruitRows(stagingData.data.rows, estate_filter).length - eligibleRows.length,
+    eligible_count: eligibleRows.length,
+    row_limit: payload.row_limit ?? null,
   });
 
   if (mixedEstates.size > 1) {
@@ -412,7 +415,7 @@ export async function runLoosefruitMultiTab(
             }
 
             // Select field no code (no postback needed)
-            await selectFieldNoCode(page);
+            await selectFieldNoCode(page, field_code);
             await page.waitForTimeout(300);
 
             // Select expense code (labour)

@@ -93,14 +93,32 @@ def compact_sync_amount(value: object) -> str:
         return "0"
 
 def sync_status_amount_suffix(row: dict[str, Any]) -> str:
-    if "adtrans_amount" not in row and "target_amount" not in row:
+    if "adtrans_amount" not in row and "target_amount" not in row and "amount" not in row:
         return ""
-    return f" {compact_sync_amount(row.get('adtrans_amount'))}/{compact_sync_amount(row.get('target_amount'))}"
+    return f" {compact_sync_amount(row.get('adtrans_amount'))}/{compact_sync_amount(row.get('target_amount', row.get('amount')))}"
+
+def amount_compare_status(row: dict[str, Any]) -> str:
+    if "target_amount" not in row and "amount" not in row and "adtrans_amount" not in row:
+        return ""
+    target_units = amount_units(row.get("target_amount", row.get("amount", 0)))
+    adtrans_units = amount_units(row.get("adtrans_amount", 0))
+    if target_units <= 0 and adtrans_units <= 0:
+        return "SYNC"
+    if target_units > 0 and adtrans_units <= 0:
+        return "MISS"
+    if target_units > 0 and 0 < adtrans_units < target_units:
+        return "PARTIAL"
+    if target_units > 0 and adtrans_units == target_units:
+        return "SYNC"
+    if target_units > 0 and adtrans_units > target_units:
+        return "OVER"
+    return "DIFF"
 
 def sync_status_display_from_row(row: dict[str, Any]) -> tuple[str, str]:
     status = str(row.get("status") or "").upper().strip()
     skip_reason = str(row.get("skip_reason") or "").upper().strip()
     amount_suffix = sync_status_amount_suffix(row)
+    amount_status = amount_compare_status(row)
 
     if skip_reason == "ADTRANS_AMOUNT_PARTIAL":
         return "PARTIAL", f"{skip_reason}{amount_suffix}"
@@ -108,11 +126,16 @@ def sync_status_display_from_row(row: dict[str, Any]) -> tuple[str, str]:
         return "NOT_FOUND", f"{skip_reason}{amount_suffix}"
     if skip_reason == "SYNC_SEGMENT_NOT_FOUND":
         return "NO_SYNC_SEGMENT", skip_reason
+    if amount_status == "MISS":
+        return "NOT_FOUND", f"ADTRANS_NOT_FOUND{amount_suffix}"
+    if amount_status == "PARTIAL":
+        return "PARTIAL", f"ADTRANS_AMOUNT_PARTIAL{amount_suffix}"
+    if amount_status == "OVER":
+        return "OVER", f"ADTRANS_AMOUNT_OVER{amount_suffix}"
+    if amount_status == "SYNC":
+        return "SYNC", f"VERIFIED{amount_suffix}".strip()
 
-    target_units = amount_units(row.get("target_amount", 0))
-    adtrans_units = amount_units(row.get("adtrans_amount", 0))
-    verified_by_amount = target_units > 0 and adtrans_units >= target_units
-    if status in {"UPDATED", "UNCHANGED"} or verified_by_amount:
+    if status in {"UPDATED", "UNCHANGED"}:
         return str(row.get("new_sync_status") or "SYNC").upper().strip(), f"{status or 'VERIFIED'}{amount_suffix}".strip()
     if status == "SKIPPED" and skip_reason == "UNCHANGED":
         return str(row.get("new_sync_status") or "SYNC").upper().strip(), f"UNCHANGED{amount_suffix}".strip()
@@ -195,6 +218,16 @@ def filter_for_record(record: ManualAdjustmentRecord) -> str:
         return category_key
     name = record.adjustment_name.strip()
     return (name[5:] if name.upper().startswith("AUTO ") else name).lower()
+
+def premium_name_filter_matches(record: ManualAdjustmentRecord, requested_name: str | None) -> bool:
+    requested = " ".join((requested_name or "").upper().split())
+    if not requested:
+        return True
+    actual = " ".join(record.adjustment_name.upper().split())
+    if requested in actual or actual in requested:
+        return True
+    requested_tokens = [token for token in requested.split() if token not in {"PREMI", "PANEN"}]
+    return bool(requested_tokens) and all(token in actual for token in requested_tokens)
 
 
 def records_requiring_fetch_verification(records: list[ManualAdjustmentRecord]) -> list[ManualAdjustmentRecord]:
@@ -332,15 +365,18 @@ def build_premium_retry_plan_from_sync_status(
         adtrans_units = amount_units(row.get("adtrans_amount", 0))
         payload_units = sum(amount_units(record.amount) for record in group_records)
         expected_units = target_units or payload_units
+        amount_status = amount_compare_status(row)
 
-        if skip_reason == "ADTRANS_NOT_FOUND" or adtrans_units <= 0:
+        if skip_reason == "ADTRANS_NOT_FOUND" or amount_status == "MISS":
             retry_record_keys.update(record.record_key for record in group_records)
             continue
-        if skip_reason != "ADTRANS_AMOUNT_PARTIAL" and (
-            status in {"UPDATED", "UNCHANGED", "SKIPPED"} or adtrans_units >= expected_units
-        ):
+        has_partial_amount = amount_status == "PARTIAL"
+        if amount_status == "SYNC":
             continue
-        if skip_reason != "ADTRANS_AMOUNT_PARTIAL":
+        if amount_status == "OVER":
+            held_groups[hold_key] = "db amount exceeds payload"
+            continue
+        if skip_reason != "ADTRANS_AMOUNT_PARTIAL" and not has_partial_amount:
             held_groups[hold_key] = skip_reason.lower() or status.lower() or "unhandled sync-status row"
             continue
 
@@ -384,9 +420,10 @@ def verified_sync_status_ids(payload: dict[str, Any]) -> list[int]:
         if skip_reason in {"ADTRANS_AMOUNT_PARTIAL", "ADTRANS_NOT_FOUND", "SYNC_SEGMENT_NOT_FOUND"}:
             continue
         status = str(row.get("status") or "").upper().strip()
-        target_units = amount_units(row.get("target_amount", 0))
-        adtrans_units = amount_units(row.get("adtrans_amount", 0))
-        if status in {"UPDATED", "UNCHANGED"} or (target_units > 0 and adtrans_units >= target_units):
+        amount_status = amount_compare_status(row)
+        if amount_status == "SYNC":
+            verified.add(int(row_id))
+        elif not amount_status and status in {"UPDATED", "UNCHANGED"}:
             verified.add(int(row_id))
     return sorted(verified)
 
@@ -451,6 +488,8 @@ class FetchWorker(QObject):
         try:
             fetch_query = self.query.with_grouped_premium_details() if self.query.requests_premium() and not self.query.uses_grouped_view() else self.query
             records = self.client.get_adjustments(fetch_query)
+            if self.query.requests_premium() and self.query.adjustment_name:
+                records = [record for record in records if premium_name_filter_matches(record, self.query.adjustment_name)]
             records = self._enrich_manual_automation_details(records)
             suspect_records = records_requiring_fetch_verification(records)
             verification: FetchVerificationStatus = {}
@@ -1732,7 +1771,7 @@ class MainWindow(QMainWindow):
             self._update_loosefruit_progress_table(estate, "Fetching...", 0, 0, 0, 0)
             try:
                 staging_periode = self.lf_staging_periode.text().strip()
-                comparison = fetch_loosefruit_staging_comparison(self.config.loosefruit_staging_source, staging_periode)
+                comparison = fetch_loosefruit_staging_comparison(self.config.loosefruit_staging_source, staging_periode, division=estate)
                 filtered = eligible_loosefruit_rows(comparison.rows, estate)
                 estate_rows = [row for row in comparison.rows if row.estate == estate]
                 staging_total = sum(row.staging_brondol for row in estate_rows)

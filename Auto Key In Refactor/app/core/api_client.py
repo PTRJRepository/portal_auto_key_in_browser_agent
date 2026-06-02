@@ -93,7 +93,7 @@ class ManualAdjustmentQuery:
         return values
 
     def with_grouped_premium_details(self) -> "ManualAdjustmentQuery":
-        return replace(self, adjustment_type="PREMI", view="grouped", metadata_only=False)
+        return replace(self, adjustment_type="PREMI", adjustment_name=None, view="grouped", metadata_only=False)
 
     def uses_grouped_view(self) -> bool:
         return (self.view or "").strip().lower() == "grouped"
@@ -779,7 +779,14 @@ class ManualAdjustmentApiClient:
     def _employee_premium_transactions(self, employee: dict[str, Any]) -> list[dict[str, Any]]:
         transactions = employee.get("premium_transactions", [])
         if isinstance(transactions, list) and transactions:
-            return [item for item in transactions if isinstance(item, dict)]
+            flattened = [item for item in transactions if isinstance(item, dict)]
+            premiums = employee.get("premiums", [])
+            adjustments = employee.get("adjustments", [])
+            grouped_rows = premiums if isinstance(premiums, list) and premiums else adjustments if isinstance(adjustments, list) else []
+            for premium in grouped_rows:
+                if isinstance(premium, dict) and not metadata_detail_items(premium):
+                    flattened.append({**premium, "transaction_index": premium.get("transaction_index", len(flattened) + 1)})
+            return flattened
 
         flattened: list[dict[str, Any]] = []
         premiums = employee.get("premiums", [])

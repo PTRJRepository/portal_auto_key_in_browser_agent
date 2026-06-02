@@ -27,7 +27,11 @@ export class BrowserSession {
     this.headless = options.headless;
     this.division = (options.division ?? PLANTWARE_CONFIG.division).trim().toUpperCase();
     this.sessionId = options.sessionId ?? `session-${this.division}`;
-    this.sessionDir = options.sessionDir ?? path.resolve(process.cwd(), "data/sessions");
+    const cwd = process.cwd();
+    const defaultSessionDir = path.basename(cwd).toLowerCase() === "runner"
+      ? path.resolve(cwd, "data/sessions")
+      : path.resolve(cwd, "runner/data/sessions");
+    this.sessionDir = options.sessionDir ?? defaultSessionDir;
     this.freshLoginFirst = options.freshLoginFirst ?? true;
     this.loginFallback = options.loginFallback ?? true;
   }

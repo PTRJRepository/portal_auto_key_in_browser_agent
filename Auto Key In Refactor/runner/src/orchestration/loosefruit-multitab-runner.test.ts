@@ -19,11 +19,11 @@ function row(extra: Partial<StagingComparisonRow>): StagingComparisonRow {
 
 assert.equal(
   buildStagingComparisonUrl("http://localhost:3001/upah/staging-comparison", "2026-05"),
-  "http://localhost:3001/upah/staging-comparison?periode=2026-05",
+  "http://localhost:8002/backend/upah/api/staging/staging-comparison?periode=2026-05",
 );
 assert.equal(
-  buildStagingComparisonUrl("http://localhost:8002", "2026-05"),
-  "http://localhost:8002/backend/upah/api/staging/staging-comparison?periode=2026-05",
+  buildStagingComparisonUrl("http://localhost:8002", "2026-05", "P1B"),
+  "http://localhost:8002/backend/upah/api/staging/staging-comparison?periode=2026-05&division=P1B",
 );
 
 const rows = [
@@ -32,7 +32,7 @@ const rows = [
   row({ emp_code: "B0001", estate: "P1A", selisih: 5 }),
   row({ emp_code: "A0003", estate: "P1B", selisih: 4 }),
 ];
-assert.deepEqual(filterLooseFruitRows(rows, "P1A").map(item => item.emp_code), ["A0001"]);
+assert.deepEqual(filterLooseFruitRows(rows, "P1A").map(item => item.emp_code), ["A0001", "B0001"]);
 assert.deepEqual(Array.from(estateSet(filterLooseFruitRows(rows))).sort(), ["P1A", "P1B"]);
 
 const unique = uniqueRowsByEmployee([

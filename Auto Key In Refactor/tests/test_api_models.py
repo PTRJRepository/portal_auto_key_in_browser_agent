@@ -489,6 +489,49 @@ def test_get_adjustments_keeps_grouped_amount_only_premium_without_detail_items(
     assert records[0].amount == 50000
     assert records[0].category_key == "premi_tiket"
 
+def test_get_adjustments_keeps_amount_only_premium_when_other_detail_transactions_exist():
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi_tiket", "Premi Tiket", "PREMI", ("TIKET",), "premi"),
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "view": "grouped",
+        "data": [
+            {
+                "division_code": "AB1",
+                "gangs": [
+                    {
+                        "gang_code": "G1H",
+                        "employees": [
+                            {
+                                "emp_code": "G0597",
+                                "emp_name": "Worker",
+                                "premiums": [
+                                    {"id": 42, "adjustment_type": "PREMI", "adjustment_name": "PREMI TIKET", "amount": 50000, "remarks": "PREMI TIKET | AL | 50000 | sync:MISS | match:MISMATCH"},
+                                    {"id": 43, "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "amount": 100000, "detail_items": [{"detail_type": "blok", "subblok": "P0801", "jumlah": 100000}]},
+                                ],
+                                "premium_transactions": [
+                                    {"adjustment_id": 43, "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING", "detail_type": "blok", "subblok": "P0801", "amount": 100000, "transaction_index": 1}
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    response.raise_for_status.return_value = None
+
+    with patch("app.core.api_client.requests.get", return_value=response):
+        records = client.get_adjustments(ManualAdjustmentQuery(4, 2026, division_code="AB1", adjustment_type="PREMI", view="grouped", metadata_only=False))
+
+    assert [record.adjustment_name for record in records] == ["PREMI PRUNING", "PREMI TIKET"]
+    assert records[1].category_key == "premi_tiket"
+    assert records[1].amount == 50000
+
 def test_grouped_premium_derives_plantware_divisioncode_from_gang_when_transaction_division_is_estate():
     registry = CategoryRegistry([
         AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),

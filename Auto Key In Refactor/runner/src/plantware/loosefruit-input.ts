@@ -22,6 +22,10 @@ export interface LoosefruitInputRow {
   selisih: number;
 }
 
+async function safeWait(page: Page, ms: number): Promise<void> {
+  await page.waitForTimeout(ms).catch(() => {});
+}
+
 export interface LoosefruitInputResult {
   emp_code: string;
   status: "success" | "failed" | "skipped";
@@ -41,10 +45,10 @@ export async function waitForPostback(page: Page): Promise<void> {
   // Strategy: wait for load state (reliable for full page reloads) + small buffer.
   try {
     await page.waitForLoadState("load", { timeout: 20000 });
-    await page.waitForTimeout(800);
+    await safeWait(page, 800);
   } catch {
     // Page may have navigated or context closed — give a fixed buffer as fallback
-    await page.waitForTimeout(3000);
+    await safeWait(page, 3000);
   }
 }
 
@@ -53,7 +57,29 @@ export async function waitForStable(page: Page): Promise<void> {
   try {
     await page.waitForLoadState("load", { timeout: 10000 });
   } catch {
-    await page.waitForTimeout(2000);
+    await safeWait(page, 2000);
+  }
+}
+
+
+async function changeSelectValue(page: Page, selector: string, value: string, waitPostback: boolean): Promise<void> {
+  try {
+    await page.evaluate(({ selector, value }) => {
+      const el = document.querySelector(selector) as HTMLSelectElement | null;
+      if (!el) throw new Error(`Select not found: ${selector}`);
+      el.value = value;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }, { selector, value });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/Execution context was destroyed|Target page, context or browser has been closed|navigation/i.test(message)) {
+      throw error;
+    }
+  }
+  if (waitPostback) {
+    await waitForPostback(page);
+  } else {
+    await safeWait(page, 300);
   }
 }
 
@@ -71,13 +97,7 @@ export async function ensurePageAlive(page: Page, urlHint: string): Promise<bool
 }
 
 export async function selectChargeTo(page: Page, locCode: string): Promise<void> {
-  await page.evaluate((code: string) => {
-    const el = document.querySelector("#MainContent_ddlChargeTo") as HTMLSelectElement | null;
-    if (!el) return;
-    el.value = code;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  }, locCode);
-  await waitForPostback(page);
+  await changeSelectValue(page, "#MainContent_ddlChargeTo", locCode, true);
 }
 
 export async function setTransactionDate(page: Page, date: string): Promise<void> {
@@ -87,33 +107,15 @@ export async function setTransactionDate(page: Page, date: string): Promise<void
 }
 
 export async function selectEmployee(page: Page, empCode: string): Promise<void> {
-  await page.evaluate((code: string) => {
-    const el = document.querySelector("#MainContent_ddlEmployee") as HTMLSelectElement | null;
-    if (!el) return;
-    el.value = code;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  }, empCode);
-  await waitForPostback(page);
+  await changeSelectValue(page, "#MainContent_ddlEmployee", empCode, true);
 }
 
 export async function selectTaskCode(page: Page, taskCode: string): Promise<void> {
-  await page.evaluate((code: string) => {
-    const el = document.querySelector("#MainContent_ddlTaskCode") as HTMLSelectElement | null;
-    if (!el) return;
-    el.value = code;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  }, taskCode);
-  await waitForPostback(page);
+  await changeSelectValue(page, "#MainContent_ddlTaskCode", taskCode, true);
 }
 
 export async function selectDivisionCode(page: Page, divisionCode: string): Promise<void> {
-  await page.evaluate((code: string) => {
-    const el = document.querySelector("#MainContent_MultiDimAcc_ddlBlock") as HTMLSelectElement | null;
-    if (!el) return;
-    el.value = code;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  }, divisionCode);
-  await waitForPostback(page);
+  await changeSelectValue(page, "#MainContent_MultiDimAcc_ddlBlock", divisionCode, true);
 }
 
 export async function selectExpenseCode(page: Page): Promise<void> {
@@ -125,11 +127,11 @@ export async function selectExpenseCode(page: Page): Promise<void> {
     const bebas = options.find(o => o.text.toLowerCase().includes("bebas"));
     select.value = (labour || bebas || options[1] || options[0])?.value || "";
   });
-  await page.waitForTimeout(300);
+  await safeWait(page, 300);
 }
 
-export async function selectFieldNoCode(page: Page): Promise<void> {
-  await page.waitForTimeout(1200);
+export async function selectFieldNoCode(page: Page, fieldCode?: string | null): Promise<void> {
+  await safeWait(page, 1200);
   const options = await page.evaluate(() => {
     const select = document.querySelector("#MainContent_MultiDimAcc_ddlSubBlk") as HTMLSelectElement | null;
     if (!select) return [];
@@ -139,15 +141,18 @@ export async function selectFieldNoCode(page: Page): Promise<void> {
     }));
   });
   if (options.length > 1) {
+    const requested = (fieldCode || "").trim().toUpperCase();
     const bebas = options.find(o => o.text.toLowerCase().includes("bebas"));
-    const target = bebas || options[1];
+    const exact = requested ? options.find(o => o.value.toUpperCase() === requested || o.text.toUpperCase().includes(requested)) : undefined;
+    const target = exact || bebas || options[1];
     await page.evaluate((val: string) => {
       const select = document.querySelector("#MainContent_MultiDimAcc_ddlSubBlk") as HTMLSelectElement | null;
       if (!select) return;
       select.value = val;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
     }, target.value);
   }
-  await page.waitForTimeout(200);
+  await safeWait(page, 200);
 }
 
 export async function setMT(page: Page, mt: number): Promise<void> {
@@ -163,13 +168,57 @@ export async function setRate(page: Page, rate: number): Promise<void> {
 }
 
 export async function clickAdd(page: Page, screenshotLabel?: string): Promise<void> {
-  const btn = page.locator("#MainContent_btnAdd");
-  await btn.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  // Wait for postback from previous field selection to fully settle
+  try {
+    await page.waitForLoadState("load", { timeout: 15000 });
+    await safeWait(page, 600);
+  } catch {
+    await safeWait(page, 2000);
+  }
+
   if (screenshotLabel) {
     await page.screenshot({ path: screenshotLabel });
   }
-  await btn.click({ noWaitAfter: true });
-  await page.waitForTimeout(2000);
+
+  // Wait for Add button to be enabled (not disabled during postback)
+  try {
+    await page.waitForFunction(
+      () => {
+        const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
+        return btn && !btn.disabled && btn.offsetParent !== null;
+      },
+      { timeout: 8000 }
+    );
+  } catch {
+    // Button might not be found or visible; proceed anyway
+  }
+
+  // Use native .click() — more reliable than manual onclick handler injection
+  // which can fail when handler is null or when ASP.NET postback is in progress
+  const btn = page.locator("#MainContent_btnAdd");
+  await btn.click({ force: true, timeout: 5000 });
+
+  // Wait for ASP.NET postback to complete and DOM to settle
+  try {
+    await page.waitForLoadState("load", { timeout: 25000 });
+    await safeWait(page, 1000);
+  } catch {
+    // If load state fails (e.g. page navigated), give a fixed buffer
+    await safeWait(page, 3000);
+  }
+
+  // Verify Add button is back (not permanently disabled = postback completed)
+  try {
+    await page.waitForFunction(
+      () => {
+        const b = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
+        return b && !b.disabled;
+      },
+      { timeout: 10000 }
+    );
+  } catch {
+    // Button still disabled — may indicate validation error or postback failure
+  }
 }
 
 export async function getDocumentId(page: Page): Promise<string | null> {
@@ -203,18 +252,30 @@ export interface StagingComparisonResponse {
     rows: StagingComparisonRow[]; };
 }
 
-export function buildStagingComparisonUrl(source: string | null | undefined, periode: string): string {
-  const rawSource = (source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "http://localhost:8002").trim().replace(/\/+$/, "");
-  const query = `periode=${encodeURIComponent(periode)}`;
-  if (rawSource.endsWith("/upah/staging-comparison") || rawSource.endsWith("/backend/upah/api/staging/staging-comparison")) {
-    return `${rawSource}?${query}`;
+function frontendToBackendSource(source: string): string {
+  if (source.endsWith("/upah/staging-comparison") && source.includes(":3001")) {
+    return source.replace(":3001", ":8002").replace("/upah/staging-comparison", "/backend/upah/api/staging/staging-comparison");
   }
-  return `${rawSource}/backend/upah/api/staging/staging-comparison?${query}`;
+  return source;
 }
 
-export async function fetchStagingComparison(periode: string, source?: string | null): Promise<StagingComparisonResponse | null> {
+export function buildStagingComparisonUrl(source: string | null | undefined, periode: string, division?: string | null, gang?: string | null): string {
+  let rawSource = frontendToBackendSource((source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "http://localhost:8002").trim().replace(/\/+$/, ""));
+  const params = new URLSearchParams({ periode });
+  if (division) params.set("division", division.trim().toUpperCase());
+  if (gang) params.set("gang", gang.trim().toUpperCase());
+  if (rawSource.endsWith("/upah/staging-comparison")) {
+    rawSource = rawSource.replace("/upah/staging-comparison", "/backend/upah/api/staging/staging-comparison");
+  }
+  if (rawSource.endsWith("/api/staging/staging-comparison") || rawSource.endsWith("/backend/upah/api/staging/staging-comparison")) {
+    return `${rawSource}?${params.toString()}`;
+  }
+  return `${rawSource}/backend/upah/api/staging/staging-comparison?${params.toString()}`;
+}
+
+export async function fetchStagingComparison(periode: string, source?: string | null, division?: string | null, gang?: string | null): Promise<StagingComparisonResponse | null> {
   try {
-    const response = await fetch(buildStagingComparisonUrl(source, periode));
+    const response = await fetch(buildStagingComparisonUrl(source, periode, division, gang));
     if (!response.ok) return null;
     return await response.json() as StagingComparisonResponse;
   } catch {
@@ -222,8 +283,21 @@ export async function fetchStagingComparison(periode: string, source?: string | 
   }
 }
 
+export function normalizeStagingComparisonRows(rows: StagingComparisonRow[]): StagingComparisonRow[] {
+  return rows.map(row => ({
+    ...row,
+    emp_code: String(row.emp_code || "").trim().toUpperCase(),
+    gang: String(row.gang || (row as any).gang_code || "").trim().toUpperCase(),
+    estate: String(row.estate || (row as any).loc_code || (row as any).division || "").trim().toUpperCase(),
+    staging_brondol: Number(row.staging_brondol ?? (row as any).staging_bunches ?? 0),
+    plantware_brondol: Number(row.plantware_brondol ?? (row as any).prod_mt ?? 0),
+    selisih: Number(row.selisih ?? (row as any).delta ?? 0),
+  }));
+}
+
 export function filterLooseFruitRows(rows: StagingComparisonRow[], estate?: string): StagingComparisonRow[] {
-  return rows.filter(row => row.selisih > 0 && row.emp_code.startsWith('A') && (!estate || row.estate === estate));
+  const estateFilter = (estate || "").trim().toUpperCase();
+  return normalizeStagingComparisonRows(rows).filter(row => row.selisih > 0 && !!row.emp_code && (!estateFilter || row.estate === estateFilter));
 }
 
 export function groupByGang(rows: StagingComparisonRow[]): Map<string, StagingComparisonRow[]> {
