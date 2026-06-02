@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -362,6 +363,7 @@ class DetailDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Compare Detail - {division_code} / {category_label}")
         self.resize(1180, 560)
+        self.setMinimumSize(900, 450)
         self.setStyleSheet(AppTheme.get_stylesheet())
         self._build_ui(details)
 
@@ -804,6 +806,49 @@ class DivisionMonitorWidget(QWidget):
         ctrl.addWidget(self.status_lbl, 1)
         root.addLayout(ctrl)
 
+        # Search/Reset section
+        search_group = QGroupBox("Cari & Reset ADTRANS")
+        search_layout = QHBoxLayout(search_group)
+        search_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Adjustment type filter
+        self.adtrans_type_combo = QComboBox()
+        self.adtrans_type_combo.addItems(["", "AUTO_BUFFER", "MANUAL", "PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "PENDAPATAN_LAINNYA"])
+        self.adtrans_type_combo.setMinimumWidth(120)
+        self.adtrans_type_combo.setToolTip("Filter berdasarkan Adjustment Type dari Config")
+        search_layout.addWidget(QLabel("Type:"))
+        search_layout.addWidget(self.adtrans_type_combo)
+
+        # Adjustment name filter
+        self.adtrans_search = QLineEdit()
+        self.adtrans_search.setPlaceholderText("Nama adjustment (misal: koreksi panen)...")
+        self.adtrans_search.setMinimumWidth(200)
+        search_layout.addWidget(QLabel("ADTRANS:"))
+        search_layout.addWidget(self.adtrans_search, 1)
+
+        self.search_adtrans_btn = QPushButton("Cari")
+        self.search_adtrans_btn.clicked.connect(self._on_search_adtrans)
+        search_layout.addWidget(self.search_adtrans_btn)
+
+        self.reset_adtrans_btn = QPushButton("Reset Selected")
+        self.reset_adtrans_btn.setObjectName("danger")
+        self.reset_adtrans_btn.setEnabled(False)
+        self.reset_adtrans_btn.clicked.connect(self._on_reset_adtrans)
+        search_layout.addWidget(self.reset_adtrans_btn)
+
+        root.addWidget(search_group)
+
+        # Search results table
+        self.adtrans_table = QTableWidget()
+        self.adtrans_table.setColumnCount(7)
+        self.adtrans_table.setHorizontalHeaderLabels(["Pilih", "Divisi", "Kategori", "Karyawan", "ADTRANS", "Jumlah", "Status"])
+        self.adtrans_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.adtrans_table.setAlternatingRowColors(True)
+        self.adtrans_table.horizontalHeader().setStretchLastSection(True)
+        self.adtrans_table.setColumnHidden(0, True)  # Hidden checkbox column
+        self.adtrans_table.itemChanged.connect(self._on_table_item_changed)
+        root.addWidget(self.adtrans_table, 1)
+
         # Scrollable division cards
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -979,3 +1024,135 @@ class DivisionMonitorWidget(QWidget):
     def _on_card_detail(self, division_code: str, cat_label: str, details: list[MissDetail]) -> None:
         dialog = DetailDialog(division_code, cat_label, details, parent=self)
         dialog.exec()
+
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        """Enable reset button when any row is checked."""
+        if item.column() == 0:  # Checkbox column
+            checked_count = sum(
+                1 for row in range(self.adtrans_table.rowCount())
+                if self.adtrans_table.item(row, 0) and self.adtrans_table.item(row, 0).checkState() == Qt.CheckState.Checked
+            )
+            self.reset_adtrans_btn.setEnabled(checked_count > 0)
+
+    def _on_search_adtrans(self) -> None:
+        """Search for adtrans entries that need to be RESET (MISMATCH/EXTRA).
+        Reference is extend_db_ptrj - if stored differs or extra, delete it.
+        MISSING entries are NOT reset (they need INSERT, not delete).
+
+        Filters:
+        - Adjustment Type: from combo (e.g., PREMI, MANUAL, AUTO_BUFFER)
+        - Adjustment Name: text search in adjustment_name
+        """
+        # Get filter values
+        adj_type = self.adtrans_type_combo.currentText().strip()
+        search_text = self.adtrans_search.text().strip().lower()
+
+        if not search_text:
+            QMessageBox.information(self, "Cari ADTRANS", "Masukkan nama adjustment untuk mencari.")
+            return
+
+        self.adtrans_table.setRowCount(0)
+        found_count = 0
+
+        # Map adjustment type to category keys for filtering
+        type_to_cat_keys = {
+            "PREMI": ["premi", "premi_tunjangan"],
+            "MANUAL": ["spsi", "masa_kerja", "tunjangan_jabatan", "pph21"],
+            "AUTO_BUFFER": ["potongan_upah_kotor", "potongan_upah_bersih"],
+            "POTONGAN_KOTOR": ["potongan_upah_kotor"],
+            "POTONGAN_BERSIH": ["potongan_upah_bersih"],
+            "PENDAPATAN_LAINNYA": ["potongan_upah_bersih"],
+        }
+
+        for summary in self.summaries:
+            for cat_key, cat_status in summary.categories.items():
+                # Filter by adjustment type if selected
+                if adj_type:
+                    allowed_cats = type_to_cat_keys.get(adj_type, [adj_type.lower()])
+                    if cat_key not in allowed_cats:
+                        continue
+
+                # MISMATCH: stored amount differs from reference (extend_db_ptrj) -> RESET
+                for detail in cat_status.mismatch_details:
+                    if search_text in detail.adjustment_name.lower():
+                        self._add_adtrans_row(detail, "MISMATCH")
+                        found_count += 1
+                # EXTRA: exists in stored but not in reference -> RESET
+                for detail in cat_status.miss_details:
+                    if search_text in detail.adjustment_name.lower():
+                        self._add_adtrans_row(detail, "EXTRA")
+                        found_count += 1
+
+        type_filter = f" ({adj_type})" if adj_type else ""
+        self.status_lbl.setText(f"Found {found_count} entries to RESET{type_filter} matching '{search_text}'")
+
+    def _add_adtrans_row(self, detail: MissDetail, status_type: str) -> None:
+        """Add a row to the adtrans search results table."""
+        row = self.adtrans_table.rowCount()
+        self.adtrans_table.insertRow(row)
+
+        # Checkbox column
+        checkbox = QTableWidgetItem()
+        checkbox.setFlags(checkbox.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        checkbox.setCheckState(Qt.CheckState.Unchecked)
+        self.adtrans_table.setItem(row, 0, checkbox)
+
+        # Data columns
+        self.adtrans_table.setItem(row, 1, QTableWidgetItem(detail.division_code or "-"))
+        self.adtrans_table.setItem(row, 2, QTableWidgetItem(detail.category_label))
+        self.adtrans_table.setItem(row, 3, QTableWidgetItem(detail.emp_code))
+        self.adtrans_table.setItem(row, 4, QTableWidgetItem(detail.adjustment_name))
+        # Show both source (reference) and stored with diff
+        if detail.stored_amount is not None:
+            diff = detail.source_amount - detail.stored_amount
+            diff_str = f"({diff:+,.0f})" if diff != 0 else ""
+            amount_str = f"{detail.source_amount:,.0f} vs {detail.stored_amount:,.0f} {diff_str}"
+        else:
+            amount_str = f"{detail.source_amount:,.0f}"
+        self.adtrans_table.setItem(row, 5, QTableWidgetItem(amount_str))
+        self.adtrans_table.setItem(row, 6, QTableWidgetItem(status_type))
+
+        # Store detail data in row for later use
+        self.adtrans_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, detail)
+
+    def _on_reset_adtrans(self) -> None:
+        """Reset/delete selected adtrans entries."""
+        selected_rows = []
+        for row in range(self.adtrans_table.rowCount()):
+            item = self.adtrans_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                selected_rows.append(row)
+
+        if not selected_rows:
+            return
+
+        confirm = QMessageBox.question(
+            self, "Reset ADTRANS",
+            f"Yakin ingin mereset {len(selected_rows)} entry yang dipilih?\n\nData akan dihapus dari database manual adjustment.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        client = self.api_client_factory()
+        deleted_count = 0
+
+        for row in selected_rows:
+            detail: MissDetail = self.adtrans_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            try:
+                # Call API to delete the entry
+                result = client.delete_adtrans(
+                    period_month=self.mon_month.value(),
+                    period_year=self.mon_year.value(),
+                    emp_code=detail.emp_code,
+                    adjustment_name=detail.adjustment_name,
+                    division_code=detail.division_code,
+                )
+                deleted_count += 1
+                # Remove row from table
+                self.adtrans_table.removeRow(row)
+            except Exception as e:
+                print(f"Failed to delete {detail.adjustment_name}: {e}")
+
+        self.status_lbl.setText(f"Deleted {deleted_count}/{len(selected_rows)} entries")
+        self.reset_adtrans_btn.setEnabled(False)

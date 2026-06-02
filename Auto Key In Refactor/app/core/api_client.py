@@ -821,3 +821,34 @@ class ManualAdjustmentApiClient:
             if value not in (None, ""):
                 return str(value).strip()
         return ""
+
+    def delete_adtrans(
+        self,
+        period_month: int,
+        period_year: int,
+        emp_code: str,
+        adjustment_name: str,
+        division_code: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete manual adjustment entry by adjustment name."""
+        url = f"{self.base_url}/payroll/manual-adjustment/delete-adtrans/by-api-key"
+        body: dict[str, Any] = {
+            "period_month": period_month,
+            "period_year": period_year,
+            "emp_code": emp_code.strip().upper(),
+            "adjustment_name": adjustment_name.strip(),
+        }
+        if division_code and division_code.strip():
+            body["division_code"] = division_code.strip().upper()
+        response = requests.post(
+            url,
+            json=body,
+            headers={"Content-Type": "application/json", "X-API-Key": self.api_key},
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("success", False):
+            message = payload.get("message") or payload.get("error") or "Delete ADTRANS API returned success=false"
+            raise RuntimeError(str(message))
+        return payload

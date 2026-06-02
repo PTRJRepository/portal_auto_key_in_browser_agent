@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -145,6 +146,7 @@ class DivisionRunDialog(QDialog):
         self.records: list[ManualAdjustmentRecord] = []
         self.setWindowTitle(f"Run {division_code} / {category_label}")
         self.resize(900, 650)
+        self.setMinimumSize(800, 500)
         self.setStyleSheet(AppTheme.get_stylesheet())
         self._build_ui()
         self._threads: list[QThread] = []
@@ -198,7 +200,8 @@ class DivisionRunDialog(QDialog):
         # Log
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setMaximumHeight(180)
+        self.log_output.setMinimumHeight(100)
+        self.log_output.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
         layout.addWidget(self.log_output)
 
         # Buttons

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStatusBar,
     QTableWidget,
@@ -875,6 +876,7 @@ class MainWindow(QMainWindow):
         self._suppress_adjustment_name_refresh = False
         self.setWindowTitle("Auto Key In Refactor")
         self.resize(1500, 920)
+        self.setMinimumSize(900, 600)
         self._build_ui()
         self._apply_theme()
         self._setup_shortcuts()
@@ -1103,17 +1105,28 @@ class MainWindow(QMainWindow):
 
         job_group = QGroupBox("Daftar Job")
         job_layout = QVBoxLayout(job_group)
+        self.job_scroll = QScrollArea()
+        self.job_scroll.setWidgetResizable(True)
+        self.job_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.job_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.job_scroll.setStyleSheet("QScrollArea { border: none; }")
         self.job_table = QTableWidget(0, 10)
         self.job_table.setHorizontalHeaderLabels(["Run", "Division", "Gang", "Category", "Adjustment Type", "Adjustment Name", "Mode", "Max Tabs", "Row Limit", "Status"])
         self.job_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.job_table.setMaximumHeight(180)
-        job_layout.addWidget(self.job_table)
+        self.job_scroll.setWidget(self.job_table)
+        job_layout.addWidget(self.job_scroll)
         layout.addWidget(job_group)
 
+        records_scroll = QScrollArea()
+        records_scroll.setWidgetResizable(True)
+        records_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        records_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        records_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
         self.records_table = QTableWidget(0, 17)
         self.records_table.setHorizontalHeaderLabels(["Input Status", "DB Status", "API Sync", "API Match", "Emp Code", "Gang", "Division", "Adjustment", "Description", "ADCode", "Remarks ADCode", "Amount", "Remarks", "Estate", "DivisionCode", "Detail Type", "Subblok/Vehicle"])
         self.records_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.records_table, 3)
+        records_scroll.setWidget(self.records_table)
+        layout.addWidget(records_scroll, 3)
 
         live_group = QGroupBox("Sedang Input")
         live_grid = QGridLayout(live_group)
@@ -1140,16 +1153,28 @@ class MainWindow(QMainWindow):
         self.agent_table = QTableWidget(0, 7)
         self.agent_table.setHorizontalHeaderLabels(["Agent/Tab", "State", "Assigned", "Done", "Skipped", "Failed", "Current Emp"])
         self.agent_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.agent_table, 1)
+        self.agent_scroll = QScrollArea()
+        self.agent_scroll.setWidgetResizable(True)
+        self.agent_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.agent_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.agent_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        self.agent_scroll.setWidget(self.agent_table)
+        layout.addWidget(self.agent_scroll, 1)
 
         self.run_table = QTableWidget(0, 7)
         self.run_table.setHorizontalHeaderLabels(["Time", "Status", "Emp Code", "Adjustment", "Amount", "Agent/Tab", "Message"])
         self.run_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.run_table, 2)
+        self.run_scroll = QScrollArea()
+        self.run_scroll.setWidgetResizable(True)
+        self.run_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.run_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.run_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        self.run_scroll.setWidget(self.run_table)
+        layout.addWidget(self.run_scroll, 2)
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setMaximumHeight(140)
+        self.log_output.setMinimumHeight(80)
         layout.addWidget(self.log_output)
         return tab
 
@@ -1185,7 +1210,13 @@ class MainWindow(QMainWindow):
         self.summary_table = QTableWidget(0, 11)
         self.summary_table.setHorizontalHeaderLabels(["Input Status", "DB Status", "API Sync", "API Match", "Emp Code", "Adjustment", "Description", "Adcode", "Amount", "Message", "Agent/Tab"])
         self.summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.summary_table, 1)
+        self.summary_scroll = QScrollArea()
+        self.summary_scroll.setWidgetResizable(True)
+        self.summary_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.summary_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.summary_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        self.summary_scroll.setWidget(self.summary_table)
+        layout.addWidget(self.summary_scroll, 1)
         return tab
 
     def _build_verify_tab(self) -> QWidget:
@@ -1222,7 +1253,13 @@ class MainWindow(QMainWindow):
         self.verify_table = QTableWidget(0, 7)
         self.verify_table.setHorizontalHeaderLabels(["Emp Code", "Filter", "Expected", "Actual db_ptrj", "Status", "Adjustment", "Message"])
         self.verify_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.verify_table, 1)
+        self.verify_scroll = QScrollArea()
+        self.verify_scroll.setWidgetResizable(True)
+        self.verify_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.verify_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.verify_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        self.verify_scroll.setWidget(self.verify_table)
+        layout.addWidget(self.verify_scroll, 1)
         return tab
 
     def _build_duplicate_cleanup_tab(self) -> QWidget:
@@ -1344,7 +1381,13 @@ class MainWindow(QMainWindow):
         self.duplicate_table = QTableWidget(0, 9)
         self.duplicate_table.setHorizontalHeaderLabels(["Select", "Action", "DocID", "Emp/Loc", "Emp Name", "DocDesc", "Keep DocID", "Status", "Message"])
         self.duplicate_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.duplicate_table, 1)
+        self.duplicate_scroll = QScrollArea()
+        self.duplicate_scroll.setWidgetResizable(True)
+        self.duplicate_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.duplicate_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.duplicate_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        self.duplicate_scroll.setWidget(self.duplicate_table)
+        layout.addWidget(self.duplicate_scroll, 1)
         return tab
 
     def _build_reset_docid_tab(self) -> QWidget:
@@ -1380,7 +1423,13 @@ class MainWindow(QMainWindow):
         self.reset_docid_table = QTableWidget(0, 8)
         self.reset_docid_table.setHorizontalHeaderLabels(["Select", "Action", "DocID", "Division", "Category", "Filter", "Status", "Message"])
         self.reset_docid_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.reset_docid_table, 1)
+        self.reset_scroll = QScrollArea()
+        self.reset_scroll.setWidgetResizable(True)
+        self.reset_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.reset_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.reset_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        self.reset_scroll.setWidget(self.reset_docid_table)
+        layout.addWidget(self.reset_scroll, 1)
         return tab
 
     def reset_filters(self) -> None:
