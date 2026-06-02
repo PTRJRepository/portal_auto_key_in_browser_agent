@@ -254,13 +254,13 @@ export interface StagingComparisonResponse {
 
 function frontendToBackendSource(source: string): string {
   if (source.endsWith("/upah/staging-comparison") && source.includes(":3001")) {
-    return source.replace(":3001", ":8002").replace("/upah/staging-comparison", "/backend/upah/api/staging/staging-comparison");
+    return source.replace("http://localhost:3001", "http://10.0.0.128:8002").replace(":3001", ":8002").replace("/upah/staging-comparison", "/backend/upah/api/staging/staging-comparison");
   }
   return source;
 }
 
 export function buildStagingComparisonUrl(source: string | null | undefined, periode: string, division?: string | null, gang?: string | null): string {
-  let rawSource = frontendToBackendSource((source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "http://localhost:8002").trim().replace(/\/+$/, ""));
+  let rawSource = frontendToBackendSource((source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "http://10.0.0.128:8002").trim().replace(/\/+$/, ""));
   const params = new URLSearchParams({ periode });
   if (division) params.set("division", division.trim().toUpperCase());
   if (gang) params.set("gang", gang.trim().toUpperCase());
