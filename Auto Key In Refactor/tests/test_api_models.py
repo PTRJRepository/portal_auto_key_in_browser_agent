@@ -2147,10 +2147,10 @@ def test_task_register_controls_use_query_gateway_config_and_location_code():
     QApplication.instance() or QApplication([])
     window = MainWindow(config, CategoryRegistry([]), [DivisionOption("DME", "Damai Estate")])
 
-    assert window.task_register_gateway_base_url.text() == "http://10.0.0.110:8001"
-    assert window.task_register_gateway_api_key.text() == "gateway-secret"
-    assert window.task_register_gateway_server.text() == "SERVER_PROFILE_2"
-    assert window.task_register_gateway_database.text() == "db_ptrj"
+    assert window.config.query_gateway_base_url == "http://10.0.0.110:8001"
+    assert window.config.query_gateway_api_key == "gateway-secret"
+    assert window.config.query_gateway_server == "SERVER_PROFILE_2"
+    assert window.config.query_gateway_database == "db_ptrj"
     assert window.task_register_loc_code.text() == "DME"
     window.close()
 
@@ -2159,13 +2159,13 @@ def test_task_register_fetch_worker_loads_targets_from_repository():
     target = DuplicateDocIdTarget("4834465", "70897930_01", "2026-05-08", "", "", "TASK REGISTER", 201750, "DELETE_RECORD", "", "task_register", {"source": "task-register-pr-taskreg", "loc_code": "DME"})
     repository = Mock()
     repository.list_duplicate_targets.return_value = [target]
-    worker = TaskRegisterFetchWorker(repository, loc_code="DME", acc_month=2, acc_year=2027, limit=1000)
+    worker = TaskRegisterFetchWorker(repository, loc_code="DME", phy_month=2, phy_year=2027, limit=1000)
     completed = []
     worker.completed.connect(completed.append)
 
     worker.run()
 
-    repository.list_duplicate_targets.assert_called_once_with(loc_code="DME", acc_month=2, acc_year=2027, limit=1000)
+    repository.list_duplicate_targets.assert_called_once_with(loc_code="DME", phy_month=2, phy_year=2027, limit=1000)
     assert completed == [[target]]
 
 
@@ -2417,7 +2417,10 @@ def test_duplicate_cleanup_forces_saved_session_runner_mode():
     window._handle_duplicate_fetch_completed([target])
     window.runner_mode.setCurrentText("fresh_login_single")
 
-    with patch.object(window, "_selected_session_active", return_value=True), patch.object(window, "start_runner") as start_runner:
+    from PySide6.QtWidgets import QMessageBox
+    with patch.object(window, "_selected_session_active", return_value=True), \
+         patch.object(window, "start_runner") as start_runner, \
+         patch("app.ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
         window.run_duplicate_cleanup()
 
     payload = start_runner.call_args.args[0]

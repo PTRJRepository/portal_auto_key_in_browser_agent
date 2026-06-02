@@ -123,6 +123,8 @@ class DivisionMonitorWorker(QObject):
         period_year: int,
         division_codes: list[str],
         category_keys: list[str],
+        config: Any = None,
+        use_builtin: bool = False,
     ) -> None:
         super().__init__()
         self.client = client
@@ -130,6 +132,8 @@ class DivisionMonitorWorker(QObject):
         self.period_year = period_year
         self.division_codes = division_codes
         self.category_keys = category_keys
+        self.config = config
+        self.use_builtin = use_builtin
 
     def run(self) -> None:
         try:
@@ -147,18 +151,59 @@ class DivisionMonitorWorker(QObject):
         filters = filters_for_categories(self.category_keys)
         compare_division_code = DIVISION_TO_COMPARE_CODE.get(division_code, division_code)
 
-        compare_payload = self.client.compare_adtrans(
-            self.period_month,
-            self.period_year,
-            compare_division_code,
-            filters=filters if filters else None,
-        )
-        reverse_payload = self.client.reverse_compare_adtrans(
-            self.period_month,
-            self.period_year,
-            compare_division_code,
-            filters=filters if filters else None,
-        )
+        compare_payload = {}
+        reverse_payload = {}
+        use_builtin_success = False
+
+        if self.use_builtin and self.config:
+            try:
+                from app.core.built_in_comparison import BuiltInComparisonService
+                from app.core.query_gateway import PlantwareDbPtrjGateway, QueryGatewayConfig
+                
+                gw_config = QueryGatewayConfig(
+                    base_url=self.config.query_gateway_base_url,
+                    api_key=self.config.query_gateway_api_key,
+                    server=self.config.query_gateway_server,
+                    database=self.config.query_gateway_database,
+                )
+                query_gateway = PlantwareDbPtrjGateway(
+                    config=gw_config,
+                    session=self.client.session if hasattr(self.client, 'session') else None
+                )
+                builtin_service = BuiltInComparisonService(
+                    config=self.config,
+                    query_gateway=query_gateway,
+                    api_client=self.client
+                )
+                compare_payload = builtin_service.compare_adtrans(
+                    self.period_month,
+                    self.period_year,
+                    compare_division_code,
+                    filters=filters if filters else None,
+                )
+                reverse_payload = builtin_service.reverse_compare_adtrans(
+                    self.period_month,
+                    self.period_year,
+                    compare_division_code,
+                    filters=filters if filters else None,
+                )
+                use_builtin_success = True
+            except Exception as e:
+                print(f"Built-in API failed, falling back to Upah API: {e}")
+
+        if not use_builtin_success:
+            compare_payload = self.client.compare_adtrans(
+                self.period_month,
+                self.period_year,
+                compare_division_code,
+                filters=filters if filters else None,
+            )
+            reverse_payload = self.client.reverse_compare_adtrans(
+                self.period_month,
+                self.period_year,
+                compare_division_code,
+                filters=filters if filters else None,
+            )
 
         cats: dict[str, CategoryStatus] = {key: CategoryStatus() for key in CATEGORY_TO_FILTERS if key in self.category_keys}
         mismatch_seen: set[tuple[str, str, str]] = set()
@@ -704,11 +749,13 @@ class DivisionMonitorWidget(QWidget):
         categories: CategoryRegistry,
         divisions: list[Any],
         parent: QWidget | None = None,
+        config: Any = None,
     ) -> None:
         super().__init__(parent)
         self.api_client_factory = api_client_factory
         self.categories = categories
         self.divisions = divisions or []
+        self.config = config
         self.summaries: list[DivisionSummary] = []
         self._thread: QThread | None = None
         self._worker: DivisionMonitorWorker | None = None
@@ -746,6 +793,11 @@ class DivisionMonitorWidget(QWidget):
         self.only_miss_check.setChecked(True)
         self.only_miss_check.stateChanged.connect(self._apply_filter_visibility)
         ctrl.addWidget(self.only_miss_check)
+        
+        self.use_builtin_check = QCheckBox("Gunakan Built-in API (Cek MISS)")
+        self.use_builtin_check.setChecked(True)
+        self.use_builtin_check.setToolTip("Gunakan koneksi database langsung untuk mencari data MISS (termasuk PREMI) tanpa melewati API Upah.")
+        ctrl.addWidget(self.use_builtin_check)
 
         self.status_lbl = QLabel("Ready")
         self.status_lbl.setStyleSheet("color: #f8fafc; font-weight: 700;")
@@ -798,7 +850,13 @@ class DivisionMonitorWidget(QWidget):
         client = self.api_client_factory()
         self._thread = QThread(self)
         self._worker = DivisionMonitorWorker(
-            client, self.mon_month.value(), self.mon_year.value(), codes, cat_keys
+            client, 
+            self.mon_month.value(), 
+            self.mon_year.value(), 
+            codes, 
+            cat_keys,
+            config=self.config,
+            use_builtin=self.use_builtin_check.isChecked()
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)

@@ -47,9 +47,9 @@ from app.core.task_register_gateway import TaskRegisterGatewayRepository
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
 AUTOMATION_OPTION_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
-AUTO_BUFFER_CATEGORY_KEYS = {"spsi", "masa_kerja", "tunjangan_jabatan", "pph21"}
+AUTO_BUFFER_CATEGORY_KEYS = {"spsi", "masa_kerja", "tunjangan_jabatan", "pph21", "premi_tiket"}
 SYNC_STATUS_ADJUSTMENT_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "AUTO_BUFFER"}
-PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan"}
+PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket"}
 MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
 MANUAL_ADJUSTMENT_OPTION_TYPES = "PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH"
 DELETE_RUNNER_MODE = "session_reuse_single"
@@ -196,6 +196,8 @@ def filter_for_record(record: ManualAdjustmentRecord) -> str:
     if category_key == "premi_tunjangan":
         return "premi"
     if category_key == "premi":
+        return "premi"
+    if category_key == "premi_tiket":
         return "premi"
     if category_key:
         return category_key
@@ -852,7 +854,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_verify_tab(), "Verify db_ptrj")
         self.tabs.addTab(self._build_duplicate_cleanup_tab(), "Duplicate Cleanup")
         self.tabs.addTab(self._build_reset_docid_tab(), "Reset/Delete DocID")
-        self.division_monitor = DivisionMonitorWidget(self._api_client, self.categories, self.divisions)
+        self.division_monitor = DivisionMonitorWidget(self._api_client, self.categories, self.divisions, config=self.config)
         self.division_monitor.run_division_category.connect(self._on_division_monitor_run)
         self.tabs.addTab(self.division_monitor, "Division Monitor")
         layout.addWidget(self.tabs)
@@ -1012,10 +1014,17 @@ class MainWindow(QMainWindow):
         self.export_button = QPushButton("Open Artifacts")
         self.process_context_label = QLabel("No data loaded.")
         self.process_context_label.setStyleSheet("font-weight: 500; color: #94a3b8;")
+        
         self.process_only_miss = QCheckBox("Input MISS only")
         self.process_only_miss.setChecked(True)
         self.process_only_miss.setToolTip("Jika aktif, fetch/run hanya memakai MISS. DIFF/MISMATCH harus dihapus dulu dari Reset/Delete DocID.")
         self.process_only_miss.stateChanged.connect(self._update_process_context)
+        
+        self.process_use_builtin_api = QCheckBox("Cek MISS via Built-in API")
+        self.process_use_builtin_api.setChecked(True)
+        self.process_use_builtin_api.setToolTip("Gunakan koneksi database langsung untuk mencari data MISS tanpa melewati API Upah.")
+        self.process_use_builtin_api.stateChanged.connect(self._update_process_context)
+
         self.test_get_data_button.clicked.connect(self.fetch_records)
         self.run_button.clicked.connect(self.run_auto_key_in)
         self.run_selected_jobs_button.clicked.connect(self.run_selected_jobs)
@@ -1023,7 +1032,11 @@ class MainWindow(QMainWindow):
         self.export_button.clicked.connect(self.open_current_artifacts)
         for button in [self.test_get_data_button, self.run_button, self.run_selected_jobs_button, self.stop_button, self.export_button]:
             controls.addWidget(button)
-        controls.addWidget(self.process_only_miss)
+            
+        opt_layout = QVBoxLayout()
+        opt_layout.addWidget(self.process_only_miss)
+        opt_layout.addWidget(self.process_use_builtin_api)
+        controls.addLayout(opt_layout)
         controls.addWidget(self.process_context_label, 1)
         layout.addLayout(controls)
 
@@ -1506,11 +1519,13 @@ class MainWindow(QMainWindow):
 
     def fetch_records(self) -> None:
         self._prepare_fetch_state()
-        self.append_log("Fetching manual adjustment data...")
+        current_month = self.period_month.value()
+        current_year = self.period_year.value()
+        self.append_log(f"Fetching manual adjustment data for {current_month:02d}/{current_year}...")
         client = self._api_client()
         query = ManualAdjustmentQuery(
-            period_month=self.period_month.value(),
-            period_year=self.period_year.value(),
+            period_month=current_month,
+            period_year=current_year,
             division_code=self._selected_division_code() or None,
             gang_code=self.gang_code.text().strip() or None,
             emp_code=self.emp_code.text().strip() or None,
@@ -1522,6 +1537,8 @@ class MainWindow(QMainWindow):
             client,
             query,
             automation_division_code=self._selected_location_code() or query.division_code,
+            config=self.config,
+            use_builtin=self.process_use_builtin_api.isChecked(),
         )
         self.fetch_worker.moveToThread(self.fetch_thread)
         self.fetch_thread.started.connect(self.fetch_worker.run)

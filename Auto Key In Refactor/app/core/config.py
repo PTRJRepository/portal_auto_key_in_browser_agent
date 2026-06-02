@@ -70,6 +70,8 @@ class AppConfig:
     query_gateway_api_key: str = ""
     query_gateway_server: str = "SERVER_PROFILE_2"
     query_gateway_database: str = "db_ptrj"
+    extend_db_server: str = "SERVER_PROFILE_1"
+    extend_db_database: str = "extend_db_ptrj"
     runner_command: str = "node runner/dist/cli.js"
     default_period_month: int = 4
     default_period_year: int = 2026
@@ -122,6 +124,8 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         query_gateway_api_key=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_API_KEY") or data.get("query_gateway_api_key", "")),
         query_gateway_server=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_SERVER") or data.get("query_gateway_server", "SERVER_PROFILE_2")),
         query_gateway_database=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_DATABASE") or data.get("query_gateway_database", "db_ptrj")),
+        extend_db_server=str(os.getenv("AUTO_KEY_IN_EXTEND_DB_SERVER") or data.get("extend_db_server", "SERVER_PROFILE_1")),
+        extend_db_database=str(os.getenv("AUTO_KEY_IN_EXTEND_DB_DATABASE") or data.get("extend_db_database", "extend_db_ptrj")),
         runner_command=str(os.getenv("AUTO_KEY_IN_RUNNER_COMMAND") or data.get("runner_command", "node runner/dist/cli.js")),
         default_period_month=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_MONTH", int(data.get("default_period_month", 4))),
         default_period_year=env_int("AUTO_KEY_IN_DEFAULT_PERIOD_YEAR", int(data.get("default_period_year", 2026))),
