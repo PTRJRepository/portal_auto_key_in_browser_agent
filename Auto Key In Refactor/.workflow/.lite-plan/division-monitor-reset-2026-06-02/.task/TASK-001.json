@@ -1,0 +1,31 @@
+{
+  "id": "TASK-001",
+  "title": "Add ADTRANS search reset functionality to DivisionMonitorWidget",
+  "description": "Add search input and reset button to filter/delete compare-adtrans results by adjustment transaction name. Users can search for specific adtrans entries and reset/delete them.",
+  "scope": "app/ui/division_monitor.py",
+  "priority": "high",
+  "files": [
+    {
+      "path": "app/ui/division_monitor.py",
+      "change": "Add adtrans search row, search results table, and reset/delete button to DivisionMonitorWidget._build_ui()"
+    }
+  ],
+  "convergence": {
+    "criteria": [
+      "Search input visible in top controls area",
+      "Search filters mismatch/extra rows by adjustment_name",
+      "Results displayed in table with adtrans details",
+      "Reset button deletes selected/adtrans-matched rows via API",
+      "Status updates reflect reset results"
+    ]
+  },
+  "implementation": [
+    "1. Add search section below top controls: QLineEdit for adtrans search, Search button",
+    "2. Add results table (QTableWidget) with columns: Div, Cat, Emp, Adtrans, Source, Stored, Status, Action",
+    "3. Add reset/delete button that calls API to remove selected entries",
+    "4. Store compare results in instance variable for search filtering",
+    "5. Wire up search button to filter results by adjustment_name contains search text"
+  ],
+  "dependencies": [],
+  "rationale": "Users need to locate specific adjustment transactions and reset/delete them. Without search, they cannot find entries to reset."
+}

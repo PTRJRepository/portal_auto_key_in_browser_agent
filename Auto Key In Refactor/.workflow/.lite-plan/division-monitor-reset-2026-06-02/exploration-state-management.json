@@ -1,0 +1,146 @@
+{
+  "metadata": {
+    "exploration_angle": "state-management",
+    "exploration_index": 2,
+    "task_description": "Cannot reset/delete selected items in division monitor - only fetch diff works, cannot reset selected category",
+    "timestamp": "2026-06-02T22:49:00",
+    "total_files_analyzed": 3,
+    "schema_source": "N/A - custom structure"
+  },
+  "relevant_files": [
+    {
+      "path": "D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto Key In Refactor/app/ui/division_monitor.py",
+      "relevance": 0.95,
+      "role": "modify_target",
+      "discovery_source": "bash-scan",
+      "rationale": "Primary widget containing DivisionMonitorWidget and DivisionCard - no per-category selection state exists to reset",
+      "topic_relation": "State management exploration reveals DivisionMonitorWidget has NO selection state for categories; all categories displayed passively after fetch with no selection tracking mechanism",
+      "key_code": [
+        {
+          "symbol": "DivisionMonitorWidget._category_widgets",
+          "location": "L488",
+          "description": "dict storing category UI widgets but NOT selection state"
+        },
+        {
+          "symbol": "DivisionCard.update_category()",
+          "location": "L700-718",
+          "description": "Updates stats but stores details as lists without any selection bitmask"
+        },
+        {
+          "symbol": "_apply_filter_visibility()",
+          "location": "L914-926",
+          "description": "Only controls visibility - no per-category selection state ever set or reset"
+        },
+        {
+          "symbol": "DivisionMonitorWidget._build_ui()",
+          "location": "L767-829",
+          "description": "Never creates category selection checkboxes or reset button"
+        }
+      ]
+    },
+    {
+      "path": "D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto Key In Refactor/app/ui/main_window.py",
+      "relevance": 0.75,
+      "role": "dependency",
+      "discovery_source": "bash-scan",
+      "rationale": "MainWindow provides example of working reset_filters() function and reset_docid table with selection model",
+      "topic_relation": "main_window.reset_filters() shows how to reset UI state; reset_docid_table demonstrates checkbox-based selection",
+      "key_code": [
+        {
+          "symbol": "reset_filters()",
+          "location": "L1435-1446",
+          "description": "Clears all filter fields - demonstrates reset pattern for UI state"
+        },
+        {
+          "symbol": "_selected_reset_docid_targets()",
+          "location": "L2530-2536",
+          "description": "Pattern for extracting selected items from checkbox table"
+        }
+      ]
+    },
+    {
+      "path": "D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto Key In Refactor/app/ui/division_run_dialog.py",
+      "relevance": 0.65,
+      "role": "pattern_reference",
+      "discovery_source": "bash-scan",
+      "rationale": "DivisionRunDialog shows category_key passed via constructor - demonstrates category-based operation state storage",
+      "topic_relation": "category_key stored as instance attribute and used to build fetch worker and payload",
+      "key_code": [
+        {
+          "symbol": "DivisionRunDialog.__init__()",
+          "location": "L117-151",
+          "description": "Stores category_key as self.category_key for dialog lifecycle"
+        }
+      ]
+    }
+  ],
+  "patterns": {
+    "missing_patterns": [
+      {
+        "pattern_name": "category_selection_state",
+        "description": "No QCheckBox, QTreeWidget selection model, or any bitmask tracking which categories are selected by user",
+        "code_location": "L744-983 (DivisionMonitorWidget)",
+        "evidence": "_category_widgets dict has no 'selected' key; no selectionChanged signal; no _selected_categories set"
+      },
+      {
+        "pattern_name": "category_reset_action",
+        "description": "No reset button or clear action that would clear category selection state (because none exists)",
+        "code_location": "L767-829 (_build_ui)",
+        "evidence": "Top controls only have refresh_btn, only_miss_check, use_builtin_check - no reset/clear selection button"
+      }
+    ],
+    "working_patterns": [
+      {
+        "pattern_name": "visibility_filter_pattern",
+        "description": "Hide/show entire DivisionCard based on aggregate miss count - works at card-level, not category-level",
+        "code_location": "L914-926",
+        "usage": "Filtering exists at division level but not per-category within a division"
+      },
+      {
+        "pattern_name": "checkbox_selection_pattern",
+        "description": "reset_docid_table uses QTableWidgetItem with ItemIsUserCheckable flag to track selection",
+        "code_location": "L2473-2475",
+        "usage": "Example of checkbox-based selection storage pattern used elsewhere in app"
+      }
+    ]
+  },
+  "integration_points": [
+    {
+      "file": "D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto Key In Refactor/app/ui/division_monitor.py",
+      "line": 745,
+      "symbol": "run_division_category Signal",
+      "description": "Signal emits division_code, cat_key, cat_label, mode - NO similar signal for selection change or reset"
+    },
+    {
+      "file": "D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto Key In Refactor/app/ui/division_monitor.py",
+      "line": 700,
+      "symbol": "update_category()",
+      "description": "Entry point for updating category state. No corresponding method for resetting or clearing selection state"
+    },
+    {
+      "file": "D:/Gawean Rebinmas/Browser_Auto_key_in new/Auto Key In Refactor/app/ui/division_monitor.py",
+      "line": 208,
+      "symbol": "CategoryStatus dataclass",
+      "description": "Stores category stats but no selection/visibility state"
+    }
+  ],
+  "constraints": {
+    "state_isolation": "DivisionMonitorWidget state is ephemeral - no persistence of selection state between refresh cycles",
+    "no_selection_model": "No QItemSelectionModel or similar mechanism for tracking multi-category selection within a division card",
+    "fetch_implicit": "All categories fetched simultaneously via _refresh_all() - no lazy load per selected category"
+  },
+  "clarification_needs": {
+    "required_options": [
+      "What does 'selected items' mean specifically? Options: (a) categories user clicked to highlight/filter, (b) individual rows in Details dialog, (c) cards visible via Show Only Extra, or (d) something else?",
+      "What should 'reset' do? Options: (a) clear category selection checkboxes, (b) reset all category stats to 0, (c) hide selected categories again, or (d) revert to initial no-fetch state?"
+    ],
+    "recommended": "Also clarify: should reset apply to (a) single division or (b) all divisions at once? And should reset preserve fetched data but just clear selection, or re-fetch after reset?"
+  },
+  "next_steps": [
+    "Define selection state storage mechanism: add 'selected: bool' key to _category_widgets dict entries, OR create _selected_categories: set[str] at DivisionMonitorWidget level",
+    "Add selection UI: checkboxes in category cards (L614-631 top row) or use existing detail_btn/sync_btn click as implicit selection",
+    "Add reset button to top controls (L773-806 area) that clears _selected_categories set and optionally re-applies filter visibility",
+    "Add selection_changed Signal to DivisionCard or DivisionMonitorWidget if selection should trigger other UI updates",
+    "Decide reset scope: should reset just selection state, or also re-fetch data for all categories?"
+  ]
+}

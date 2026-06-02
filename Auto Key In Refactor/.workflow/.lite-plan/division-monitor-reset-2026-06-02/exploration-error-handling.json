@@ -1,0 +1,129 @@
+{
+  "metadata": {
+    "exploration_angle": "error-handling",
+    "timestamp": "2026-06-02",
+    "index": "1 of 2",
+    "task_description": "Cannot reset/delete selected items in division monitor - only fetch diff works, cannot reset selected category",
+    "files_analyzed": 3
+  },
+  "findings": {
+    "root_cause": "DivisionMonitorWidget lacks integrated reset/delete functionality for category-selected items; reset capabilities exist only in separate MainWindow 'Reset/Delete DocID' tab",
+    "patterns": [
+      {
+        "pattern": "Tooltip-mentions-reset-but-no-button",
+        "location": "app/ui/division_monitor.py:623",
+        "description": "Sync button tooltip says 'mismatch rows stay for reset/delete' but no reset button exists in DivisionCard UI",
+        "evidence": "sync_btn.setToolTip('Insert missing db_ptrj values only; mismatch rows stay for reset/delete')"
+      },
+      {
+        "pattern": "Separate-reset-tab-different-context",
+        "location": "app/ui/main_window.py:1393-1433",
+        "description": "_build_reset_docid_tab() uses config-based scope (Period, Division, Employee, Category) different from DivisionMonitor's per-division-card context",
+        "evidence": "reset_docid_source.addItem('DIFF/MISMATCH DocIDs (dari Config)', 'diff')"
+      },
+      {
+        "pattern": "No-reset-signal-in-division-card",
+        "location": "app/ui/division_monitor.py:722-731",
+        "description": "DivisionCard._on_run emits run_requested, _on_sync emits sync_requested, but NO reset_requested signal exists",
+        "evidence": "run_requested = Signal(...) at line 473, sync_requested = Signal(...) at line 474, no reset_requested"
+      }
+    ],
+    "integration_points": [
+      {
+        "file": "app/ui/division_monitor.py",
+        "line": 623,
+        "type": "missing_ui_element",
+        "description": "Sync button tooltip references reset but button does not exist - DivisionCard._category_card() needs reset button"
+      },
+      {
+        "file": "app/ui/division_monitor.py",
+        "line": 473,
+        "type": "missing_signal",
+        "description": "DivisionCard signals only include run_requested and sync_requested, need reset_requested signal"
+      },
+      {
+        "file": "app/ui/division_monitor.py",
+        "line": 600,
+        "type": "missing_method",
+        "description": "_category_card() returns widget without reset button handler - needs _on_reset method"
+      },
+      {
+        "file": "app/ui/main_window.py",
+        "line": 1393,
+        "type": "external_reset_function",
+        "description": "_build_reset_docid_tab() is separate reset mechanism using diff source, not integrated with DivisionMonitorWidget"
+      },
+      {
+        "file": "app/ui/main_window.py",
+        "line": 2527,
+        "type": "delete_execution_path",
+        "description": "run_reset_docid_delete() calls start_runner() with operation='delete_duplicates', used by separate tab"
+      }
+    ],
+    "constraints": [
+      "Reset functionality must work within DivisionMonitorWidget per-division per-category context, not config-based",
+      "Delete targets must come from compare-adtrans mismatch/extra status, not adtrans-doc-ids source",
+      "Session must be active before reset/delete (line 2489-2496 checks this)",
+      "Reset must handle MISS (extra in adjustments) and MISMATCH states differently"
+    ]
+  },
+  "relevant_files": [
+    {
+      "path": "app/ui/division_monitor.py",
+      "relevance": 0.95,
+      "role": "modify_target",
+      "rationale": "Primary UI file where reset/delete buttons should be added to DivisionCard - currently has run/sync but no reset for mismatched rows",
+      "topic_relation": "Error-handling exploration targets this file because DivisionCard._category_card() (line 600) builds category widgets with run/sync buttons but no reset, causing inability to clear selected category items"
+    },
+    {
+      "path": "app/ui/main_window.py",
+      "relevance": 0.85,
+      "role": "context_only",
+      "rationale": "Contains separate _build_reset_docid_tab() (line 1393) which has reset/delete logic but uses different scope/context from DivisionMonitorWidget",
+      "topic_relation": "This file shows existing reset/delete pattern via run_reset_docid_delete() (line 2527) which could be reused for DivisionMonitor reset integration"
+    },
+    {
+      "path": "app/ui/division_run_dialog.py",
+      "relevance": 0.60,
+      "role": "dependency",
+      "rationale": "DivisionRunDialog receives run signals from DivisionMonitorWidget via _on_division_monitor_run() (main_window.py:3499) - may need reset dialog variant",
+      "topic_relation": "Shows how per-division-category dialog is structured; reset functionality would need similar dialog or integrate with existing structure"
+    }
+  ],
+  "key_code": [
+    {
+      "symbol": "DivisionCard._category_card()",
+      "location": "division_monitor.py:600-683",
+      "description": "Builds category widget with Run and Sync Missing buttons but NO reset button - tooltip mentions reset (line 623) but button not implemented"
+    },
+    {
+      "symbol": "DivisionCard.run_requested, sync_requested",
+      "location": "division_monitor.py:473-474",
+      "description": "Signals defined for run and sync actions but missing reset_requested signal for reset functionality"
+    },
+    {
+      "symbol": "MainWindow._build_reset_docid_tab()",
+      "location": "main_window.py:1393-1433",
+      "description": "Creates separate reset/delete UI with fetch and run buttons - uses config scope, not DivisionMonitor context"
+    },
+    {
+      "symbol": "MainWindow.run_reset_docid_delete()",
+      "location": "main_window.py:2527",
+      "description": "Executes reset/delete via start_runner() with operation='delete_duplicates' - shows execution pattern to replicate for DivisionMonitor"
+    },
+    {
+      "symbol": "DivisionCard._on_run(), _on_sync()",
+      "location": "division_monitor.py:722-730",
+      "description": "Button click handlers emit signals; missing _on_reset() handler for new reset button"
+    }
+  ],
+  "clarification_needs": {
+    "options": [
+      "Should reset button clear MISMATCH rows only, or also EXTRA_IN_ADJUSTMENTS rows?",
+      "Should reset use browser automation (like existing reset_docid) or API-only delete?",
+      "Should reset work per-division per-category or batch across multiple divisions?",
+      "Is session check required before reset (like line 2489-2496 requires for reset_docid)?"
+    ],
+    "recommended": "Add reset button to DivisionCard alongside Run/Sync Missing buttons, emit reset_requested signal, handle in MainWindow using existing delete_duplicates operation pattern from run_reset_docid_delete()"
+  }
+}
