@@ -1,0 +1,236 @@
+/**
+ * Loose Fruit Brondol Input Runner
+ *
+ * Reads selisih (difference) data from staging-comparison API and inputs
+ * into Plantware Loose Fruit Collector Details page.
+ *
+ * Data source: configurable staging-comparison endpoint
+ * Target page: http://plantwarep3:8001/en/PR/trx/frmPrTrxLooseFruitDet.aspx
+ */
+
+import type { Page } from "playwright";
+
+export interface LoosefruitInputRow {
+  emp_code: string;
+  emp_name: string;
+  gang: string;
+  gang_name: string;
+  divisi: string;
+  estate: string;
+  staging_brondol: number;
+  plantware_brondol: number;
+  selisih: number;
+}
+
+export interface LoosefruitInputResult {
+  emp_code: string;
+  status: "success" | "failed" | "skipped";
+  message: string;
+  doc_id?: string;
+  mt?: number;
+  amount?: number;
+}
+
+export function getLoosefruitDetailUrl(locCode: string): string {
+  const base = process.env.PLANTWARE_BASE_URL ?? "http://plantwarep3:8001";
+  return `${base}/en/PR/trx/frmPrTrxLooseFruitDet.aspx`;
+}
+
+export async function waitForPostback(page: Page): Promise<void> {
+  // Wait for ASP.NET postback to complete and DOM to settle.
+  // Strategy: wait for load state (reliable for full page reloads) + small buffer.
+  try {
+    await page.waitForLoadState("load", { timeout: 20000 });
+    await page.waitForTimeout(800);
+  } catch {
+    // Page may have navigated or context closed — give a fixed buffer as fallback
+    await page.waitForTimeout(3000);
+  }
+}
+
+export async function waitForStable(page: Page): Promise<void> {
+  // Use load state for reliability, fall back to timeout if page is unstable
+  try {
+    await page.waitForLoadState("load", { timeout: 10000 });
+  } catch {
+    await page.waitForTimeout(2000);
+  }
+}
+
+export async function ensurePageAlive(page: Page, urlHint: string): Promise<boolean> {
+  try {
+    const url = page.url();
+    if (!url || url === "about:blank") return false;
+    if (url.includes("javascript") || url.includes("__doPostBack")) return false;
+    // Verify main content area exists
+    await page.waitForSelector("#MainContent_btnAdd", { state: "attached", timeout: 3000 }).catch(() => null);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function selectChargeTo(page: Page, locCode: string): Promise<void> {
+  await page.evaluate((code: string) => {
+    const el = document.querySelector("#MainContent_ddlChargeTo") as HTMLSelectElement | null;
+    if (!el) return;
+    el.value = code;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, locCode);
+  await waitForPostback(page);
+}
+
+export async function setTransactionDate(page: Page, date: string): Promise<void> {
+  const field = page.locator("#MainContent_txtTrxDate");
+  await field.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  await field.fill(date);
+}
+
+export async function selectEmployee(page: Page, empCode: string): Promise<void> {
+  await page.evaluate((code: string) => {
+    const el = document.querySelector("#MainContent_ddlEmployee") as HTMLSelectElement | null;
+    if (!el) return;
+    el.value = code;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, empCode);
+  await waitForPostback(page);
+}
+
+export async function selectTaskCode(page: Page, taskCode: string): Promise<void> {
+  await page.evaluate((code: string) => {
+    const el = document.querySelector("#MainContent_ddlTaskCode") as HTMLSelectElement | null;
+    if (!el) return;
+    el.value = code;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, taskCode);
+  await waitForPostback(page);
+}
+
+export async function selectDivisionCode(page: Page, divisionCode: string): Promise<void> {
+  await page.evaluate((code: string) => {
+    const el = document.querySelector("#MainContent_MultiDimAcc_ddlBlock") as HTMLSelectElement | null;
+    if (!el) return;
+    el.value = code;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }, divisionCode);
+  await waitForPostback(page);
+}
+
+export async function selectExpenseCode(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const select = document.querySelector("#MainContent_MultiDimAcc_ddlExpCode") as HTMLSelectElement | null;
+    if (!select) return;
+    const options = Array.from(select.options);
+    const labour = options.find(o => o.text.toUpperCase().includes("LABOUR"));
+    const bebas = options.find(o => o.text.toLowerCase().includes("bebas"));
+    select.value = (labour || bebas || options[1] || options[0])?.value || "";
+  });
+  await page.waitForTimeout(300);
+}
+
+export async function selectFieldNoCode(page: Page): Promise<void> {
+  await page.waitForTimeout(1200);
+  const options = await page.evaluate(() => {
+    const select = document.querySelector("#MainContent_MultiDimAcc_ddlSubBlk") as HTMLSelectElement | null;
+    if (!select) return [];
+    return Array.from(select.options).map((opt: HTMLOptionElement) => ({
+      value: opt.value,
+      text: opt.text.trim()
+    }));
+  });
+  if (options.length > 1) {
+    const bebas = options.find(o => o.text.toLowerCase().includes("bebas"));
+    const target = bebas || options[1];
+    await page.evaluate((val: string) => {
+      const select = document.querySelector("#MainContent_MultiDimAcc_ddlSubBlk") as HTMLSelectElement | null;
+      if (!select) return;
+      select.value = val;
+    }, target.value);
+  }
+  await page.waitForTimeout(200);
+}
+
+export async function setMT(page: Page, mt: number): Promise<void> {
+  const field = page.locator("#MainContent_txtMT");
+  await field.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  await field.fill(String(mt));
+}
+
+export async function setRate(page: Page, rate: number): Promise<void> {
+  const field = page.locator("#MainContent_txtRate");
+  await field.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  await field.fill(String(rate));
+}
+
+export async function clickAdd(page: Page, screenshotLabel?: string): Promise<void> {
+  const btn = page.locator("#MainContent_btnAdd");
+  await btn.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+  if (screenshotLabel) {
+    await page.screenshot({ path: screenshotLabel });
+  }
+  await btn.click({ noWaitAfter: true });
+  await page.waitForTimeout(2000);
+}
+
+export async function getDocumentId(page: Page): Promise<string | null> {
+  try {
+    const docIdCell = page.locator("#MainContent_txtDocID");
+    const isDisabled = await docIdCell.isDisabled();
+    if (isDisabled) return await docIdCell.inputValue();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function deriveDivisionFromGang(gang: string): string {
+  return gang.length >= 2 ? gang.slice(0, 2).toUpperCase() : gang.toUpperCase();
+}
+
+export function deriveTaskCodeFromLoc(locCode: string): string {
+  return `CT2202${locCode}`;
+}
+
+export interface StagingComparisonRow {
+  emp_code: string; emp_name: string; gang: string; gang_name: string;
+  divisi: string; estate: string; staging_brondol: number; plantware_brondol: number; selisih: number;
+}
+
+export interface StagingComparisonResponse {
+  success: boolean;
+  data: { month: number; year: number; periode: string; count: number;
+    totals: { staging_brondol: number; plantware_brondol: number; selisih: number };
+    rows: StagingComparisonRow[]; };
+}
+
+export function buildStagingComparisonUrl(source: string | null | undefined, periode: string): string {
+  const rawSource = (source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "http://localhost:8002").trim().replace(/\/+$/, "");
+  const query = `periode=${encodeURIComponent(periode)}`;
+  if (rawSource.endsWith("/upah/staging-comparison") || rawSource.endsWith("/backend/upah/api/staging/staging-comparison")) {
+    return `${rawSource}?${query}`;
+  }
+  return `${rawSource}/backend/upah/api/staging/staging-comparison?${query}`;
+}
+
+export async function fetchStagingComparison(periode: string, source?: string | null): Promise<StagingComparisonResponse | null> {
+  try {
+    const response = await fetch(buildStagingComparisonUrl(source, periode));
+    if (!response.ok) return null;
+    return await response.json() as StagingComparisonResponse;
+  } catch {
+    return null;
+  }
+}
+
+export function filterLooseFruitRows(rows: StagingComparisonRow[], estate?: string): StagingComparisonRow[] {
+  return rows.filter(row => row.selisih > 0 && row.emp_code.startsWith('A') && (!estate || row.estate === estate));
+}
+
+export function groupByGang(rows: StagingComparisonRow[]): Map<string, StagingComparisonRow[]> {
+  const groups = new Map<string, StagingComparisonRow[]>();
+  for (const row of rows) {
+    if (!groups.has(row.gang)) groups.set(row.gang, []);
+    groups.get(row.gang)!.push(row);
+  }
+  return groups;
+}

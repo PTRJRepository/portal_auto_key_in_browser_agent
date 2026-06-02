@@ -29,8 +29,9 @@ class CategoryRegistry:
         normalized = key.strip().lower()
         return next((item for item in self._categories if item.key == normalized), None)
 
-    def detect(self, adjustment_name: str, adjustment_type: str = "") -> str | None:
-        name = " ".join(adjustment_name.upper().split())
+    def detect(self, adjustment_name: str, adjustment_type: str = "", *extra_text: str) -> str | None:
+        combined_name = " ".join(part for part in (adjustment_name, *extra_text) if part)
+        name = " ".join(combined_name.upper().split())
         adj_type = adjustment_type.upper().strip()
         for category in self._categories:
             type_matches = not category.adjustment_type or category.adjustment_type.upper() == adj_type

@@ -74,6 +74,22 @@ def filters_for_categories(category_keys: list[str]) -> list[str]:
 
 
 @dataclass
+class SubBlokItem:
+    """Single sub-blok item from metadata_json."""
+    subblok: str
+    gang_code: str | None
+    jumlah: float
+
+
+@dataclass
+class AdtransDetail:
+    """ADTRANS detail from db_ptrj."""
+    doc_desc: str
+    doc_id: str
+    amount: float
+
+
+@dataclass
 class MissDetail:
     emp_code: str
     gang_code: str | None
@@ -87,6 +103,12 @@ class MissDetail:
     division_code: str | None = None
     remarks: str | None = None
     db_doc_desc: str | None = None
+    # Metadata from extend_db_ptrj (reference)
+    metadata_items: list[SubBlokItem] = field(default_factory=list)
+    metadata_total: float = 0.0
+    # ADTRANS details from db_ptrj
+    adtrans_details: list[AdtransDetail] = field(default_factory=list)
+    adtrans_amount: float = 0.0
 
 
 @dataclass
@@ -256,6 +278,53 @@ class DivisionMonitorWorker(QObject):
         stored_val = stored_opt or 0.0
         diff_opt = self._optional_number(item, "diff", "difference")
         diff = diff_opt if diff_opt is not None else source_val - stored_val
+
+        # Parse metadata_items from reference (extend_db_ptrj)
+        metadata_items: list[SubBlokItem] = []
+        metadata_total = source_val
+
+        # First try direct metadata_items array, then try metadata_json string
+        raw_metadata = item.get("metadata_items") or item.get("metadata") or item.get("source_metadata")
+
+        # If metadata_json is a JSON string, parse it
+        if not raw_metadata and item.get("metadata_json"):
+            import json
+            try:
+                metadata_json = json.loads(item.get("metadata_json"))
+                if isinstance(metadata_json, dict) and metadata_json.get("items"):
+                    raw_metadata = metadata_json.get("items")
+                elif isinstance(metadata_json, list):
+                    raw_metadata = metadata_json
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if isinstance(raw_metadata, list):
+            for m in raw_metadata:
+                if isinstance(m, dict):
+                    metadata_items.append(SubBlokItem(
+                        subblok=str(m.get("subblok") or m.get("sub_block") or ""),
+                        gang_code=m.get("gang_code"),
+                        jumlah=self._optional_number(m, "jumlah", "amount") or 0.0,
+                    ))
+            # Calculate metadata total
+            metadata_total = sum(item.jumlah for item in metadata_items)
+            if metadata_total == 0:
+                metadata_total = source_val
+
+        # Parse adtrans_details from db_ptrj
+        adtrans_details: list[AdtransDetail] = []
+        adtrans_amount = stored_val
+        raw_adtrans = item.get("adtrans_details") or item.get("db_details") or item.get("adtrans_items") or item.get("db_ptrj_doc_desc_details")
+        if isinstance(raw_adtrans, list):
+            for a in raw_adtrans:
+                if isinstance(a, dict):
+                    adtrans_details.append(AdtransDetail(
+                        doc_desc=str(a.get("doc_desc") or ""),
+                        doc_id=str(a.get("doc_id") or ""),
+                        amount=self._optional_number(a, "amount") or 0.0,
+                    ))
+            adtrans_amount = sum(d.amount for d in adtrans_details)
+
         detail = MissDetail(
             emp_code=str(item.get("emp_code") or item.get("EmpCode") or "").upper().strip(),
             gang_code=item.get("gang_code"),
@@ -269,6 +338,10 @@ class DivisionMonitorWorker(QObject):
             division_code=str(item.get("division_code") or "") or None,
             remarks=self._text(item, "remarks", "stored_remarks", "manual_adjustment_remarks"),
             db_doc_desc=self._text(item, "db_doc_desc", "db_ptrj_doc_desc", "source_doc_desc", "doc_desc", "docDesc", "DocDesc"),
+            metadata_items=metadata_items,
+            metadata_total=metadata_total,
+            adtrans_details=adtrans_details,
+            adtrans_amount=adtrans_amount,
         )
         status_key = (detail.emp_code, cat_key, detail.adjustment_name.upper())
 
@@ -276,18 +349,24 @@ class DivisionMonitorWorker(QObject):
         if status == "MATCH" and include_match:
             cats[cat_key].match += 1
             cats[cat_key].match_amount += stored_val
-        elif status == "MISMATCH":
-            if status_key in mismatch_seen:
-                cats[cat_key].total -= 1
-                return
-            mismatch_seen.add(status_key)
-            cats[cat_key].mismatch += 1
-            cats[cat_key].mismatch_amount += abs(source_val - stored_val)
-            cats[cat_key].mismatch_details.append(detail)
         elif status == "MISSING":
             cats[cat_key].missing += 1
             cats[cat_key].missing_amount += source_val
             cats[cat_key].missing_details.append(detail)
+        elif status == "MISMATCH":
+            # If stored is 0 or less, treat as MISSING (need INSERT, not reset)
+            if stored_val <= 0.01:
+                cats[cat_key].missing += 1
+                cats[cat_key].missing_amount += source_val
+                cats[cat_key].missing_details.append(detail)
+            else:
+                if status_key in mismatch_seen:
+                    cats[cat_key].total -= 1
+                    return
+                mismatch_seen.add(status_key)
+                cats[cat_key].mismatch += 1
+                cats[cat_key].mismatch_amount += abs(source_val - stored_val)
+                cats[cat_key].mismatch_details.append(detail)
         elif status == "EXTRA_IN_ADJUSTMENTS":
             cats[cat_key].miss += 1
             cats[cat_key].miss_amount += stored_val
@@ -475,6 +554,7 @@ class DivisionCard(QWidget):
     run_requested = Signal(str, str, str, str, object)  # division_code, cat_key, cat_label, mode, extra details
     sync_requested = Signal(str, str, str)  # division_code, cat_key, cat_label
     detail_requested = Signal(str, str, list)  # division_code, cat_label, miss_details
+    insert_diff_requested = Signal(str, str, str, object)  # division_code, cat_key, cat_label, insert_data
 
     def __init__(
         self,
@@ -626,6 +706,14 @@ class DivisionCard(QWidget):
         sync_btn.clicked.connect(lambda _c=False, k=cat_key: self._on_sync(k))
         top.addWidget(sync_btn)
 
+        # New button: Insert diff for MISMATCH (where reference > stored)
+        insert_diff_btn = QPushButton("Insert Diff")
+        insert_diff_btn.setObjectName("insert-diff-btn")
+        insert_diff_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        insert_diff_btn.setToolTip("For MISMATCH: insert only the DIFFERENCE (ref - stored). For MISSING: insert full amount.")
+        insert_diff_btn.clicked.connect(lambda _c=False, k=cat_key: self._on_insert_diff(k))
+        top.addWidget(insert_diff_btn)
+
         run_btn = QPushButton("Run")
         run_btn.setObjectName("run-btn")
         run_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -669,6 +757,7 @@ class DivisionCard(QWidget):
             "widget": w,
             "detail_btn": detail_btn,
             "sync_btn": sync_btn,
+            "insert_diff_btn": insert_diff_btn,
             "run_btn": run_btn,
             "total": total_lbl["value"],
             "match": match_lbl["value"],
@@ -716,6 +805,7 @@ class DivisionCard(QWidget):
         widgets["miss_details"] = status.miss_details
         widgets["run_btn"].setEnabled(status.miss > 0)
         widgets["sync_btn"].setEnabled(status.missing > 0 or status.mismatch > 0)
+        widgets["insert_diff_btn"].setEnabled(status.mismatch > 0)
         widgets["detail_btn"].setEnabled(status.missing > 0 or status.mismatch > 0 or status.miss > 0)
 
     def set_status(self, text: str) -> None:
@@ -731,6 +821,89 @@ class DivisionCard(QWidget):
         cat_label = next((c.label for c in self.categories.categories if c.key == cat_key), cat_key)
         self.sync_requested.emit(self.division_code, cat_key, cat_label)
 
+    def _on_insert_diff(self, cat_key: str) -> None:
+        """Insert difference for MISMATCH entries.
+        For MISMATCH: insert only (reference - stored) amount.
+        For MISSING: insert full reference amount.
+        """
+        widgets = self._category_widgets.get(cat_key)
+        if not widgets:
+            return
+
+        mismatch_details = widgets.get("mismatch_details", [])
+        missing_details = widgets.get("missing_details", [])
+
+        if not mismatch_details and not missing_details:
+            QMessageBox.information(
+                self, "Insert Diff",
+                "Tidak ada data MISMATCH atau MISSING untuk di-insert.",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Build insert data for MISMATCH: only the diff
+        insert_data = []
+        for detail in mismatch_details:
+            ref_amount = detail.metadata_total if detail.metadata_items else detail.source_amount
+            stored_amount = detail.adtrans_amount if detail.adtrans_details else (detail.stored_amount or 0)
+            diff = ref_amount - stored_amount
+            if diff > 0:  # Only insert if reference > stored
+                insert_data.append({
+                    "emp_code": detail.emp_code,
+                    "gang_code": detail.gang_code,
+                    "adjustment_name": detail.adjustment_name,
+                    "amount": diff,  # Only the difference
+                    "type": "MISMATCH_DIFF",
+                    "ref_amount": ref_amount,
+                    "stored_amount": stored_amount,
+                    "metadata_items": detail.metadata_items,
+                })
+
+        # Build insert data for MISSING: full amount
+        for detail in missing_details:
+            ref_amount = detail.metadata_total if detail.metadata_items else detail.source_amount
+            insert_data.append({
+                "emp_code": detail.emp_code,
+                "gang_code": detail.gang_code,
+                "adjustment_name": detail.adjustment_name,
+                "amount": ref_amount,  # Full amount from reference
+                "type": "MISSING",
+                "ref_amount": ref_amount,
+                "stored_amount": 0,
+                "metadata_items": detail.metadata_items,
+            })
+
+        if not insert_data:
+            QMessageBox.information(
+                self, "Insert Diff",
+                "Tidak ada data yang perlu di-insert (semua diff <= 0).",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
+        # Show confirmation with summary
+        mismatch_count = sum(1 for d in insert_data if d["type"] == "MISMATCH_DIFF")
+        missing_count = sum(1 for d in insert_data if d["type"] == "MISSING")
+        total_amount = sum(d["amount"] for d in insert_data)
+
+        confirm = QMessageBox.question(
+            self, "Insert Diff",
+            f"Yakin ingin insert {len(insert_data)} entry?\n\n"
+            f"- MISMATCH (selisih): {mismatch_count}\n"
+            f"- MISSING (kurang): {missing_count}\n"
+            f"- Total amount: {total_amount:,.0f}\n\n"
+            f"Catatan:\n"
+            f"- MISMATCH: insert hanya selisih (ref - stored)\n"
+            f"- MISSING: insert jumlah penuh dari reference",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        # Emit signal to handle insert
+        cat_label = next((c.label for c in self.categories.categories if c.key == cat_key), cat_key)
+        self.insert_diff_requested.emit(self.division_code, cat_key, cat_label, insert_data)
+
     def _on_detail(self, cat_key: str) -> None:
         widgets = self._category_widgets.get(cat_key)
         if not widgets:
@@ -745,6 +918,7 @@ class DivisionCard(QWidget):
 
 class DivisionMonitorWidget(QWidget):
     run_division_category = Signal(str, str, str, str, int, int, object)  # division_code, cat_key, cat_label, mode, month, year, extra details
+    insert_diff_requested = Signal(str, str, str, object)  # division_code, cat_key, cat_label, insert_data
 
     def __init__(
         self,
@@ -796,6 +970,13 @@ class DivisionMonitorWidget(QWidget):
         self.only_miss_check.setChecked(True)
         self.only_miss_check.stateChanged.connect(self._apply_filter_visibility)
         ctrl.addWidget(self.only_miss_check)
+
+        # New checkbox for MISMATCH/MISSING only
+        self.miss_mismatch_only_check = QCheckBox("MISMATCH/MISS Only")
+        self.miss_mismatch_only_check.setChecked(False)
+        self.miss_mismatch_only_check.setToolTip("Show only MISMATCH and MISSING (need insert/reset)")
+        self.miss_mismatch_only_check.stateChanged.connect(self._apply_filter_visibility)
+        ctrl.addWidget(self.miss_mismatch_only_check)
         
         self.use_builtin_check = QCheckBox("Gunakan Built-in API (Cek MISS)")
         self.use_builtin_check.setChecked(True)
@@ -808,7 +989,7 @@ class DivisionMonitorWidget(QWidget):
         root.addLayout(ctrl)
 
         # Search/Reset section
-        search_group = QGroupBox("Cari & Reset ADTRANS")
+        search_group = QGroupBox("Cari & Reset ADTRANS (Sub-Block Detail)")
         search_layout = QHBoxLayout(search_group)
         search_layout.setContentsMargins(8, 8, 8, 8)
 
@@ -822,30 +1003,40 @@ class DivisionMonitorWidget(QWidget):
 
         # Adjustment name filter
         self.adtrans_search = QLineEdit()
-        self.adtrans_search.setPlaceholderText("Nama adjustment (misal: koreksi panen)...")
+        self.adtrans_search.setPlaceholderText("Nama adjustment (misal: PREMI PRUNING)...")
         self.adtrans_search.setMinimumWidth(200)
         search_layout.addWidget(QLabel("ADTRANS:"))
         search_layout.addWidget(self.adtrans_search, 1)
+
+        # Employee code filter
+        self.emp_code_filter = QLineEdit()
+        self.emp_code_filter.setPlaceholderText("Emp (misal: G0012)...")
+        self.emp_code_filter.setMinimumWidth(100)
+        search_layout.addWidget(QLabel("Emp:"))
+        search_layout.addWidget(self.emp_code_filter)
 
         self.search_adtrans_btn = QPushButton("Cari")
         self.search_adtrans_btn.clicked.connect(self._on_search_adtrans)
         search_layout.addWidget(self.search_adtrans_btn)
 
-        self.reset_adtrans_btn = QPushButton("Reset Selected")
+        self.reset_adtrans_btn = QPushButton("Reset Diff Only")
         self.reset_adtrans_btn.setObjectName("danger")
         self.reset_adtrans_btn.setEnabled(False)
+        self.reset_adtrans_btn.setToolTip("Hanya reset entry yang memiliki beda amount (diff != 0)")
         self.reset_adtrans_btn.clicked.connect(self._on_reset_adtrans)
         search_layout.addWidget(self.reset_adtrans_btn)
 
         root.addWidget(search_group)
 
-        # Search results table
+        # Search results table - show sub-blok details + MISSING
         self.adtrans_table = QTableWidget()
-        self.adtrans_table.setColumnCount(7)
-        self.adtrans_table.setHorizontalHeaderLabels(["Pilih", "Divisi", "Kategori", "Karyawan", "ADTRANS", "Jumlah", "Status"])
+        self.adtrans_table.setColumnCount(10)
+        self.adtrans_table.setHorizontalHeaderLabels([
+            "Pilih", "Div", "Emp", "ADTRANS", "SubBlok (Ref)", "Ref", "Stored", "Diff", "Status", "Notes"
+        ])
         self.adtrans_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.adtrans_table.setAlternatingRowColors(True)
-        self.adtrans_table.horizontalHeader().setStretchLastSection(True)
+        self.adtrans_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.adtrans_table.setColumnHidden(0, True)  # Hidden checkbox column
         self.adtrans_table.itemChanged.connect(self._on_table_item_changed)
         root.addWidget(self.adtrans_table, 1)
@@ -866,6 +1057,7 @@ class DivisionMonitorWidget(QWidget):
             card.run_requested.connect(self._on_card_run)
             card.sync_requested.connect(self._on_card_sync)
             card.detail_requested.connect(self._on_card_detail)
+            card.insert_diff_requested.connect(self._on_card_insert_diff)
             self._division_cards[division.code] = card
             self.cards_layout.addWidget(card)
 
@@ -958,14 +1150,29 @@ class DivisionMonitorWidget(QWidget):
 
     def _apply_filter_visibility(self) -> None:
         show_only_miss = self.only_miss_check.isChecked()
+        show_mismatch_missing = self.miss_mismatch_only_check.isChecked()
+
         for code, card in self._division_cards.items():
             summary = next((s for s in self.summaries if s.division_code == code), None)
             if not summary:
-                card.setHidden(show_only_miss)
-                continue
-            total_miss = sum(s.miss for s in summary.categories.values())
-            if show_only_miss and total_miss == 0:
                 card.setHidden(True)
+                continue
+
+            total_miss = sum(s.miss for s in summary.categories.values())
+            total_missing = sum(s.missing for s in summary.categories.values())
+            total_mismatch = sum(s.mismatch for s in summary.categories.values())
+
+            if show_mismatch_missing:
+                # Only show cards with MISMATCH or MISSING
+                if total_mismatch == 0 and total_missing == 0:
+                    card.setHidden(True)
+                else:
+                    card.setHidden(False)
+            elif show_only_miss:
+                if total_miss == 0:
+                    card.setHidden(True)
+                else:
+                    card.setHidden(False)
             else:
                 card.setHidden(False)
 
@@ -1026,6 +1233,34 @@ class DivisionMonitorWidget(QWidget):
         dialog = DetailDialog(division_code, cat_label, details, parent=self)
         dialog.exec()
 
+    def _on_card_insert_diff(self, division_code: str, cat_key: str, cat_label: str, insert_data: list[dict]) -> None:
+        """Handle insert diff request from DivisionCard.
+        Insert only the difference for MISMATCH entries.
+        Insert full amount for MISSING entries.
+        """
+        if not insert_data:
+            return
+
+        mismatch_count = sum(1 for d in insert_data if d["type"] == "MISMATCH_DIFF")
+        missing_count = sum(1 for d in insert_data if d["type"] == "MISSING")
+        total_amount = sum(d["amount"] for d in insert_data)
+
+        self.status_lbl.setText(f"Inserting diff: {mismatch_count} MISMATCH + {missing_count} MISSING = {total_amount:,.0f}")
+
+        # Show info to user
+        QMessageBox.information(
+            self, "Insert Diff",
+            f"Persiapan insert diff selesai:\n\n"
+            f"- MISMATCH (selisih): {mismatch_count} entries\n"
+            f"- MISSING (kurang): {missing_count} entries\n"
+            f"- Total amount: {total_amount:,.0f}\n\n"
+            f"Data siap diproses. Gunakan 'Run' untuk input.",
+            QMessageBox.StandardButton.Ok
+        )
+
+        # Emit signal to parent (MainWindow) for handling
+        self.insert_diff_requested.emit(division_code, cat_key, cat_label, insert_data)
+
     def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
         """Enable reset button when any row is checked."""
         if item.column() == 0:  # Checkbox column
@@ -1036,17 +1271,19 @@ class DivisionMonitorWidget(QWidget):
             self.reset_adtrans_btn.setEnabled(checked_count > 0)
 
     def _on_search_adtrans(self) -> None:
-        """Search for adtrans entries that need to be RESET (MISMATCH/EXTRA).
-        Reference is extend_db_ptrj - if stored differs or extra, delete it.
-        MISSING entries are NOT reset (they need INSERT, not delete).
+        """Search for adtrans entries that have DIFFERENT amount (diff != 0).
+        Only entries where stored_amount != source_amount will be shown.
+        Reference is extend_db_ptrj.
 
         Filters:
         - Adjustment Type: from combo (e.g., PREMI, MANUAL, AUTO_BUFFER)
         - Adjustment Name: text search in adjustment_name
+        - Employee Code: filter by specific employee
         """
         # Get filter values
         adj_type = self.adtrans_type_combo.currentText().strip()
         search_text = self.adtrans_search.text().strip().lower()
+        emp_filter = self.emp_code_filter.text().strip().upper()
 
         if not search_text:
             QMessageBox.information(self, "Cari ADTRANS", "Masukkan nama adjustment untuk mencari.")
@@ -1073,22 +1310,42 @@ class DivisionMonitorWidget(QWidget):
                     if cat_key not in allowed_cats:
                         continue
 
-                # MISMATCH: stored amount differs from reference (extend_db_ptrj) -> RESET
+                # MISMATCH: stored amount differs from reference -> SHOW
                 for detail in cat_status.mismatch_details:
                     if search_text in detail.adjustment_name.lower():
+                        # Filter by employee code if specified
+                        if emp_filter and detail.emp_code != emp_filter:
+                            continue
+                        # Calculate diff based on metadata vs adtrans
+                        ref_amount = detail.metadata_total if detail.metadata_items else detail.source_amount
+                        stored_amount = detail.adtrans_amount if detail.adtrans_details else (detail.stored_amount or 0)
+                        diff = ref_amount - stored_amount
+                        # Show ALL mismatches - regardless of how many transactions
+                        # If stored total differs from reference total, delete stored
                         self._add_adtrans_row(detail, "MISMATCH")
                         found_count += 1
-                # EXTRA: exists in stored but not in reference -> RESET
+                # MISSING: exists in reference but not in stored -> SHOW (need INSERT)
+                for detail in cat_status.missing_details:
+                    if search_text in detail.adjustment_name.lower():
+                        if emp_filter and detail.emp_code != emp_filter:
+                            continue
+                        self._add_adtrans_row(detail, "MISSING")
+                        found_count += 1
+                # EXTRA: exists in stored but not in reference -> SHOW
                 for detail in cat_status.miss_details:
                     if search_text in detail.adjustment_name.lower():
+                        if emp_filter and detail.emp_code != emp_filter:
+                            continue
+                        # Extra means stored exists but ref doesn't = diff
                         self._add_adtrans_row(detail, "EXTRA")
                         found_count += 1
 
         type_filter = f" ({adj_type})" if adj_type else ""
-        self.status_lbl.setText(f"Found {found_count} entries to RESET{type_filter} matching '{search_text}'")
+        emp_filter_str = f" emp {emp_filter}" if emp_filter else ""
+        self.status_lbl.setText(f"Found {found_count} diff entries{type_filter}{emp_filter_str} matching '{search_text}'")
 
     def _add_adtrans_row(self, detail: MissDetail, status_type: str) -> None:
-        """Add a row to the adtrans search results table."""
+        """Add a row to the adtrans search results table with sub-blok details."""
         row = self.adtrans_table.rowCount()
         self.adtrans_table.insertRow(row)
 
@@ -1098,26 +1355,75 @@ class DivisionMonitorWidget(QWidget):
         checkbox.setCheckState(Qt.CheckState.Unchecked)
         self.adtrans_table.setItem(row, 0, checkbox)
 
-        # Data columns
+        # Data columns: Div, Emp, ADTRANS, SubBlok, Ref, Stored, Diff, Status, Notes
         self.adtrans_table.setItem(row, 1, QTableWidgetItem(detail.division_code or "-"))
-        self.adtrans_table.setItem(row, 2, QTableWidgetItem(detail.category_label))
-        self.adtrans_table.setItem(row, 3, QTableWidgetItem(detail.emp_code))
-        self.adtrans_table.setItem(row, 4, QTableWidgetItem(detail.adjustment_name))
-        # Show both source (reference) and stored with diff
-        if detail.stored_amount is not None:
-            diff = detail.source_amount - detail.stored_amount
-            diff_str = f"({diff:+,.0f})" if diff != 0 else ""
-            amount_str = f"{detail.source_amount:,.0f} vs {detail.stored_amount:,.0f} {diff_str}"
+        self.adtrans_table.setItem(row, 2, QTableWidgetItem(detail.emp_code))
+        self.adtrans_table.setItem(row, 3, QTableWidgetItem(detail.adjustment_name))
+
+        # Determine notes based on status and data completeness
+        notes = ""
+
+        # Show sub-blok breakdown from metadata (reference)
+        if detail.metadata_items:
+            # Show format: "P0909(112200) + P0910(113300)"
+            subblok_parts = []
+            for item in detail.metadata_items:
+                subblok_parts.append(f"{item.subblok}({item.jumlah:,.0f})")
+            subblok = " + ".join(subblok_parts)
+            if len(subblok) > 35:
+                subblok = subblok[:35] + "..."
+            # Check if metadata is incomplete (spacing method)
+            if len(detail.metadata_items) == 1:
+                notes = "⚠️ METADATA INCOMPLETE (spasi)"
+                subblok = f"{subblok} [1 blok - perlu dicek]"
+        elif detail.db_doc_desc:
+            subblok = detail.db_doc_desc
+            notes = "⚠️ NO METADATA"
         else:
-            amount_str = f"{detail.source_amount:,.0f}"
-        self.adtrans_table.setItem(row, 5, QTableWidgetItem(amount_str))
-        self.adtrans_table.setItem(row, 6, QTableWidgetItem(status_type))
+            subblok = "-"
+            notes = "⚠️ NO METADATA"
+        self.adtrans_table.setItem(row, 4, QTableWidgetItem(subblok))
+
+        # Reference amount (from extend_db_ptrj / metadata)
+        ref_amount = detail.metadata_total if detail.metadata_items else detail.source_amount
+        self.adtrans_table.setItem(row, 5, QTableWidgetItem(f"{ref_amount:,.0f}"))
+
+        # Stored amount (from db_ptrj / adtrans)
+        stored_amount = detail.adtrans_amount if detail.adtrans_details else (detail.stored_amount or 0)
+        stored_str = f"{stored_amount:,.0f}" if stored_amount else "-"
+        self.adtrans_table.setItem(row, 6, QTableWidgetItem(stored_str))
+
+        # Diff amount
+        diff = ref_amount - stored_amount
+        diff_color = "red" if diff != 0 else "green"
+        diff_str = f"{diff:+,.0f}" if diff != 0 else "0"
+        diff_item = QTableWidgetItem(diff_str)
+        self.adtrans_table.setItem(row, 7, diff_item)
+
+        # Status
+        status_item = QTableWidgetItem(status_type)
+        self.adtrans_table.setItem(row, 8, status_item)
+
+        # Notes column
+        if status_type == "MISSING":
+            notes = "📥 NEED INSERT (ada di ref, tidak ada di stored)"
+        elif status_type == "EXTRA":
+            notes = "🗑️ EXTRA (ada di stored, tidak ada di ref)"
+        notes_item = QTableWidgetItem(notes)
+        self.adtrans_table.setItem(row, 9, notes_item)
 
         # Store detail data in row for later use
         self.adtrans_table.item(row, 0).setData(Qt.ItemDataRole.UserRole, detail)
 
     def _on_reset_adtrans(self) -> None:
-        """Reset/delete selected adtrans entries."""
+        """Reset/delete selected adtrans entries that have diff != 0.
+        Rules:
+        - MISMATCH: DELETE (stored berbeda dari reference)
+        - EXTRA: DELETE (ada di stored, tidak ada di reference)
+        - MISSING: DO NOT DELETE (perlu INSERT, bukan DELETE)
+
+        Reference is extend_db_ptrj (metadata), Stored is db_ptrj (adtrans).
+        """
         selected_rows = []
         for row in range(self.adtrans_table.rowCount()):
             item = self.adtrans_table.item(row, 0)
@@ -1127,9 +1433,39 @@ class DivisionMonitorWidget(QWidget):
         if not selected_rows:
             return
 
+        # Categorize entries
+        mismatch_rows = []
+        extra_rows = []
+        missing_rows = []
+
+        for row in selected_rows:
+            detail: MissDetail = self.adtrans_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+            if detail.status == "MISMATCH":
+                mismatch_rows.append(row)
+            elif detail.status == "EXTRA" or detail.status == "EXTRA_IN_ADJUSTMENTS":
+                extra_rows.append(row)
+            elif detail.status == "MISSING":
+                missing_rows.append(row)
+
+        total_to_delete = len(mismatch_rows) + len(extra_rows)
+        total_missing = len(missing_rows)
+
+        if total_to_delete == 0:
+            QMessageBox.information(
+                self, "Reset ADTRANS",
+                f"Tidak ada entry yang bisa di-reset.\n\n"
+                f"{total_missing} entry MISSING tidak dihapus (butuh INSERT).",
+                QMessageBox.StandardButton.Ok
+            )
+            return
+
         confirm = QMessageBox.question(
             self, "Reset ADTRANS",
-            f"Yakin ingin mereset {len(selected_rows)} entry yang dipilih?\n\nData akan dihapus dari database manual adjustment.",
+            f"Yakin ingin mereset {total_to_delete} entry?\n\n"
+            f"- MISMATCH (hapus): {len(mismatch_rows)}\n"
+            f"- EXTRA (hapus): {len(extra_rows)}\n\n"
+            f"- MISSING (JANGAN dihapus): {total_missing} - perlu INSERT\n\n"
+            f"Reference: metadata (extend_db) vs Stored: adtrans (db_ptrj)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if confirm != QMessageBox.StandardButton.Yes:
@@ -1137,11 +1473,14 @@ class DivisionMonitorWidget(QWidget):
 
         client = self.api_client_factory()
         deleted_count = 0
+        error_count = 0
+        processed_rows = mismatch_rows + extra_rows
 
-        for row in selected_rows:
+        # Remove rows in reverse order to avoid index shifting
+        for row in sorted(processed_rows, reverse=True):
             detail: MissDetail = self.adtrans_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+
             try:
-                # Call API to delete the entry
                 result = client.delete_adtrans(
                     period_month=self.mon_month.value(),
                     period_year=self.mon_year.value(),
@@ -1154,6 +1493,7 @@ class DivisionMonitorWidget(QWidget):
                 self.adtrans_table.removeRow(row)
             except Exception as e:
                 print(f"Failed to delete {detail.adjustment_name}: {e}")
+                error_count += 1
 
-        self.status_lbl.setText(f"Deleted {deleted_count}/{len(selected_rows)} entries")
+        self.status_lbl.setText(f"Deleted {deleted_count} entries, {error_count} errors, {total_missing} MISSING skipped")
         self.reset_adtrans_btn.setEnabled(False)

@@ -1,0 +1,65 @@
+{
+  "session_id": "WFS-premi-remarks-sync-missing",
+  "problem_summary": "Manual Adjustment automation misses or skips several premium/correction rows because fetch/category/filter logic is too rigid and sometimes overrides remarks sync/match status. Remarks tokens must decide whether a row is missing/different and eligible for input.",
+  "user_sample": {
+    "id": 99267,
+    "period_month": 5,
+    "period_year": 2026,
+    "emp_code": "F0499",
+    "adjustment_type": "POTONGAN_KOTOR",
+    "adjustment_name": "KOREKSI PANEN",
+    "amount": 88172,
+    "remarks": "KOREKSI PANEN | (DE0004AB1) (DE) POTONGAN PREMI - (DE) POTONGAN PREMI | 88172 | sync:MISS | match:MISMATCH",
+    "metadata_json": "{\"input_type\":\"blok\",\"items\":[{\"subblok\":\"P0815\",\"gang_code\":\"F2H\",\"jumlah\":88172}],\"total_amount\":88172}",
+    "expected": "Include in preview/run as input-needed because remarks sync is MISS and match is MISMATCH."
+  },
+  "current_repo_findings": [
+    "app/ui/main_window.py parses remarks sync/match tokens but _record_is_mismatch only reads verification status.",
+    "app/ui/main_window.py records_requiring_fetch_verification checks premium categories and stale miss, not all explicit remarks mismatch rows.",
+    "app/ui/division_run_dialog.py has grouped premium branch for premi/premi_tunjangan plus query.requests_premium; category-specific premi_tiket/pupuk needs audit.",
+    "configs/adjustment-categories.json includes premi_tiket but lacks PUPUK/TABUR tokens.",
+    "app/core/api_client.py grouped premium normalization flattens metadata detail rows and should be preserved.",
+    "runner/src/plantware/page-actions.ts depends on detail_type/subblok/vehicle_code for premium detail behavior."
+  ],
+  "reference_project_findings": [
+    "backend/src/utils/manualAdjustmentRemarkParser.ts defines remarks format and explicit sync/match token parsing.",
+    "backend/src/services/manualAdjustmentService.ts maps POTONGAN_KOTOR/KOREKSI to DE0004 and (DE) POTONGAN PREMI.",
+    "backend/src/services/manualAdjustmentService.ts uses sync MISS/DIFF/SYNC and match MISMATCH/MATCH in remarks.",
+    "backend/data/premium_definitions.json includes PREMI TIKET and PREMI ANGKUT PUPUK; use definitions/patterns as evidence instead of local rigid names.",
+    "frontend/src/pages/AggregationSeederPage.jsx uses Update Sync Status Manual Adj as the UI indicator source: SYNC is success/green, DIFF and MISS are warning/error conditions."
+  ],
+  "external_backend_allowed": {
+    "root": "D:\\Gawean Rebinmas\\PORTAL_ESTATE\\Plantware_Auto_Report\\Daftar_Upah_baru\\payroll_daftar_upah\\refactor_production",
+    "when": "Edit if /payroll/manual-adjustment/by-api-key or sync-status endpoint cannot return correct rows by adjustment_type alone.",
+    "files": [
+      "backend/src/api/payroll.ts",
+      "backend/src/services/manualAdjustmentService.ts",
+      "backend/src/utils/manualAdjustmentRemarkParser.ts",
+      "backend/src/api/payroll.manualAdjustmentByApiKey.test.ts",
+      "backend/src/services/manualAdjustmentService.test.ts"
+    ],
+    "endpoint_rule": "adjustment_type is the broad scope; adjustment_name is optional exact/narrow filter only when user sends it. Blank adjustment_name with adjustment_type=PREMI means all premium rows/subtypes."
+  },
+  "input_eligibility_rule": {
+    "include": ["sync:MISS", "sync:MISSING", "sync:NOT_FOUND", "sync:DIFF", "sync:PARTIAL", "match:MISMATCH", "match:DIFF", "match:PARTIAL"],
+    "exclude": ["sync:SYNC with match:MATCH"],
+    "notes": "Explicit remarks tokens win over check-adtrans/sync-status heuristics before input."
+  },
+  "likely_files": [
+    "app/core/manual_adjustment_status.py",
+    "app/ui/main_window.py",
+    "app/ui/division_run_dialog.py",
+    "app/core/category_registry.py",
+    "app/core/api_client.py",
+    "configs/adjustment-categories.json",
+    "app/core/models.py",
+    "runner/src/plantware/page-actions.ts",
+    "tests/test_manual_adjustment_status.py",
+    "tests/test_api_models.py"
+  ],
+  "conflict_notes": [
+    "Recent workflow WFS-loosefruit-duplicate-cleanup is unrelated to manual adjustment premium logic.",
+    "Recent lite-plan month-filter-bug touches Manual Adjustment API params; check uncommitted changes before editing app/core/api_client.py or app/ui/main_window.py.",
+    "Recent lite-plan division-monitor-reset touches division monitor/compare-adtrans, not core premium fetch unless shared helpers change."
+  ]
+}

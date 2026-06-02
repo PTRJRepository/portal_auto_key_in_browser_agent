@@ -12,6 +12,13 @@ FILTER_TO_ADJUSTMENT_NAME = {
     "masa kerja": "MASA KERJA",
     "jabatan": "TUNJANGAN JABATAN",
     "pph": "POTONGAN PPH",
+    "koreksi": "KOREKSI",
+    "potongan": "POTONGAN",
+    "potongan_upah_kotor": "POTONGAN KOTOR",
+    "potongan_upah_bersih": "POTONGAN BERSIH",
+    "premi": "PREMI",
+    "premi_tunjangan": "PREMI TUNJANGAN",
+    "brondol": "BRONDOL",
 }
 
 ADJUSTMENT_NAME_TO_FILTER = {
@@ -680,15 +687,30 @@ class BuiltInComparisonService:
             nik = str(row.get("nik", "")).strip().upper()
             adj_type = str(row.get("adjustment_type", "")).strip().upper()
             adj_name = str(row.get("adjustment_name", "")).strip().upper()
-            
-            norm_name = normalize_auto_buffer_adjustment_name(adj_name)
-            category = ADJUSTMENT_NAME_TO_FILTER.get(norm_name)
-            
-            if not category and adj_type == "PREMI":
+
+            # Try direct matching for KOREKSI PANEN first
+            category = None
+            if "KOREKSI" in adj_name:
+                category = "koreksi"
+            elif "PREMI" in adj_name and "TUNJANGAN" in adj_name:
+                category = "premi_tunjangan"
+            elif "PREMI" in adj_name:
                 category = "premi"
-            if not category and adj_type == "POTONGAN_KOTOR":
-                category = "koreksi" if "KOREKSI" in adj_name else "potongan"
-                
+            elif "POTONGAN" in adj_name and "BERSIH" in adj_name:
+                category = "potongan_upah_bersih"
+            elif "POTONGAN" in adj_name and ("KOTOR" in adj_name or "KOREKSI" in adj_name):
+                category = "potongan_upah_kotor"
+            elif "BRONDOL" in adj_name:
+                category = "brondol"
+            else:
+                # Try normalization for other types
+                norm_name = normalize_auto_buffer_adjustment_name(adj_name)
+                category = ADJUSTMENT_NAME_TO_FILTER.get(norm_name)
+                if not category and adj_type == "PREMI":
+                    category = "premi"
+                if not category and adj_type == "POTONGAN_KOTOR":
+                    category = "potongan_upah_kotor"
+
             if not category or category not in normalized_filters:
                 continue
                 
@@ -726,6 +748,8 @@ class BuiltInComparisonService:
                 "gang_code": row.get("gang_code"),
                 "division_code": row.get("division_code"),
                 "remarks": row.get("remarks"),
+                # Include metadata for sub-blok details
+                "metadata_json": row.get("metadata_json"),
             })
             
         return {
@@ -769,7 +793,7 @@ class BuiltInComparisonService:
 
         placeholders = ", ".join([f"@div{idx}" for idx in range(len(adjustment_division_codes))])
         sql = f"""
-            SELECT emp_code, nik, adjustment_type, adjustment_name, amount, remarks, gang_code, division_code
+            SELECT emp_code, nik, adjustment_type, adjustment_name, amount, remarks, gang_code, division_code, metadata_json
             FROM dbo.payroll_manual_adjustments
             WHERE period_month = @periodMonth AND period_year = @periodYear
               AND UPPER(RTRIM(division_code)) IN ({placeholders})

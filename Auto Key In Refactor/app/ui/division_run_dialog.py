@@ -29,6 +29,8 @@ from app.core.run_service import filter_by_category
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 from app.ui.themes import AppTheme
 
+PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket", "premi_hari_raya", "premi_kehadiran", "premi_pupuk"}
+
 def automation_option_categories_for_records(records: list[ManualAdjustmentRecord]) -> list[str]:
     category_by_type = {
         "PREMI": "premi",
@@ -74,7 +76,7 @@ class DivisionFetchWorker:
             adjustment_type=self.adjustment_type,
             adjustment_name=self.adjustment_name,
         )
-        if self.category_key in {"premi", "premi_tunjangan"} or query.requests_premium():
+        if self.category_key in PREMI_CATEGORY_KEYS or query.requests_premium():
             query = query.with_grouped_premium_details()
         records = self.client.get_adjustments(query)
         records = self._enrich_manual_automation_details(records, query)
@@ -253,6 +255,10 @@ class DivisionRunDialog(QDialog):
                     "potongan_upah_kotor": ["koreksi", "potongan"],
                     "potongan_upah_bersih": ["potongan upah bersih"],
                     "premi_tunjangan": ["tunjangan premi"],
+                    "premi_tiket": ["premi"],
+                    "premi_hari_raya": ["premi"],
+                    "premi_kehadiran": ["premi"],
+                    "premi_pupuk": ["premi"],
                 }
                 filters = filter_map.get(self.category_key)
 

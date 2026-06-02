@@ -93,7 +93,7 @@ class ManualAdjustmentQuery:
         return values
 
     def with_grouped_premium_details(self) -> "ManualAdjustmentQuery":
-        return replace(self, adjustment_type="PREMI", view="grouped", metadata_only=True)
+        return replace(self, adjustment_type="PREMI", view="grouped", metadata_only=False)
 
     def uses_grouped_view(self) -> bool:
         return (self.view or "").strip().lower() == "grouped"
@@ -653,6 +653,10 @@ class ManualAdjustmentApiClient:
         category_key = self.categories.detect(
             str(raw.get("adjustment_name") or ""),
             str(raw.get("adjustment_type") or ""),
+            str(raw.get("ad_code_desc") or raw.get("adCodeDesc") or ""),
+            str(raw.get("description") or raw.get("doc_desc") or raw.get("docDesc") or ""),
+            str(raw.get("task_desc") or raw.get("taskDesc") or ""),
+            str(raw.get("remarks") or ""),
         )
         return normalize_record(raw, category_key)
 
@@ -764,6 +768,10 @@ class ManualAdjustmentApiClient:
                         category_key = self.categories.detect(
                             str(raw.get("adjustment_name") or ""),
                             str(raw.get("adjustment_type") or "PREMI"),
+                            str(raw.get("ad_code_desc") or raw.get("adCodeDesc") or ""),
+                            str(raw.get("description") or raw.get("doc_desc") or raw.get("docDesc") or ""),
+                            str(raw.get("task_desc") or raw.get("taskDesc") or ""),
+                            str(raw.get("remarks") or ""),
                         )
                         records.append(normalize_record(raw, category_key))
         return records
@@ -784,6 +792,7 @@ class ManualAdjustmentApiClient:
                 continue
             detail_items = metadata_detail_items(premium)
             if not detail_items:
+                flattened.append({**premium, "transaction_index": premium.get("transaction_index", 1)})
                 continue
             parent = {
                 key: value

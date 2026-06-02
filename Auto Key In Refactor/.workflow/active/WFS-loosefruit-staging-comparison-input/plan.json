@@ -1,0 +1,26 @@
+{
+  "task_ids": ["IMPL-1", "IMPL-2", "IMPL-3", "IMPL-4", "IMPL-5"],
+  "recommended_execution": "sequential",
+  "complexity": "high",
+  "shared_context": {
+    "session_id": "WFS-loosefruit-staging-comparison-input",
+    "goal": "Loosefruit tab inputs missing brondol rows from staging-vs-Plantware selisih, across selected estates, using one browser window/session per estate and many tabs inside that window.",
+    "source_endpoint_user": "http://localhost:3001/upah/staging-comparison",
+    "source_endpoint_existing_runner": "http://localhost:8002/backend/upah/api/staging/staging-comparison?periode=YYYY-MM",
+    "target_page": "PlantwareP3 /en/PR/trx/frmPrTrxLooseFruitDet.aspx",
+    "existing_ui": "app/ui/main_window.py already has Loosefruit Brondol tab and sequential per-estate runner orchestration.",
+    "existing_runner": "runner/src/cli.ts dispatches operation=input_loosefruit to loosefruit input or loosefruit multitab runner.",
+    "input_rule": "Use selisih = staging_brondol - plantware_brondol; input only positive selisih by default; skip zero/negative and already-present Plantware grid rows.",
+    "session_rule": "One estate/location uses one reused Plantware session/browser window; max_tabs controls pages/tabs in that window; multiple selected estates run sequentially unless session isolation is explicitly redesigned.",
+    "critical_conflict_note": "Repo has existing uncommitted changes in app/ui/main_window.py, app/core/models.py, runner/src/cli.ts, runner/src/types.ts, and others; implementation must review diffs before editing and not overwrite WIP."
+  },
+  "quality_gate": "PROCEED_WITH_CAUTION",
+  "risk_notes": [
+    "Existing loosefruit feature is partly present, but uses direct requests in UI preview and hardcoded runner endpoint defaults; must unify source URL/config before production use.",
+    "User mentioned localhost:3001/upah/staging-comparison while runner currently defaults to localhost:8002/backend/upah/api/staging/staging-comparison; route contract must be normalized or made configurable.",
+    "Multi-tab runner currently assigns rows round-robin and uses one loc_code when deriving task code; estate grouping must prevent cross-estate rows in same session/window.",
+    "Existing runner only filters emp_code starting with A and selisih > 0; verify this matches brondol worker rules and staging response schema.",
+    "Plantware ASP.NET postback timing is fragile; tab concurrency must keep per-page operations isolated and handle closed page/context failures without double input.",
+    "Existing active workflow WFS-premi-remarks-sync-missing overlaps app/ui/main_window.py and runner payload types; coordinate before implementation."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "IMPL-1",
+  "title": "Centralize remarks status rules",
+  "description": "Create a testable Python helper for manual adjustment remarks parsing and input eligibility. Explicit sync:/match: tokens must be authoritative.",
+  "depends_on": [],
+  "files": [
+    "app/core/manual_adjustment_status.py",
+    "app/ui/main_window.py",
+    "tests/test_manual_adjustment_status.py"
+  ],
+  "convergence": [
+    "sync:MISS | match:MISMATCH returns input_needed true.",
+    "sync:SYNC | match:MATCH returns input_needed false.",
+    "sync:DIFF or match:PARTIAL is treated as mismatch/diff.",
+    "Old remarks without tokens keep existing fallback labels."
+  ],
+  "meta": {"type": "implementation", "agent": "code_developer", "risk": "medium"}
+}

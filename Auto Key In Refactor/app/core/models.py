@@ -538,9 +538,17 @@ class RunPayload:
     operation: str = "input"
     duplicate_targets: list[DuplicateDocIdTarget] | None = None
     delete_dry_run: bool = True
+    # Loosefruit input fields
+    staging_periode: str | None = None
+    field_code: str | None = None
+    rate: int | None = None
+    doc_date: str | None = None
+    estate_filter: str | None = None
+    staging_source_url: str | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["records"] = [record.to_runner_dict() for record in self.records]
         data["duplicate_targets"] = [target.to_runner_dict() for target in self.duplicate_targets or []]
         return data
+

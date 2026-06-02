@@ -1,0 +1,10 @@
+{
+  "session_id": "WFS-premi-remarks-sync-missing",
+  "status": "planned",
+  "created_at": "2026-06-03T02:10:00+07:00",
+  "updated_at": "2026-06-03T02:10:00+07:00",
+  "task_description": "Fix manual adjustment premium fetch/input flow so all premium-like rows, including PREMI TIKET, PREMI ANGKUT/TABUR PUPUK, and KOREKSI PANEN/POTONGAN_KOTOR, are classified from extend_db_ptrj payroll_manual_adjustments and remarks sync/match tokens. Only rows whose remarks say sync:MISS/MISSING/NOT_FOUND or match:MISMATCH/DIFF/PARTIAL should be sent to Plantware input; synced/matched rows must be skipped.",
+  "mode": "plan",
+  "skill": "workflow-plan",
+  "quality_gate": "PROCEED_WITH_CAUTION"
+}

@@ -66,6 +66,7 @@ class DivisionOption:
 class AppConfig:
     api_base_url: str = "http://localhost:8002"
     api_key: str = ""
+    loosefruit_staging_source: str = "http://localhost:8002"
     query_gateway_base_url: str = "http://localhost:8001"
     query_gateway_api_key: str = ""
     query_gateway_server: str = "SERVER_PROFILE_2"
@@ -120,6 +121,7 @@ def load_app_config(path: Path | None = None) -> AppConfig:
     return AppConfig(
         api_base_url=str(os.getenv("AUTO_KEY_IN_API_BASE_URL") or data.get("api_base_url", "http://localhost:8002")).rstrip("/"),
         api_key=str(os.getenv("AUTO_KEY_IN_API_KEY") or data.get("api_key", "")),
+        loosefruit_staging_source=str(os.getenv("AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE") or data.get("loosefruit_staging_source", data.get("api_base_url", "http://localhost:8002"))).rstrip("/"),
         query_gateway_base_url=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_BASE_URL") or data.get("query_gateway_base_url", "http://localhost:8001")).rstrip("/"),
         query_gateway_api_key=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_API_KEY") or data.get("query_gateway_api_key", "")),
         query_gateway_server=str(os.getenv("AUTO_KEY_IN_QUERY_GATEWAY_SERVER") or data.get("query_gateway_server", "SERVER_PROFILE_2")),
@@ -134,3 +136,4 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         default_max_tabs=env_int("AUTO_KEY_IN_DEFAULT_MAX_TABS", int(data.get("default_max_tabs", 5))),
         headless=env_bool("AUTO_KEY_IN_HEADLESS", bool(data.get("headless", False))),
     )
+

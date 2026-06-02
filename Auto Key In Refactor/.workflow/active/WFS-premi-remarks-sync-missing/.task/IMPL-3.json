@@ -1,0 +1,18 @@
+{
+  "id": "IMPL-3",
+  "title": "Filter runs from remarks",
+  "description": "Update preview/run filtering so explicit remarks MISS/MISMATCH controls eligibility and sync-status/check-adtrans does not hide rows that must be input.",
+  "depends_on": ["IMPL-1", "IMPL-2"],
+  "files": [
+    "app/ui/main_window.py",
+    "tests/test_api_models.py",
+    "tests/test_manual_adjustment_status.py"
+  ],
+  "convergence": [
+    "User sample KOREKSI PANEN sync:MISS match:MISMATCH is included as pending input.",
+    "Rows with sync:SYNC match:MATCH are excluded from run payload.",
+    "Rows with sync:DIFF or match:MISMATCH are included when mismatch/missing filter is active.",
+    "Premium retry-safe logic no longer skips explicit remarks mismatch rows."
+  ],
+  "meta": {"type": "implementation", "agent": "code_developer", "risk": "high"}
+}

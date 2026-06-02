@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,20 +40,31 @@ from app.ui.division_monitor import DivisionMonitorWidget
 from app.ui.themes import AppTheme
 from app.core.category_registry import CategoryRegistry
 from app.core.config import AppConfig, DivisionOption, MAX_CONCURRENT_TABS
+from app.core.manual_adjustment_status import (
+    input_needed_from_remarks,
+    is_missing_from_remarks,
+    is_mismatch_from_remarks,
+    is_synced_from_remarks,
+    match_status_from_remarks as parsed_match_status_from_remarks,
+    remarks_parts as parsed_remarks_parts,
+    remarks_token as parsed_remarks_token,
+    sync_status_from_remarks as parsed_sync_status_from_remarks,
+)
 from app.core.models import DuplicateDocIdTarget, ManualAdjustmentRecord, RunPayload, enrich_records_with_automation_options, extract_ad_code_from_remarks
 from app.core.query_gateway import PlantwareDbPtrjGateway, QueryGatewayConfig
 from app.core.run_artifacts import RunArtifactPaths, RunArtifactStore
 from app.core.run_service import apply_row_limit, division_mismatch_warning, filter_by_category, filter_records_by_division_prefix
 from app.core.runner_bridge import RunnerBridge, RunnerEvent
 from app.core.loosefruit_gateway import LoosefruitGatewayRepository
+from app.core.loosefruit_staging import eligible_loosefruit_rows, fetch_loosefruit_staging_comparison
 from app.core.task_register_gateway import TaskRegisterGatewayRepository
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
 AUTOMATION_OPTION_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
 AUTO_BUFFER_CATEGORY_KEYS = {"spsi", "masa_kerja", "tunjangan_jabatan", "pph21"}
 SYNC_STATUS_ADJUSTMENT_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "AUTO_BUFFER"}
-PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket", "premi_hari_raya", "premi_kehadiran"}
-MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
+PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket", "premi_hari_raya", "premi_kehadiran", "premi_pupuk"}
+MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket", "premi_hari_raya", "premi_kehadiran", "premi_pupuk", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
 MANUAL_ADJUSTMENT_OPTION_TYPES = "PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH"
 DELETE_RUNNER_MODE = "session_reuse_single"
 ALL_MISMATCH_FILTERS = ["premi", "potongan", "koreksi", "jabatan", "masa kerja", "spsi", "pph", "potongan upah bersih"]
@@ -138,50 +150,27 @@ class EditableTextComboBox(QComboBox):
 
 
 def remarks_parts(record: ManualAdjustmentRecord) -> list[str]:
-    return [part.strip() for part in record.remarks.split("|") if part.strip()]
+    return parsed_remarks_parts(record.remarks)
 
 
 def remarks_token(record: ManualAdjustmentRecord, key: str) -> str:
-    prefix = f"{key.lower()}:"
-    for part in remarks_parts(record):
-        if part.lower().startswith(prefix):
-            return part.split(":", 1)[1].strip().upper()
-    return ""
+    return parsed_remarks_token(record.remarks, key)
 
 
 def sync_status_from_remarks(record: ManualAdjustmentRecord) -> str:
-    explicit_sync = remarks_token(record, "sync")
-    if explicit_sync:
-        return explicit_sync
-    parts = remarks_parts(record)
-    if len(parts) >= 3:
-        amount_part = parts[2].replace(",", "")
-        try:
-            remarks_amount = float(amount_part)
-        except ValueError:
-            return "UNKNOWN"
-        return "MATCH" if remarks_amount == record.amount else "MISMATCH"
-    if record.remarks.strip():
-        return "MANUAL"
-    return "NO REMARKS"
+    return parsed_sync_status_from_remarks(record)
 
 
 def match_status_from_remarks(record: ManualAdjustmentRecord) -> str:
-    explicit_match = remarks_token(record, "match")
-    if explicit_match:
-        return explicit_match
-    return sync_status_from_remarks(record)
+    return parsed_match_status_from_remarks(record)
 
 
 def record_is_synced(record: ManualAdjustmentRecord) -> bool:
-    return sync_status_from_remarks(record).upper() == "SYNC"
+    return is_synced_from_remarks(record)
 
 
 def record_is_stale_miss(record: ManualAdjustmentRecord) -> bool:
-    sync_status = sync_status_from_remarks(record).upper()
-    if sync_status == "SYNC":
-        return False
-    return sync_status in {"MISS", "MISSING", "NOT_FOUND"}
+    return is_missing_from_remarks(record)
 
 
 def filter_for_record(record: ManualAdjustmentRecord) -> str:
@@ -211,7 +200,7 @@ def filter_for_record(record: ManualAdjustmentRecord) -> str:
 def records_requiring_fetch_verification(records: list[ManualAdjustmentRecord]) -> list[ManualAdjustmentRecord]:
     return [
         record for record in records
-        if not record_is_synced(record) and (record.category_key in PREMI_CATEGORY_KEYS or record_is_stale_miss(record))
+        if not record_is_synced(record) and (record.category_key in PREMI_CATEGORY_KEYS or input_needed_from_remarks(record))
     ]
 
 def is_task_desc_adcode(value: str) -> bool:
@@ -605,6 +594,61 @@ class RunWorker(QObject):
         self.bridge.stop()
 
 
+class LoosefruitRunWorker(QObject):
+    event_received = Signal(object)
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__()
+        self.payload = payload
+        self.process: subprocess.Popen | None = None
+
+    def run(self) -> None:
+        import subprocess as sub
+        import tempfile as tmp
+        from pathlib import Path
+        from app.core.config import PROJECT_ROOT
+
+        with tmp.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            json.dump(self.payload, handle, ensure_ascii=False)
+            payload_path = Path(handle.name)
+
+        try:
+            cmd = ["node", "runner/dist/cli.js", "--payload", str(payload_path)]
+            self.process = sub.Popen(
+                cmd,
+                cwd=str(PROJECT_ROOT),
+                stdout=sub.PIPE,
+                stderr=sub.STDOUT,
+                text=True,
+                encoding="utf-8",
+            )
+            assert self.process.stdout is not None
+            for line in self.process.stdout:
+                event = self._parse_event(line)
+                if event is None:
+                    continue
+                self.event_received.emit(event)
+            exit_code = self.process.wait()
+            self.completed.emit({"exit_code": exit_code})
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            payload_path.unlink(missing_ok=True)
+            self.process = None
+
+    def _parse_event(self, line: str) -> dict | None:
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            return None
+
+    def stop(self) -> None:
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+
+
 class VerifyWorker(QObject):
     completed = Signal(list)
     failed = Signal(str)
@@ -840,6 +884,8 @@ class MainWindow(QMainWindow):
         self.fetch_worker: FetchWorker | None = None
         self.run_thread: QThread | None = None
         self.run_worker: RunWorker | None = None
+        self.lf_run_thread: QThread | None = None
+        self.lf_run_worker: LoosefruitRunWorker | None = None
         self.verify_thread: QThread | None = None
         self.verify_worker: VerifyWorker | None = None
         self.sync_status_thread: QThread | None = None
@@ -875,6 +921,11 @@ class MainWindow(QMainWindow):
         self.active_run_payload: RunPayload | None = None
         self.division_run_dialogs: list[QDialog] = []
         self._suppress_adjustment_name_refresh = False
+        self._lf_running = False
+        self._lf_process: subprocess.Popen | None = None
+        self._lf_last_success_count = 0
+        self._lf_last_failed_count = 0
+        self._lf_last_skipped_count = 0
         self.setWindowTitle("Auto Key In Refactor")
         # Adaptive size based on screen
         screen = QApplication.primaryScreen()
@@ -945,6 +996,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_verify_tab(), "Verify db_ptrj")
         self.tabs.addTab(self._build_duplicate_cleanup_tab(), "Duplicate Cleanup")
         self.tabs.addTab(self._build_reset_docid_tab(), "Reset/Delete DocID")
+        self.tabs.addTab(self._build_loosefruit_tab(), "Loosefruit Brondol")
         self.division_monitor = DivisionMonitorWidget(self._api_client, self.categories, self.divisions, config=self.config)
         self.division_monitor.run_division_category.connect(self._on_division_monitor_run)
         self.tabs.addTab(self.division_monitor, "Division Monitor")
@@ -1127,7 +1179,12 @@ class MainWindow(QMainWindow):
         self.process_only_miss.setChecked(True)
         self.process_only_miss.setToolTip("Jika aktif, fetch/run hanya memakai MISS. DIFF/MISMATCH harus dihapus dulu dari Reset/Delete DocID.")
         self.process_only_miss.stateChanged.connect(self._update_process_context)
-        
+
+        self.process_mismatch_missing_only = QCheckBox("MISMATCH/MISS Only")
+        self.process_mismatch_missing_only.setChecked(False)
+        self.process_mismatch_missing_only.setToolTip("Jika aktif, hanya tampilkan MISMATCH dan MISSING. EXTRA tidak ikut.")
+        self.process_mismatch_missing_only.stateChanged.connect(self._update_process_context)
+
         self.process_use_builtin_api = QCheckBox("Cek MISS via Built-in API")
         self.process_use_builtin_api.setChecked(False)
         self.process_use_builtin_api.setToolTip("Gunakan koneksi database langsung untuk mencari data MISS tanpa melewati API Upah.")
@@ -1140,9 +1197,10 @@ class MainWindow(QMainWindow):
         self.export_button.clicked.connect(self.open_current_artifacts)
         for button in [self.test_get_data_button, self.run_button, self.run_selected_jobs_button, self.stop_button, self.export_button]:
             controls.addWidget(button)
-            
+
         opt_layout = QVBoxLayout()
         opt_layout.addWidget(self.process_only_miss)
+        opt_layout.addWidget(self.process_mismatch_missing_only)
         opt_layout.addWidget(self.process_use_builtin_api)
         controls.addLayout(opt_layout)
         controls.addWidget(self.process_context_label, 1)
@@ -1477,6 +1535,350 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.reset_scroll, 1)
         return tab
 
+    def _build_loosefruit_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(self._adaptive_spacing())
+        margins = self._adaptive_margins()
+        layout.setContentsMargins(margins, margins, margins, margins)
+
+        # Header
+        header = QLabel("Loosefruit Brondol Input - Multi Estate")
+        header.setStyleSheet("font-size: 16px; font-weight: 600; color: #e2e8f0;")
+        layout.addWidget(header)
+
+        # Estate selection
+        estate_group = QGroupBox("Pilih Estate (bisa pilih beberapa)")
+        estate_layout = QVBoxLayout(estate_group)
+
+        self.lf_estate_checkboxes: dict[str, QCheckBox] = {}
+        estate_scroll = QScrollArea()
+        estate_scroll.setWidgetResizable(True)
+        estate_scroll.setMaximumHeight(120)
+        estate_container = QWidget()
+        estate_grid = QGridLayout(estate_container)
+        estate_grid.setSpacing(8)
+
+        # Populate from divisions config
+        row_idx = 0
+        col_idx = 0
+        for div_option in self.divisions:
+            code = div_option.code
+            cb = QCheckBox(f"{code} - {div_option.label}")
+            cb.setChecked(False)
+            self.lf_estate_checkboxes[code] = cb
+            estate_grid.addWidget(cb, row_idx, col_idx)
+            col_idx += 1
+            if col_idx >= 4:
+                col_idx = 0
+                row_idx += 1
+
+        estate_scroll.setWidget(estate_container)
+        estate_layout.addWidget(estate_scroll)
+
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.setToolTip("Pilih semua estate")
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.setToolTip("Hilangkan semua pilihan")
+        select_all_btn.clicked.connect(self._lf_select_all_estates)
+        deselect_all_btn.clicked.connect(self._lf_deselect_all_estates)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(select_all_btn)
+        btn_row.addWidget(deselect_all_btn)
+        btn_row.addStretch(1)
+        estate_layout.addLayout(btn_row)
+
+        layout.addWidget(estate_group)
+
+        # Controls
+        controls = QGroupBox("Konfigurasi Input Brondol Selisih")
+        form = QFormLayout(controls)
+
+        self.lf_staging_periode = QLineEdit("2026-05")
+        self.lf_staging_periode.setPlaceholderText("YYYY-MM")
+        self.lf_staging_periode.setToolTip("Periode staging (bulan dan tahun). Contoh: 2026-05")
+        form.addRow("Staging Periode", self.lf_staging_periode)
+
+        self.lf_field_code = QLineEdit(" ")
+        self.lf_field_code.setPlaceholderText("Spasi = pilih opsi bebas")
+        self.lf_field_code.setToolTip("Field No Code. Gunakan spasi untuk pilih opsi 'bebas'.")
+        form.addRow("Field No Code", self.lf_field_code)
+
+        self.lf_rate = QSpinBox()
+        self.lf_rate.setRange(0, 999999)
+        self.lf_rate.setValue(1750)
+        self.lf_rate.setToolTip("Rate per MT. Default: 1750")
+        form.addRow("Rate", self.lf_rate)
+
+        self.lf_doc_date = QLineEdit("31/05/2026")
+        self.lf_doc_date.setPlaceholderText("DD/MM/YYYY")
+        self.lf_doc_date.setToolTip("Tanggal dokumen. Contoh: 31/05/2026")
+        form.addRow("Doc Date", self.lf_doc_date)
+
+        # Runner options
+        runner_box = QGroupBox("Runner Options")
+        runner_form = QFormLayout(runner_box)
+        self.lf_runner_mode = QComboBox()
+        self.lf_runner_mode.addItems(["session_reuse_single", "fresh_login_single", "multi_tab_shared_session"])
+        self.lf_max_tabs = QSpinBox()
+        self.lf_max_tabs.setRange(1, 20)
+        self.lf_max_tabs.setValue(3)
+        self.lf_max_tabs.setToolTip("Jumlah tab parallel per estate")
+        self.lf_headless = QCheckBox("Headless")
+        self.lf_headless.setChecked(False)
+        runner_form.addRow("Mode", self.lf_runner_mode)
+        runner_form.addRow("Max Tabs", self.lf_max_tabs)
+        runner_form.addRow("Headless", self.lf_headless)
+
+        controls_row = QHBoxLayout()
+        controls_row.addWidget(controls)
+        controls_row.addWidget(runner_box)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
+        # Action buttons
+        action_layout = QHBoxLayout()
+        self.lf_preview_all_button = QPushButton("Preview All Selected")
+        self.lf_preview_all_button.setObjectName("primary")
+        self.lf_preview_all_button.clicked.connect(self._preview_loosefruit_all_estates)
+        self.lf_run_all_button = QPushButton("Run All Selected Estates")
+        self.lf_run_all_button.setObjectName("success")
+        self.lf_run_all_button.setEnabled(False)
+        self.lf_run_all_button.clicked.connect(self._run_loosefruit_all_estates)
+        self.lf_stop_button = QPushButton("Stop")
+        self.lf_stop_button.setObjectName("danger")
+        self.lf_stop_button.setEnabled(False)
+        self.lf_stop_button.clicked.connect(self._stop_loosefruit_run)
+        self.lf_status_label = QLabel("Pilih estate dan klik Preview untuk memulai")
+        action_layout.addWidget(self.lf_preview_all_button)
+        action_layout.addWidget(self.lf_run_all_button)
+        action_layout.addWidget(self.lf_stop_button)
+        action_layout.addWidget(self.lf_status_label, 1)
+        layout.addLayout(action_layout)
+
+        # Progress table per estate
+        self.lf_progress_table = QTableWidget(0, 6)
+        self.lf_progress_table.setHorizontalHeaderLabels([
+            "Estate", "Status", "Total", "Success", "Failed", "Skipped"
+        ])
+        self.lf_progress_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.lf_progress_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.lf_progress_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        lf_scroll = QScrollArea()
+        lf_scroll.setWidgetResizable(True)
+        lf_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; }")
+        lf_scroll.setWidget(self.lf_progress_table)
+        layout.addWidget(lf_scroll, 1)
+
+        # Log output
+        self.lf_log = QTextEdit()
+        self.lf_log.setMaximumHeight(100)
+        self.lf_log.setReadOnly(True)
+        self.lf_log.setStyleSheet("background: #1e293b; color: #94a3b8; font-family: monospace;")
+        layout.addWidget(self.lf_log)
+
+        layout.addStretch(1)
+        return tab
+
+    def _lf_select_all_estates(self) -> None:
+        for cb in self.lf_estate_checkboxes.values():
+            cb.setChecked(True)
+
+    def _lf_deselect_all_estates(self) -> None:
+        for cb in self.lf_estate_checkboxes.values():
+            cb.setChecked(False)
+
+    def _get_selected_estates(self) -> list[str]:
+        return [code for code, cb in self.lf_estate_checkboxes.items() if cb.isChecked()]
+
+    def _update_loosefruit_progress_table(self, estate: str, status: str, success: int = 0, failed: int = 0, skipped: int = 0, total: int = 0) -> None:
+        # Find or create row for estate
+        for row_idx in range(self.lf_progress_table.rowCount()):
+            if self.lf_progress_table.item(row_idx, 0).text() == estate:
+                self.lf_progress_table.setItem(row_idx, 1, QTableWidgetItem(status))
+                if total > 0:
+                    self.lf_progress_table.setItem(row_idx, 2, QTableWidgetItem(str(total)))
+                if success >= 0:
+                    self.lf_progress_table.setItem(row_idx, 3, QTableWidgetItem(str(success)))
+                if failed >= 0:
+                    self.lf_progress_table.setItem(row_idx, 4, QTableWidgetItem(str(failed)))
+                if skipped >= 0:
+                    self.lf_progress_table.setItem(row_idx, 5, QTableWidgetItem(str(skipped)))
+                return
+
+        # Create new row
+        row_idx = self.lf_progress_table.rowCount()
+        self.lf_progress_table.insertRow(row_idx)
+        self.lf_progress_table.setItem(row_idx, 0, QTableWidgetItem(estate))
+        self.lf_progress_table.setItem(row_idx, 1, QTableWidgetItem(status))
+        self.lf_progress_table.setItem(row_idx, 2, QTableWidgetItem(str(total)))
+        self.lf_progress_table.setItem(row_idx, 3, QTableWidgetItem(str(success)))
+        self.lf_progress_table.setItem(row_idx, 4, QTableWidgetItem(str(failed)))
+        self.lf_progress_table.setItem(row_idx, 5, QTableWidgetItem(str(skipped)))
+
+    def _preview_loosefruit_all_estates(self) -> None:
+        selected = self._get_selected_estates()
+        if not selected:
+            self._append_loosefruit_log("Pilih minimal 1 estate.")
+            return
+
+        self._append_loosefruit_log(f"Preview untuk {len(selected)} estate: {', '.join(selected)}")
+        self.lf_preview_all_button.setEnabled(False)
+        self.lf_status_label.setText(f"Previewing {len(selected)} estates...")
+        QApplication.processEvents()
+
+        total_all = 0
+        for estate in selected:
+            self._update_loosefruit_progress_table(estate, "Fetching...", 0, 0, 0, 0)
+            try:
+                staging_periode = self.lf_staging_periode.text().strip()
+                comparison = fetch_loosefruit_staging_comparison(self.config.loosefruit_staging_source, staging_periode)
+                filtered = eligible_loosefruit_rows(comparison.rows, estate)
+                estate_rows = [row for row in comparison.rows if row.estate == estate]
+                staging_total = sum(row.staging_brondol for row in estate_rows)
+                plantware_total = sum(row.plantware_brondol for row in estate_rows)
+                selisih_total = sum(row.selisih for row in estate_rows)
+                status = (
+                    f"Ready ({len(filtered)} rows; staging={staging_total:g}, "
+                    f"plantware={plantware_total:g}, selisih={selisih_total:g})"
+                )
+                self._update_loosefruit_progress_table(estate, status, 0, 0, 0, len(filtered))
+                total_all += len(filtered)
+            except Exception as exc:
+                self._append_loosefruit_log(f"Error fetching {estate}: {exc}")
+                self._update_loosefruit_progress_table(estate, f"Error: {exc}", 0, 0, 0, 0)
+
+        self.lf_status_label.setText(f"Total: {total_all} rows across {len(selected)} estates")
+        self.lf_run_all_button.setEnabled(total_all > 0)
+        self.lf_preview_all_button.setEnabled(True)
+        self._append_loosefruit_log(f"Preview complete. {total_all} total rows ready.")
+
+    def _run_loosefruit_all_estates(self) -> None:
+        selected = self._get_selected_estates()
+        if not selected:
+            self._append_loosefruit_log("Pilih minimal 1 estate.")
+            return
+
+        self._lf_running = True
+        self.lf_run_all_button.setEnabled(False)
+        self.lf_preview_all_button.setEnabled(False)
+        self.lf_stop_button.setEnabled(True)
+        self.lf_status_label.setText("Running...")
+
+        field_code = self.lf_field_code.text().strip()
+        rate = int(self.lf_rate.value())
+        doc_date = self.lf_doc_date.text().strip()
+        runner_mode = self.lf_runner_mode.currentText()
+        max_tabs = int(self.lf_max_tabs.value())
+        headless = bool(self.lf_headless.isChecked())
+        staging_periode = self.lf_staging_periode.text().strip()
+
+        estate_payloads = []
+        for estate in selected:
+            payload_dict = {
+                "operation": "input_loosefruit",
+                "period_month": int(staging_periode.split("-")[1]) if "-" in staging_periode else 5,
+                "period_year": int(staging_periode.split("-")[0]) if "-" in staging_periode else 2026,
+                "division_code": estate,
+                "category_key": "loosefruit_brondol",
+                "runner_mode": runner_mode,
+                "max_tabs": max_tabs,
+                "headless": headless,
+                "only_missing_rows": False,
+                "staging_periode": staging_periode,
+                "loc_code": estate,
+                "field_code": field_code,
+                "rate": rate,
+                "doc_date": doc_date,
+                "estate_filter": estate,
+                "staging_source_url": self.config.loosefruit_staging_source,
+                "records": [],
+            }
+            estate_payloads.append((estate, payload_dict))
+
+        self._lf_last_success_count = 0
+        self._lf_last_failed_count = 0
+        self._lf_last_skipped_count = 0
+        self._run_next_lf_estate(estate_payloads, 0, 0, 0)
+
+    def _run_next_lf_estate(self, estate_payloads: list[tuple[str, dict[str, Any]]], idx: int, total_success: int, total_failed: int) -> None:
+        if idx >= len(estate_payloads) or not self._lf_running:
+            self._finish_lf_run(total_success, total_failed)
+            return
+
+        estate, payload = estate_payloads[idx]
+        self._update_loosefruit_progress_table(estate, "Running...", 0, 0, 0, 0)
+        self._append_loosefruit_log(f"\n=== Running estate: {estate} ===")
+        self._lf_last_success_count = 0
+        self._lf_last_failed_count = 0
+        self._lf_last_skipped_count = 0
+        QApplication.processEvents()
+
+        self.lf_run_thread = QThread(self)
+        self.lf_run_worker = LoosefruitRunWorker(payload)
+        self.lf_run_worker.moveToThread(self.lf_run_thread)
+        self.lf_run_thread.started.connect(self.lf_run_worker.run)
+        self.lf_run_worker.event_received.connect(self._handle_lf_event)
+        self.lf_run_worker.completed.connect(lambda r: self._handle_lf_estate_completed(estate_payloads, idx, total_success, total_failed))
+        self.lf_run_worker.failed.connect(lambda e: self._handle_lf_estate_failed(e, estate_payloads, idx, total_success, total_failed))
+        self.lf_run_thread.finished.connect(self.lf_run_thread.deleteLater)
+        self.lf_run_thread.start()
+
+    def _handle_lf_event(self, event: dict[str, Any]) -> None:
+        event_name = event.get("event", "")
+        if event_name == "result":
+            result = event.get("result", {})
+            self._lf_last_success_count = result.get("inserted_rows", 0)
+            self._lf_last_failed_count = result.get("failed_rows", 0)
+            self._lf_last_skipped_count = result.get("skipped_existing_rows", 0)
+        elif "row.success" in event_name or "row.started" in event_name or "tab." in event_name:
+            self._append_loosefruit_log(f"  {event_name}")
+
+    def _handle_lf_estate_completed(self, estate_payloads: list[tuple[str, dict[str, Any]]], idx: int, total_success: int, total_failed: int) -> None:
+        estate, _ = estate_payloads[idx]
+        self.lf_run_thread = None
+        self.lf_run_worker = None
+
+        success_count = self._lf_last_success_count
+        failed_count = self._lf_last_failed_count
+        skipped_count = self._lf_last_skipped_count
+
+        self._update_loosefruit_progress_table(estate, "Done", success_count, failed_count, skipped_count)
+        self._append_loosefruit_log(f"  {estate}: {success_count} inserted, {failed_count} failed")
+        QApplication.processEvents()
+
+        next_idx = idx + 1
+        self._run_next_lf_estate(estate_payloads, next_idx, total_success + success_count, total_failed + failed_count)
+
+    def _handle_lf_estate_failed(self, error: str, estate_payloads: list[tuple[str, dict[str, Any]]], idx: int, total_success: int, total_failed: int) -> None:
+        estate, _ = estate_payloads[idx]
+        self.lf_run_thread = None
+        self.lf_run_worker = None
+        self._update_loosefruit_progress_table(estate, f"Error: {error}", 0, 0, 0, 0)
+        self._append_loosefruit_log(f"  {estate} ERROR: {error}")
+        next_idx = idx + 1
+        self._run_next_lf_estate(estate_payloads, next_idx, total_success, total_failed + 1)
+
+    def _finish_lf_run(self, total_success: int, total_failed: int) -> None:
+        self._lf_running = False
+        self.lf_run_all_button.setEnabled(True)
+        self.lf_preview_all_button.setEnabled(True)
+        self.lf_stop_button.setEnabled(False)
+        self.lf_status_label.setText(f"Complete: {total_success} inserted, {total_failed} failed")
+        self._append_loosefruit_log(f"\n=== ALL COMPLETE: {total_success} inserted, {total_failed} failed ===")
+
+    def _stop_loosefruit_run(self) -> None:
+        self._lf_running = False
+        if self.lf_run_worker:
+            self.lf_run_worker.stop()
+        self._append_loosefruit_log("Stop requested.")
+
+    def _append_loosefruit_log(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.lf_log.append(f"[{timestamp}] {message}")
+        # Auto-scroll to bottom
+        self.lf_log.verticalScrollBar().setValue(self.lf_log.verticalScrollBar().maximum())
+
     def reset_filters(self) -> None:
         self.gang_code.clear()
         self.emp_code.clear()
@@ -1780,7 +2182,16 @@ class MainWindow(QMainWindow):
                 )
         if self.process_only_miss.isChecked() and premium_preview and self.fetch_verification_status:
             before_miss_filter = len(filtered_records)
-            filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
+            if self.process_mismatch_missing_only.isChecked():
+                # MISMATCH/MISS only for PREMI - show both miss and mismatch
+                filtered_records = [record for record in filtered_records
+                    if (self._record_is_miss(record) or self._record_is_mismatch(record))]
+                self.append_log(
+                    f"Premi MISMATCH/MISS Only filter: {len(filtered_records)} of {before_miss_filter} records; "
+                    f"{before_miss_filter - len(filtered_records)} EXTRA skipped."
+                )
+            else:
+                filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
             miss_filter_applied = True
             self.append_log(
                 "Premi retry-safe filter active: "
@@ -1793,12 +2204,36 @@ class MainWindow(QMainWindow):
                     f"{len(self.premium_retry_held_groups)} employee/filter groups need manual check because entered rows could not be identified safely."
                 )
         elif self.process_only_miss.isChecked() and premium_preview:
-            self.append_log("Premi retry-safe filter skipped: no db_ptrj verification status returned.")
+            if self.process_mismatch_missing_only.isChecked():
+                # MISMATCH/MISS only for PREMI without verification
+                before_filter = len(filtered_records)
+                filtered_records = [record for record in filtered_records
+                    if self._record_is_miss(record) or self._record_is_mismatch(record)]
+                self.append_log(
+                    f"Premi MISMATCH/MISS Only (no verification): {len(filtered_records)} of {before_filter} records."
+                )
+                miss_filter_applied = True
+            else:
+                self.append_log("Premi retry-safe filter skipped: no db_ptrj verification status returned.")
         elif self.process_only_miss.isChecked():
             before_miss_filter = len(filtered_records)
             filtered_records = [record for record in filtered_records if self._record_is_miss(record)]
             miss_filter_applied = True
             self.append_log(f"MISS-only filter active: {len(filtered_records)} of {before_miss_filter} category records will be previewed/run.")
+
+        # Additional filter: MISMATCH/MISSING only (for non-premium or standalone)
+        if not premium_preview and self.process_mismatch_missing_only.isChecked():
+            before_filter = len(filtered_records)
+            filtered_records = [
+                record for record in filtered_records
+                if self._record_is_miss(record) or self._record_is_mismatch(record)
+            ]
+            self.append_log(
+                f"MISMATCH/MISS Only filter active: {len(filtered_records)} of {before_filter} records will be previewed/run; "
+                f"{before_filter - len(filtered_records)} EXTRA records skipped."
+            )
+            miss_filter_applied = True
+
         self.records = apply_row_limit(filtered_records, row_limit)
         self.set_records(self.records)
         filter_suffix = " after MISS-only filter" if miss_filter_applied else ""
@@ -3393,12 +3828,28 @@ class MainWindow(QMainWindow):
     def _record_is_miss(self, record: ManualAdjustmentRecord) -> bool:
         if record.category_key in PREMI_CATEGORY_KEYS and self.fetch_verification_status:
             return self._record_key(record) in self.premium_retry_record_keys
+        if is_missing_from_remarks(record):
+            return True
+        if record_is_synced(record):
+            return False
         verified_status = self._fetch_verification_display(record).upper()
         if verified_status in {"VERIFIED_MATCH", "VERIFIED_MISMATCH", "SYNC", "DIFF", "MISMATCH", "PARTIAL"}:
             return False
         if verified_status in {"VERIFIED_NOT_FOUND", "MISS", "MISSING", "NOT_FOUND"}:
             return True
         return record_is_stale_miss(record)
+
+    def _record_is_mismatch(self, record: ManualAdjustmentRecord) -> bool:
+        """Check if record has MISMATCH status (diff between reference and stored)."""
+        if record.category_key in PREMI_CATEGORY_KEYS and self.fetch_verification_status:
+            return self._record_key(record) in self.premium_retry_record_keys
+        if is_mismatch_from_remarks(record):
+            return True
+        if record_is_synced(record):
+            return False
+        verified_status = self._fetch_verification_display(record).upper()
+        # MISMATCH means reference (extend_db) differs from stored (db_ptrj)
+        return verified_status in {"DIFF", "MISMATCH", "VERIFIED_MISMATCH", "PARTIAL"}
 
     def _record_key(self, record: ManualAdjustmentRecord) -> str:
         return record.record_key
@@ -3516,6 +3967,7 @@ class MainWindow(QMainWindow):
             "premi_tiket": "premi",
             "premi_hari_raya": "premi",
             "premi_kehadiran": "premi",
+            "premi_pupuk": "premi",
         }
         return defaults.get(category_key, "")
 
@@ -3565,4 +4017,5 @@ class MainWindow(QMainWindow):
 
     def append_log(self, message: str) -> None:
         self.log_output.append(message)
+
 

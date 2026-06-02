@@ -1,0 +1,20 @@
+{
+  "id": "IMPL-4",
+  "title": "Verify runner compatibility",
+  "description": "Add regression tests for amount-only and detail-based manual adjustment rows so fetched MISS/MISMATCH rows can be input safely.",
+  "depends_on": ["IMPL-3"],
+  "files": [
+    "runner/src/plantware/page-actions.ts",
+    "runner/src/plantware/page-actions.test.ts",
+    "runner/src/orchestration/row-assignment.test.ts",
+    "tests/test_api_models.py",
+    "tests/test_manual_adjustment_status.py"
+  ],
+  "convergence": [
+    "PREMI TIKET amount-only fixture does not require blok/kendaraan fields.",
+    "KOREKSI PANEN blok fixture keeps subblok/gang/jumlah and can be represented in run payload.",
+    "Focused Python tests pass.",
+    "Focused runner tests pass."
+  ],
+  "meta": {"type": "validation", "agent": "tdd_developer", "risk": "medium"}
+}

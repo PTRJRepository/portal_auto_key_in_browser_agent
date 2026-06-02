@@ -1,0 +1,10 @@
+{
+  "session_id": "WFS-loosefruit-staging-comparison-input",
+  "status": "planned",
+  "created_at": "2026-06-03T02:16:14+07:00",
+  "updated_at": "2026-06-03T02:16:14+07:00",
+  "task_description": "Tanam fitur tab Loosefruit di Auto Key In untuk input brondol dari selisih staging-comparison vs Plantware, dengan optimasi banyak tab dalam satu browser window/session per estate/lokasi. Data sumber berasal dari endpoint staging comparison yang menampilkan sum staging, sum Plantware, dan selisih; selisih positif menjadi basis input ke Plantware Loose Fruit.",
+  "mode": "plan",
+  "skill": "workflow-plan",
+  "quality_gate": "PROCEED_WITH_CAUTION"
+}

@@ -66,6 +66,20 @@ export interface DeleteLoosefruitRowResult {
   page_index?: number;
 }
 
+export interface LoosefruitInputRowResult {
+  emp_code: string;
+  emp_name?: string | null;
+  gang?: string | null;
+  selisih: number;
+  status: "success" | "skipped" | "failed";
+  message: string;
+  doc_id?: string | null;
+  mt?: number | null;
+  amount?: number | null;
+  tab_index?: number;
+  adjustment_name?: string | null;
+}
+
 export interface RunPayload {
   period_month: number;
   period_year: number;
@@ -82,14 +96,22 @@ export interface RunPayload {
   row_limit?: number | null;
   records: ManualAdjustmentRecord[];
   session_division_code?: string | null;
-  operation?: "input" | "delete_duplicates" | "delete_loosefruit" | "debug_duplicate_scan";
+  operation?: "input" | "input_loosefruit" | "delete_duplicates" | "delete_loosefruit" | "debug_duplicate_scan";
   duplicate_targets?: DuplicateDocIdTarget[];
   delete_dry_run?: boolean;
+  // Loosefruit input specific
+  staging_periode?: string | null;
+  loc_code?: string | null;
+  field_code?: string | null;
+  rate?: number | null;
+  doc_date?: string | null;
+  estate_filter?: string | null;
+  staging_source_url?: string | null;
 }
 
 export interface RowResult {
   emp_code: string;
-  adjustment_name: string;
+  adjustment_name?: string | null;
   detail_key?: string | null;
   category_key?: string | null;
   status: "success" | "skipped" | "failed";
@@ -123,4 +145,5 @@ export interface RunResult {
   dry_run_rows?: number;
   not_found_rows?: number;
 }
+
 

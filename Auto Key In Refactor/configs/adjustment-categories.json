@@ -84,6 +84,20 @@
     "description": null
   },
   {
+    "key": "premi_pupuk",
+    "label": "Premi Pupuk",
+    "adjustment_type": "PREMI",
+    "match_contains": [
+      "PREMI TABUR PUPUK",
+      "TABUR PUPUK",
+      "PREMI ANGKUT PUPUK",
+      "ANGKUT PUPUK",
+      "PUPUK"
+    ],
+    "adcode": "premi",
+    "description": null
+  },
+  {
     "key": "premi",
     "label": "Premi",
     "adjustment_type": "PREMI",

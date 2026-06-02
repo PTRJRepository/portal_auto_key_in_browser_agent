@@ -55,6 +55,31 @@ def test_manual_adjustment_query_maps_pg_division_alias_for_manual_types_only():
     assert comma_query.params()["adjustment_type"] == "PREMI,POTONGAN_KOTOR"
     assert auto_query.params()["division_code"] == "P1B"
 
+def test_category_registry_detects_pupuk_from_description_text():
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi_pupuk", "Premi Pupuk", "PREMI", ("PUPUK", "TABUR PUPUK"), "premi"),
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+
+    assert registry.detect("PREMI ANGKUT", "PREMI", "(AL) TUNJANGAN PREMI ((PM) DRIVER - ANGKUT PUPUK / MUAT)") == "premi_pupuk"
+
+def test_category_registry_detects_koreksi_panen_from_type():
+    registry = CategoryRegistry([
+        AdjustmentCategory("potongan_upah_kotor", "Potongan Upah Kotor", "POTONGAN_KOTOR", ("POTONGAN", "KOREKSI"), "potongan"),
+    ])
+
+    assert registry.detect("KOREKSI PANEN", "POTONGAN_KOTOR", "(DE) POTONGAN PREMI") == "potongan_upah_kotor"
+
+def test_filter_by_premi_includes_all_premium_subcategories():
+    records = [
+        normalize_record({"emp_code": "G0001", "adjustment_type": "PREMI", "adjustment_name": "PREMI TIKET"}, "premi_tiket"),
+        normalize_record({"emp_code": "G0002", "adjustment_type": "PREMI", "adjustment_name": "PREMI ANGKUT PUPUK"}, "premi_pupuk"),
+        normalize_record({"emp_code": "G0003", "adjustment_type": "PREMI", "adjustment_name": "PREMI PRUNING"}, "premi"),
+        normalize_record({"emp_code": "G0004", "adjustment_type": "POTONGAN_KOTOR", "adjustment_name": "KOREKSI PANEN"}, "potongan_upah_kotor"),
+    ]
+
+    assert [record.emp_code for record in filter_by_category(records, "premi")] == ["G0001", "G0002", "G0003"]
+
 def test_manual_adjustment_query_supports_grouped_metadata_filters():
     query = ManualAdjustmentQuery(
         period_month=4,
@@ -73,6 +98,18 @@ def test_manual_adjustment_query_supports_grouped_metadata_filters():
         "view": "grouped",
         "metadata_only": "true",
     }
+
+def test_grouped_premium_query_does_not_require_metadata_only():
+    query = ManualAdjustmentQuery(
+        period_month=4,
+        period_year=2026,
+        division_code="AB1",
+        adjustment_type="PREMI",
+    ).with_grouped_premium_details()
+
+    assert query.params()["adjustment_type"] == "PREMI"
+    assert query.params()["view"] == "grouped"
+    assert query.params()["metadata_only"] == "false"
 
 
 def test_main_window_adjustment_type_includes_manual_alias():
@@ -396,6 +433,61 @@ def test_get_adjustments_flattens_grouped_premium_transactions():
     assert records[0].to_runner_dict()["ad_code_desc"] == "(AL) TUNJANGAN PREMI ((PM) HARVESTING)"
     assert records[0].to_runner_dict()["description"] == "PREMI PRUNING"
     assert records[0].category_key == "premi"
+
+def test_get_adjustments_keeps_grouped_amount_only_premium_without_detail_items():
+    registry = CategoryRegistry([
+        AdjustmentCategory("premi_tiket", "Premi Tiket", "PREMI", ("TIKET",), "premi"),
+        AdjustmentCategory("premi", "Premi", "PREMI", ("PREMI",), "premi"),
+    ])
+    client = ManualAdjustmentApiClient("http://localhost:8002/", "secret", registry)
+    response = Mock()
+    response.json.return_value = {
+        "success": True,
+        "view": "grouped",
+        "data": [
+            {
+                "division_code": "AB1",
+                "gangs": [
+                    {
+                        "gang_code": "G1H",
+                        "employees": [
+                            {
+                                "emp_code": "G0597",
+                                "emp_name": "Worker",
+                                "premiums": [
+                                    {
+                                        "id": 42,
+                                        "period_month": 4,
+                                        "period_year": 2026,
+                                        "adjustment_type": "PREMI",
+                                        "adjustment_name": "PREMI TIKET",
+                                        "amount": 50000,
+                                        "remarks": "PREMI TIKET | (AL) TUNJANGAN PREMI | 50000 | sync:MISS | match:MISMATCH",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    response.raise_for_status.return_value = None
+
+    with patch("app.core.api_client.requests.get", return_value=response):
+        records = client.get_adjustments(ManualAdjustmentQuery(
+            period_month=4,
+            period_year=2026,
+            division_code="AB1",
+            adjustment_type="PREMI",
+            view="grouped",
+            metadata_only=False,
+        ))
+
+    assert len(records) == 1
+    assert records[0].adjustment_name == "PREMI TIKET"
+    assert records[0].amount == 50000
+    assert records[0].category_key == "premi_tiket"
 
 def test_grouped_premium_derives_plantware_divisioncode_from_gang_when_transaction_division_is_estate():
     registry = CategoryRegistry([

@@ -1,0 +1,24 @@
+{
+  "task_ids": ["IMPL-1", "IMPL-2", "IMPL-3", "IMPL-4"],
+  "recommended_execution": "sequential",
+  "complexity": "high",
+  "shared_context": {
+    "session_id": "WFS-premi-remarks-sync-missing",
+    "goal": "Manual Adjustment run must fetch every premium-scope row from extend_db_ptrj and decide input eligibility from remarks sync/match tokens, not from rigid premium names or live amount guessing.",
+    "primary_table": "extend_db_ptrj.dbo.payroll_manual_adjustments",
+    "source_endpoint": "/payroll/manual-adjustment/by-api-key",
+    "sync_status_endpoint": "/payroll/manual-adjustment/sync-status/by-api-key",
+    "canonical_remarks_format": "ADJUSTMENT_NAME | AD_CODE - DESC | AMOUNT | sync:STATUS | match:STATUS",
+    "input_rule": "Send only rows with sync:MISS/MISSING/NOT_FOUND or match:MISMATCH/DIFF/PARTIAL; skip sync:SYNC and match:MATCH.",
+    "reference_project": "D:\\Gawean Rebinmas\\PORTAL_ESTATE\\Plantware_Auto_Report\\Daftar_Upah_baru\\payroll_daftar_upah\\refactor_production",
+    "external_backend_scope": "Allowed when endpoint blocks correct fetch/filter. Prefer fixing /payroll/manual-adjustment/by-api-key and /payroll/manual-adjustment/sync-status/by-api-key in refactor_production instead of adding desktop-side hacks."
+  },
+  "quality_gate": "PROCEED_WITH_CAUTION",
+  "risk_notes": [
+    "Current UI already parses sync:/match: tokens, but premium retry logic can override remarks with sync-status/check-adtrans verification and skip MISMATCH rows.",
+    "configs/adjustment-categories.json has special categories for premi_tiket etc, while several UI maps still only mention premi or premi_tunjangan.",
+    "KOREKSI PANEN appears as POTONGAN_KOTOR with remarks sync:MISS | match:MISMATCH and must remain eligible even when adjustment_name is not a premium category.",
+    "Runner premium detail grouping needs correct detail_type/ad_code metadata; amount-only premium like PREMI TIKET must not be forced through blok/kendaraan detail rules.",
+    "External refactor_production may need endpoint edits if by-api-key still filters by rigid adjustment_name or grouped view drops POTONGAN_KOTOR rows."
+  ]
+}

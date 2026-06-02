@@ -7,6 +7,8 @@ import { runGetSession, runTestSession } from "./orchestration/session-runner.js
 import { runDeleteDuplicates } from "./orchestration/delete-duplicates-runner.js";
 import { runDeleteLoosefruit } from "./orchestration/delete-loosefruit-runner.js";
 import { runDebugDuplicateScan } from "./orchestration/debug-duplicate-scan-runner.js";
+import { runLoosefruitInput } from "./orchestration/loosefruit-input-runner.js";
+import { runLoosefruitMultiTab } from "./orchestration/loosefruit-multitab-runner.js";
 
 function emit(event: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(event) + "\n");
@@ -24,7 +26,12 @@ async function main(): Promise<void> {
   const payloadPath = parsePayloadPath();
   const payload = JSON.parse(fs.readFileSync(payloadPath, "utf-8")) as RunPayload;
   let result: RunResult;
-  if (payload.operation === "debug_duplicate_scan") {
+  const operation = payload.operation;
+  if (operation === "input_loosefruit" && payload.runner_mode === "multi_tab_shared_session") {
+    result = await runLoosefruitMultiTab(payload, emit);
+  } else if (operation === "input_loosefruit") {
+    result = await runLoosefruitInput(payload, emit);
+  } else if (operation === "debug_duplicate_scan") {
     result = await runDebugDuplicateScan(payload, emit);
   } else if (payload.operation === "delete_loosefruit") {
     result = await runDeleteLoosefruit(payload, emit);

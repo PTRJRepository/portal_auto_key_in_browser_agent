@@ -1,0 +1,24 @@
+{
+  "id": "IMPL-2",
+  "title": "Broaden manual category fetch",
+  "description": "Fetch and classify all premium-scope and correction rows by adjustment_type, including PREMI TIKET, PUPUK/TABUR variants, and KOREKSI PANEN/POTONGAN_KOTOR. Edit external backend endpoint if it filters too narrowly.",
+  "depends_on": ["IMPL-1"],
+  "files": [
+    "configs/adjustment-categories.json",
+    "app/core/category_registry.py",
+    "app/core/api_client.py",
+    "app/ui/division_run_dialog.py",
+    "tests/test_api_models.py",
+    "D:\\Gawean Rebinmas\\PORTAL_ESTATE\\Plantware_Auto_Report\\Daftar_Upah_baru\\payroll_daftar_upah\\refactor_production\\backend\\src\\api\\payroll.ts",
+    "D:\\Gawean Rebinmas\\PORTAL_ESTATE\\Plantware_Auto_Report\\Daftar_Upah_baru\\payroll_daftar_upah\\refactor_production\\backend\\src\\services\\manualAdjustmentService.ts",
+    "D:\\Gawean Rebinmas\\PORTAL_ESTATE\\Plantware_Auto_Report\\Daftar_Upah_baru\\payroll_daftar_upah\\refactor_production\\backend\\src\\api\\payroll.manualAdjustmentByApiKey.test.ts"
+  ],
+  "convergence": [
+    "PREMI TIKET remains grouped/fetchable and runnable.",
+    "PREMI ANGKUT PUPUK or tabur-pupuk descriptions classify as premium-scope.",
+    "KOREKSI PANEN classifies as potongan/koreksi and preserves metadata detail rows.",
+    "Every PREMI_CATEGORY_KEYS entry triggers grouped premium fetch when category-specific run starts.",
+    "Backend by-api-key returns all names for adjustment_type=PREMI or adjustment_type=POTONGAN_KOTOR without requiring adjustment_name."
+  ],
+  "meta": {"type": "implementation", "agent": "code_developer", "risk": "high"}
+}

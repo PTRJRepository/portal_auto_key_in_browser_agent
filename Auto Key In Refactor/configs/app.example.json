@@ -1,6 +1,7 @@
 {
   "api_base_url": "http://localhost:8002",
   "api_key": "",
+  "loosefruit_staging_source": "http://localhost:3001/upah/staging-comparison",
   "query_gateway_base_url": "http://localhost:8001",
   "query_gateway_api_key": "",
   "query_gateway_server": "SERVER_PROFILE_2",
@@ -13,3 +14,4 @@
   "default_max_tabs": 5,
   "headless": false
 }
+
