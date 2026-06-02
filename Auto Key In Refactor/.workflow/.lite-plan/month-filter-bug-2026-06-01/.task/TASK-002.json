@@ -1,0 +1,13 @@
+{
+  "id": "TASK-002",
+  "title": "Verify root cause via runtime debug",
+  "description": "Run fetch with month=05, observe debug output to identify whether wrong value originates from UI or API/server caching",
+  "depends_on": ["TASK-001"],
+  "files": [],
+  "convergence": {
+    "criteria": [
+      "Debug output proves whether month=05 is actually sent to API"
+    ]
+  },
+  "priority": "high"
+}

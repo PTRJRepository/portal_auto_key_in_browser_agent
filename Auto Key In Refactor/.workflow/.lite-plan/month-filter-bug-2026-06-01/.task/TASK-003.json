@@ -1,0 +1,18 @@
+{
+  "id": "TASK-003",
+  "title": "Implement final fix",
+  "description": "Based on findings from Task 2: implement permanent fix if UI bug, or document workaround if server caching",
+  "depends_on": ["TASK-002"],
+  "files": [
+    {
+      "path": "app/core/api_client.py",
+      "change": "Possibly add cache-busting param if server caches"
+    }
+  ],
+  "convergence": {
+    "criteria": [
+      "Changing month in UI correctly filters data from new month"
+    ]
+  },
+  "priority": "medium"
+}

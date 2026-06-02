@@ -499,7 +499,12 @@ class ManualAdjustmentApiClient:
             filters=filters,
         )
         data = payload.get("data", {})
-        comparisons = data.get("comparisons", []) if isinstance(data, dict) else []
+        if isinstance(data, list):
+            comparisons = data
+        elif isinstance(data, dict):
+            comparisons = data.get("comparisons", [])
+        else:
+            comparisons = []
         if not isinstance(comparisons, list):
             return []
 

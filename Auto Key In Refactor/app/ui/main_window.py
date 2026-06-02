@@ -47,12 +47,13 @@ from app.core.task_register_gateway import TaskRegisterGatewayRepository
 
 FetchVerificationStatus = dict[tuple[str, str], dict[str, Any]]
 AUTOMATION_OPTION_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH"}
-AUTO_BUFFER_CATEGORY_KEYS = {"spsi", "masa_kerja", "tunjangan_jabatan", "pph21", "premi_tiket"}
+AUTO_BUFFER_CATEGORY_KEYS = {"spsi", "masa_kerja", "tunjangan_jabatan", "pph21"}
 SYNC_STATUS_ADJUSTMENT_TYPES = {"PREMI", "POTONGAN_KOTOR", "POTONGAN_BERSIH", "AUTO_BUFFER"}
-PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket"}
+PREMI_CATEGORY_KEYS = {"premi", "premi_tunjangan", "premi_tiket", "premi_hari_raya", "premi_kehadiran"}
 MANUAL_PREVIEW_CATEGORY_KEYS = {"premi", "premi_tunjangan", "potongan_upah_kotor", "potongan_upah_bersih", "koreksi"}
 MANUAL_ADJUSTMENT_OPTION_TYPES = "PREMI,POTONGAN_KOTOR,POTONGAN_BERSIH"
 DELETE_RUNNER_MODE = "session_reuse_single"
+ALL_MISMATCH_FILTERS = ["premi", "potongan", "koreksi", "jabatan", "masa kerja", "spsi", "pph", "potongan upah bersih"]
 
 def sync_status_payload_rows(payload: object) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
@@ -445,11 +446,15 @@ class FetchWorker(QObject):
         client: ManualAdjustmentApiClient,
         query: ManualAdjustmentQuery,
         automation_division_code: str | None = None,
+        config: Any = None,
+        use_builtin: bool = False,
     ) -> None:
         super().__init__()
         self.client = client
         self.query = query
         self.automation_division_code = automation_division_code
+        self.config = config
+        self.use_builtin = use_builtin
 
     def run(self) -> None:
         try:
@@ -492,7 +497,59 @@ class FetchWorker(QObject):
                     emp_codes = sorted({record.emp_code for record in suspect_records if record.emp_code})
                     filters = sorted({filter_name for record in suspect_records if (filter_name := filter_for_record(record))})
                     try:
-                        data = self.client.check_adtrans(self.query.period_month, self.query.period_year, emp_codes, filters)
+                        if self.use_builtin and self.config:
+                            from app.core.built_in_comparison import BuiltInComparisonService
+                            from app.core.query_gateway import PlantwareDbPtrjGateway, QueryGatewayConfig
+
+                            gw_config = QueryGatewayConfig(
+                                base_url=self.config.query_gateway_base_url,
+                                api_key=self.config.query_gateway_api_key,
+                                server=self.config.query_gateway_server,
+                                database=self.config.query_gateway_database,
+                            )
+                            query_gateway = PlantwareDbPtrjGateway(
+                                config=gw_config,
+                                session=self.client.session if hasattr(self.client, 'session') else None
+                            )
+                            builtin_service = BuiltInComparisonService(
+                                config=self.config,
+                                query_gateway=query_gateway,
+                                api_client=self.client
+                            )
+                            compare_payload = builtin_service.compare_adtrans(
+                                self.query.period_month,
+                                self.query.period_year,
+                                self.query.division_code,
+                                filters=filters if filters else None,
+                            )
+                            _cd = compare_payload.get("data", {})
+                            comparisons = _cd if isinstance(_cd, list) else _cd.get("comparisons", [])
+                        elif self.query.division_code:
+                            compare_payload = self.client.compare_adtrans(
+                                period_month=self.query.period_month,
+                                period_year=self.query.period_year,
+                                division_code=self.query.division_code,
+                                filters=filters,
+                            )
+                            _cd = compare_payload.get("data", {})
+                            comparisons = _cd if isinstance(_cd, list) else _cd.get("comparisons", [])
+                        else:
+                            comparisons = []
+
+                        if comparisons or (self.use_builtin and self.config):
+                            data = []
+                            emp_totals = {}
+                            for comp in comparisons:
+                                emp = str(comp.get("emp_code") or "").upper().strip()
+                                cat = str(comp.get("category") or "").lower().strip()
+                                actual = float(comp.get("source_amount") or comp.get("db_ptrj_amount") or 0.0)
+                                if emp:
+                                    emp_totals.setdefault(emp, {})[cat] = actual
+                            for emp, totals in emp_totals.items():
+                                data.append({"emp_code": emp, **totals})
+                        else:
+                            data = self.client.check_adtrans(self.query.period_month, self.query.period_year, emp_codes, filters)
+
                         verification = build_fetch_verification_status(suspect_records, data)
                     except Exception as exc:
                         verification = build_fetch_verification_error(suspect_records, exc)
@@ -733,7 +790,7 @@ class ResetDocIdFetchWorker(QObject):
     def run(self) -> None:
         try:
             source_mode = str(self.request.get("source_mode") or "config")
-            if source_mode == "diff":
+            if source_mode in {"diff", "diff_all"}:
                 request = {key: value for key, value in self.request.items() if key != "source_mode"}
                 self.completed.emit(self.client.get_mismatch_doc_id_delete_targets(**request))
             else:
@@ -901,6 +958,7 @@ class MainWindow(QMainWindow):
         self.refresh_adjustment_names_button = QPushButton("Refresh Adjustment Names")
         self.refresh_adjustment_names_button.clicked.connect(self._refresh_adjustment_name_options)
         self.category = QComboBox()
+        self.category.addItem("-- (Free / Manual)", "")
         for item in self.categories.categories:
             self.category.addItem(item.label, item.key)
         default_category_index = self.category.findData("premi")
@@ -978,6 +1036,7 @@ class MainWindow(QMainWindow):
         actions.setSpacing(10)
         self.apply_preset_button = QPushButton("Apply Category Preset")
         self.apply_preset_button.setObjectName("primary")
+        self.reset_filters_button = QPushButton("Reset Filters")
         self.get_session_button = QPushButton("Get Session")
         self.get_session_button.setObjectName("success")
         self.test_session_button = QPushButton("Test Session")
@@ -985,10 +1044,12 @@ class MainWindow(QMainWindow):
         self.add_job_button = QPushButton("Tambahkan Job")
         self.add_job_button.setObjectName("success")
         self.apply_preset_button.clicked.connect(self.apply_category_preset)
+        self.reset_filters_button.clicked.connect(self.reset_filters)
         self.get_session_button.clicked.connect(self.get_session)
         self.test_session_button.clicked.connect(self.test_session)
         self.add_job_button.clicked.connect(self.add_job_from_current_config)
         actions.addWidget(self.apply_preset_button)
+        actions.addWidget(self.reset_filters_button)
         actions.addWidget(self.get_session_button)
         actions.addWidget(self.test_session_button)
         actions.addWidget(self.add_job_button)
@@ -1021,7 +1082,7 @@ class MainWindow(QMainWindow):
         self.process_only_miss.stateChanged.connect(self._update_process_context)
         
         self.process_use_builtin_api = QCheckBox("Cek MISS via Built-in API")
-        self.process_use_builtin_api.setChecked(True)
+        self.process_use_builtin_api.setChecked(False)
         self.process_use_builtin_api.setToolTip("Gunakan koneksi database langsung untuk mencari data MISS tanpa melewati API Upah.")
         self.process_use_builtin_api.stateChanged.connect(self._update_process_context)
 
@@ -1293,7 +1354,8 @@ class MainWindow(QMainWindow):
         form = QFormLayout(controls)
         self.reset_docid_scope_label = QLabel("Mengikuti Period, Division, Employee, Category, Adjustment Type, dan Adjustment Name di tab Config.")
         self.reset_docid_source = QComboBox()
-        self.reset_docid_source.addItem("DIFF/MISMATCH DocIDs", "diff")
+        self.reset_docid_source.addItem("DIFF/MISMATCH DocIDs (dari Config)", "diff")
+        self.reset_docid_source.addItem("DIFF/MISMATCH DocIDs – SEMUA Kategori", "diff_all")
         self.reset_docid_dry_run = QCheckBox("Dry run: search Plantware, do not delete")
         self.reset_docid_dry_run.setChecked(True)
         self.reset_docid_dry_run.setToolTip("Browser akan mencari DocID dari compare-adtrans status MISMATCH, tetapi tombol Delete tidak akan diklik.")
@@ -1321,6 +1383,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.reset_docid_table, 1)
         return tab
 
+    def reset_filters(self) -> None:
+        self.gang_code.clear()
+        self.emp_code.clear()
+        self.adjustment_type.setCurrentIndex(0)
+        self.adjustment_name.setCurrentText("")
+        self.only_missing.setChecked(False)
+        free_index = self.category.findData("")
+        if free_index >= 0:
+            self.category.blockSignals(True)
+            self.category.setCurrentIndex(free_index)
+            self.category.blockSignals(False)
+        self._update_process_context()
+
     def apply_category_preset(self) -> None:
         category_key = str(self.category.currentData() or "")
         self._suppress_adjustment_name_refresh = True
@@ -1344,17 +1419,17 @@ class MainWindow(QMainWindow):
                 self.only_missing.setChecked(True)
             elif category_key == "premi_tunjangan":
                 self.adjustment_type.setCurrentText("PREMI")
-                self.adjustment_name.setText("TUNJANGAN PREMI")
+                self.adjustment_name.setCurrentText("TUNJANGAN PREMI")
                 self.only_missing.setChecked(False)
                 self.process_only_miss.setChecked(True)
-            elif category_key == "premi":
+            elif category_key in {"premi_tiket", "premi_hari_raya", "premi_kehadiran", "premi"}:
                 self.adjustment_type.setCurrentText("PREMI")
-                self.adjustment_name.clear()
+                self.adjustment_name.setCurrentText("")
                 self.only_missing.setChecked(False)
                 self.process_only_miss.setChecked(True)
             elif category_key == "potongan_upah_kotor":
                 self.adjustment_type.setCurrentText("POTONGAN_KOTOR")
-                self.adjustment_name.clear()
+                self.adjustment_name.setCurrentText("")
                 self.only_missing.setChecked(False)
                 self.process_only_miss.setChecked(True)
             elif category_key == "potongan_upah_bersih":
@@ -1406,7 +1481,7 @@ class MainWindow(QMainWindow):
 
     def _adjustment_name_metadata_only(self) -> bool | None:
         category_key = str(self.category.currentData() or "")
-        if category_key in {"premi", "premi_tunjangan"}:
+        if category_key in PREMI_CATEGORY_KEYS:
             return True
         return None
 
@@ -1414,7 +1489,7 @@ class MainWindow(QMainWindow):
         category_key = str(self.category.currentData() or "")
         if category_key in AUTO_BUFFER_CATEGORY_KEYS:
             return None
-        if category_key in {"premi", "premi_tunjangan"}:
+        if category_key in PREMI_CATEGORY_KEYS:
             return "PREMI"
         if category_key in {"potongan_upah_kotor", "koreksi"}:
             return "POTONGAN_KOTOR"
@@ -2259,6 +2334,20 @@ class MainWindow(QMainWindow):
                 self.verify_table.setItem(row, column, QTableWidgetItem(value))
 
     def _reset_docid_request(self) -> dict[str, Any]:
+        source_mode = str(self.reset_docid_source.currentData() or "config") if hasattr(self, "reset_docid_source") else "config"
+        if source_mode == "diff_all":
+            return {
+                "period_month": self.period_month.value(),
+                "period_year": self.period_year.value(),
+                "division_code": self._selected_division_code(),
+                "gang_code": self.gang_code.text().strip().upper() or None,
+                "emp_code": self.emp_code.text().strip().upper() or None,
+                "filters": ALL_MISMATCH_FILTERS,
+                "adjustment_type": None,
+                "adjustment_name": None,
+                "category_key": "",
+                "source_mode": "diff_all",
+            }
         category_key = str(self.category.currentData() or "")
         default_filter = self._default_filter_for_category_key(category_key)
         filters = [default_filter] if default_filter else []
@@ -2277,22 +2366,26 @@ class MainWindow(QMainWindow):
             "adjustment_type": adjustment_type,
             "adjustment_name": adjustment_name,
             "category_key": category_key,
-            "source_mode": str(self.reset_docid_source.currentData() or "config") if hasattr(self, "reset_docid_source") else "config",
+            "source_mode": source_mode,
         }
 
     def fetch_reset_docid_targets(self) -> None:
         request = self._reset_docid_request()
-        if request.get("source_mode") == "config" and self.gang_code.text().strip() and not self.emp_code.text().strip():
+        source_mode = request.get("source_mode", "config")
+        if source_mode == "config" and self.gang_code.text().strip() and not self.emp_code.text().strip():
             message = "Reset DocID endpoint belum mendukung filter gang. Kosongkan Gang atau isi Employee untuk scope lebih sempit."
             self.reset_docid_status_label.setText(message)
             self.append_log(message)
             return
-        if not request["filters"] and not request["adjustment_type"] and not request["adjustment_name"]:
+        if source_mode not in {"diff", "diff_all"} and not request["filters"] and not request["adjustment_type"] and not request["adjustment_name"]:
             self.reset_docid_status_label.setText("Config filter masih kosong.")
             return
         self.fetch_reset_docid_button.setEnabled(False)
         self.run_reset_docid_delete_button.setEnabled(False)
-        source_label = "compare-adtrans mismatch" if request.get("source_mode") == "diff" else "db_ptrj config"
+        source_label = {
+            "diff": "compare-adtrans mismatch (config)",
+            "diff_all": "compare-adtrans mismatch SEMUA kategori",
+        }.get(request.get("source_mode", ""), "db_ptrj config")
         self.reset_docid_status_label.setText(f"Fetching DocID targets from {source_label}...")
         self.reset_docid_fetch_thread = QThread(self)
         self.reset_docid_fetch_worker = ResetDocIdFetchWorker(self._api_client(), request)
@@ -2310,7 +2403,10 @@ class MainWindow(QMainWindow):
         self.reset_docid_targets = targets
         self._render_reset_docid_targets(targets)
         self.run_reset_docid_delete_button.setEnabled(bool(targets))
-        source_label = "DIFF/MISMATCH" if str(self.reset_docid_source.currentData() or "config") == "diff" else "config"
+        source_label = {
+            "diff": "DIFF/MISMATCH (config)",
+            "diff_all": "DIFF/MISMATCH SEMUA kategori",
+        }.get(str(self.reset_docid_source.currentData() or ""), "config")
         self.reset_docid_status_label.setText(f"Loaded {len(targets)} DELETE_RECORD DocID targets from {source_label}.")
 
     def _handle_reset_docid_fetch_failed(self, message: str) -> None:
@@ -3326,6 +3422,9 @@ class MainWindow(QMainWindow):
             "koreksi": "koreksi",
             "potongan_upah_bersih": "potongan upah bersih",
             "premi_tunjangan": "premi",
+            "premi_tiket": "premi",
+            "premi_hari_raya": "premi",
+            "premi_kehadiran": "premi",
         }
         return defaults.get(category_key, "")
 

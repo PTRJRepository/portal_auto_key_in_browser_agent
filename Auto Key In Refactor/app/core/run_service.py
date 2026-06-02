@@ -64,7 +64,7 @@ def filter_by_category(records: list[ManualAdjustmentRecord], category_key: str 
     if not category_key:
         return records
     included_keys = {
-        "premi": {"premi", "premi_tunjangan"},
+        "premi": {"premi", "premi_tunjangan", "premi_tiket", "premi_hari_raya", "premi_kehadiran"},
     }.get(category_key, {category_key})
     return [record for record in records if record.category_key in included_keys]
 

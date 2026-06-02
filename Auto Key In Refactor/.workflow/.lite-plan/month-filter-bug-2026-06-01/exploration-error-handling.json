@@ -1,0 +1,51 @@
+{
+  "_metadata": {
+    "exploration_angle": "error-handling",
+    "exploration_index": 1,
+    "timestamp": "2026-06-01T08:00:00Z"
+  },
+  "summary": "Month filter bug exploration - no obvious code bug found yet. Need runtime debugging.",
+  "relevant_files": [
+    {
+      "path": "app/ui/main_window.py",
+      "rationale": "Contains period_month spinbox and fetch_records() method with correct .value() calls",
+      "role": "primary"
+    },
+    {
+      "path": "app/core/config.py",
+      "rationale": "default_period_month = 4 in both code and app.json",
+      "role": "config"
+    },
+    {
+      "path": "app/core/api_client.py",
+      "rationale": "get_adjustments() sends query.params() which includes period_month from query object",
+      "role": "api-layer"
+    }
+  ],
+  "patterns": [
+    {
+      "pattern": "fetch_records() builds ManualAdjustmentQuery at line 1522 using period_month.value() and period_year.value()",
+      "confidence": "high",
+      "evidence": "app/ui/main_window.py:1522-1524"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "app/ui/main_window.py:1518-1546",
+      "description": "fetch_records() -> creates query from spinbox values -> FetchWorker.run() -> client.get_adjustments()",
+      "line_range": "1518-1546"
+    }
+  ],
+  "constraints": [
+    "API server may be caching responses",
+    "Qt signals may fire incorrectly or be cached"
+  ],
+  "clarification_needs": [
+    {
+      "question": "Does the API request actually contain wrong month in the URL/query params?",
+      "context": "Need to verify if the bug is in Python UI or server/API layer",
+      "options": ["Add debug logging to print actual query params", "Check API server logs", "Browser DevTools network inspection"],
+      "recommended": 0
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "summary": "Fix Manual Adjustment API month filter bug - changing month to 05 shows old month data",
+  "approach": "Add debug logging to trace actual period params sent to API, then fix based on findings",
+  "complexity": "Medium",
+  "estimated_time": "15-30 minutes",
+  "recommended_execution": "codex",
+  "task_ids": ["TASK-001", "TASK-002", "TASK-003"],
+  "_metadata": {
+    "exploration_angles": ["error-handling"],
+    "session_id": "month-filter-bug-2026-06-01"
+  }
+}

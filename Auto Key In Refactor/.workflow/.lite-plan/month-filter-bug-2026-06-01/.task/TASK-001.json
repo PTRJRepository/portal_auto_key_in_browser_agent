@@ -1,0 +1,22 @@
+{
+  "id": "TASK-001",
+  "title": "Add debug logging to fetch flow",
+  "description": "Add print/log statements in fetch_records() and get_adjustments() to show actual period values being sent to API",
+  "files": [
+    {
+      "path": "app/ui/main_window.py",
+      "change": "Add append_log() call showing period_month and period_year values before creating query"
+    },
+    {
+      "path": "app/core/api_client.py",
+      "change": "Add debug print of query.params() before making API call in get_adjustments()"
+    }
+  ],
+  "convergence": {
+    "criteria": [
+      "Debug output shows actual period_month and period_year values when 'Fetch / Refresh Data' button clicked",
+      "Python appends log showing period values in UI log area"
+    ]
+  },
+  "priority": "high"
+}
