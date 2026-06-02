@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStatusBar,
     QTableWidget,
@@ -875,6 +876,22 @@ class MainWindow(QMainWindow):
         self.division_run_dialogs: list[QDialog] = []
         self._suppress_adjustment_name_refresh = False
         self.setWindowTitle("Auto Key In Refactor")
+        # Adaptive size based on screen
+        screen = QApplication.primaryScreen()
+        screen_geo = screen.geometry()
+        avail_w = screen_geo.width()
+        avail_h = screen_geo.height() - 80  # Account for taskbar
+
+        # Determine layout mode
+        if avail_w >= 1400 and avail_h >= 850:
+            self._layout_mode = "comfortable"
+        elif avail_w >= 1100 and avail_h >= 700:
+            self._layout_mode = "normal"
+        elif avail_w >= 900 and avail_h >= 600:
+            self._layout_mode = "compact"
+        else:
+            self._layout_mode = "minimal"
+
         self.resize(1500, 920)
         self.setMinimumSize(900, 600)
         self._build_ui()
@@ -887,6 +904,15 @@ class MainWindow(QMainWindow):
     def _apply_theme(self) -> None:
         self.setStyleSheet(AppTheme.get_stylesheet())
 
+    def _adaptive_spacing(self) -> int:
+        return {"minimal": 6, "compact": 8, "normal": 10, "comfortable": 12}.get(self._layout_mode, 10)
+
+    def _adaptive_margins(self) -> int:
+        return {"minimal": 8, "compact": 10, "normal": 12, "comfortable": 16}.get(self._layout_mode, 12)
+
+    def _adaptive_font_size(self) -> int:
+        return {"minimal": 11, "compact": 12, "normal": 13, "comfortable": 13}.get(self._layout_mode, 13)
+
     def _setup_shortcuts(self) -> None:
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self.run_auto_key_in)
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self.fetch_records)
@@ -898,12 +924,18 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget(self)
         layout = QVBoxLayout(root)
-        layout.setSpacing(8)
-        layout.setContentsMargins(12, 12, 12, 12)
+        spacing = self._adaptive_spacing()
+        margins = self._adaptive_margins()
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margins, margins, margins, margins)
 
         title = QLabel("PlantwareP3 Auto Key-In Dashboard")
         title.setObjectName("title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if self._layout_mode in ("minimal", "compact"):
+            title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        else:
+            title.setStyleSheet("")
         layout.addWidget(title)
 
         self.tabs = QTabWidget()
@@ -922,7 +954,7 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Ready")
         self.setStatusBar(self.status_bar)
         self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumHeight(6)
+        self.progress_bar.setMaximumHeight(4 if self._layout_mode == "minimal" else 6)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setVisible(False)
         self.status_bar.addPermanentWidget(self.progress_bar)
@@ -931,21 +963,23 @@ class MainWindow(QMainWindow):
     def _build_config_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setSpacing(8)
-        layout.setContentsMargins(12, 12, 12, 12)
+        spacing = self._adaptive_spacing()
+        margins = self._adaptive_margins()
+        layout.setSpacing(spacing)
+        layout.setContentsMargins(margins, margins, margins, margins)
 
-        api_group = QGroupBox("API Settings")
+        api_group = QGroupBox("API")
         api_form = QFormLayout(api_group)
-        api_form.setSpacing(8)
+        api_form.setSpacing(spacing)
         self.api_base_url = QLineEdit(self.config.api_base_url)
         self.api_key = QLineEdit(self.config.api_key)
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        api_form.addRow("API Base URL", self.api_base_url)
-        api_form.addRow("API Key", self.api_key)
+        api_form.addRow("URL", self.api_base_url)
+        api_form.addRow("Key", self.api_key)
 
-        filter_group = QGroupBox("Data Filter")
+        filter_group = QGroupBox("Filter")
         filter_form = QFormLayout(filter_group)
-        filter_form.setSpacing(8)
+        filter_form.setSpacing(spacing)
         self.period_month = QSpinBox()
         self.period_month.setRange(1, 12)
         self.period_month.setValue(self.config.default_period_month)
@@ -976,24 +1010,22 @@ class MainWindow(QMainWindow):
         self.period_year.valueChanged.connect(self._refresh_adjustment_name_options)
         self.gang_code.editingFinished.connect(self._refresh_adjustment_name_options)
         self.emp_code.editingFinished.connect(self._refresh_adjustment_name_options)
-        filter_form.addRow("Period Month", self.period_month)
-        filter_form.addRow("Period Year", self.period_year)
-        filter_form.addRow("Division", self.division_code)
+        filter_form.addRow("Month", self.period_month)
+        filter_form.addRow("Year", self.period_year)
+        filter_form.addRow("Div", self.division_code)
         filter_form.addRow("Gang", self.gang_code)
-        filter_form.addRow("Employee", self.emp_code)
-        filter_form.addRow("Adjustment Type", self.adjustment_type)
-        filter_form.addRow("Adjustment Name", self.adjustment_name)
+        filter_form.addRow("Emp", self.emp_code)
+        filter_form.addRow("Type", self.adjustment_type)
+        filter_form.addRow("Name", self.adjustment_name)
         filter_form.addRow("", self.refresh_adjustment_names_button)
         filter_form.addRow("Category", self.category)
-        self.session_status_label = QLabel("")
-        filter_form.addRow("Selected Session", self.session_status_label)
         self.division_code.currentIndexChanged.connect(self._refresh_session_status)
         self.division_code.currentIndexChanged.connect(self._refresh_adjustment_name_options)
         self.division_code.currentIndexChanged.connect(self._sync_task_register_loc_code)
 
-        runner_group = QGroupBox("Runner Settings")
+        runner_group = QGroupBox("Runner")
         runner_form = QFormLayout(runner_group)
-        runner_form.setSpacing(8)
+        runner_form.setSpacing(spacing)
         self.runner_mode = QComboBox()
         self.runner_mode.addItems(["multi_tab_shared_session", "dry_run", "session_reuse_single", "fresh_login_single", "get_session", "test_session", "mock"])
         self.max_tabs = QSpinBox()
@@ -1008,28 +1040,34 @@ class MainWindow(QMainWindow):
         self.headless.setChecked(self.config.headless)
         self.only_missing = QCheckBox("Only missing rows")
         self.only_missing.setChecked(True)
-        runner_form.addRow("Runner Mode", self.runner_mode)
-        runner_form.addRow("Concurrent Tabs (Auto Key-In)", self.max_tabs)
-        runner_form.addRow("Row Limit", self.row_limit)
+        runner_form.addRow("Mode", self.runner_mode)
+        runner_form.addRow("Tabs", self.max_tabs)
+        runner_form.addRow("Limit", self.row_limit)
         runner_form.addRow(self.headless)
         runner_form.addRow(self.only_missing)
 
-        session_group = QGroupBox("Session Status")
+        session_group = QGroupBox("Sessions")
         session_layout = QVBoxLayout(session_group)
+        session_layout.setSpacing(4)
         session_actions = QHBoxLayout()
-        self.refresh_sessions_button = QPushButton("Refresh Status")
-        self.refresh_all_sessions_button = QPushButton("Get All Sessions")
+        self.refresh_sessions_button = QPushButton("Refresh")
+        self.refresh_all_sessions_button = QPushButton("Get All")
         self.refresh_sessions_button.clicked.connect(self._refresh_session_status)
         self.refresh_all_sessions_button.clicked.connect(self.get_all_sessions)
         session_actions.addWidget(self.refresh_sessions_button)
         session_actions.addWidget(self.refresh_all_sessions_button)
         session_actions.addStretch(1)
-        self.session_table = QTableWidget(0, 6)
-        self.session_table.setHorizontalHeaderLabels(["Division", "Location", "Status", "Age", "Last Saved", "Action"])
-        self.session_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.session_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.session_table.setMaximumHeight(160)
         session_layout.addLayout(session_actions)
+        self.session_table = QTableWidget(0, 3)
+        self.session_table.setHorizontalHeaderLabels(["Division", "Status", "Action"])
+        self.session_table.setColumnWidth(0, 120)
+        self.session_table.setColumnWidth(1, 80)
+        self.session_table.setColumnWidth(2, 60)
+        self.session_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.session_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.session_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.session_table.verticalHeader().setVisible(False)
+        self.session_table.setMaximumHeight(120)
         session_layout.addWidget(self.session_table)
 
         grid = QGridLayout()
@@ -3246,36 +3284,33 @@ class MainWindow(QMainWindow):
             return False
 
     def _refresh_session_status(self) -> None:
-        from PySide6.QtGui import QColor
+        from PySide6.QtGui import QColor, QFont
         if not hasattr(self, "session_table"):
             return
         selected_code = self._selected_division_code()
         rows = self._scan_session_status()
         self.session_table.setRowCount(len(rows))
-        selected_status: dict[str, str | bool] | None = None
         highlight_color = QColor(AppTheme.PRIMARY)
         text_color = QColor(AppTheme.TEXT_PRIMARY)
         for row, item in enumerate(rows):
-            if item["code"] == selected_code:
-                selected_status = item
-            values = [str(item["code"]), str(item["label"]), str(item["status"]), str(item["age"]), str(item["saved"])]
-            for column, value in enumerate(values):
-                table_item = QTableWidgetItem(value)
-                if item["code"] == selected_code:
-                    table_item.setBackground(highlight_color)
-                    table_item.setForeground(text_color)
-                self.session_table.setItem(row, column, table_item)
-            button = QPushButton("Get Session")
+            # Division column - make it bold and prominent
+            div_item = QTableWidgetItem(item["code"])
+            font = QFont()
+            font.setBold(True)
+            font.setPointSize(10)
+            div_item.setFont(font)
+            div_item.setForeground(text_color)
+            self.session_table.setItem(row, 0, div_item)
+            # Status column
+            status = "Active" if item["active"] else f"{item['age']}"
+            status_item = QTableWidgetItem(status)
+            status_item.setForeground(text_color)
+            self.session_table.setItem(row, 1, status_item)
+            # Action button
+            button = QPushButton("Get")
+            button.setMinimumWidth(50)
             button.clicked.connect(lambda checked=False, code=str(item["code"]): self.get_session_for_division(code))
-            self.session_table.setCellWidget(row, 5, button)
-        if selected_status and selected_status["active"]:
-            session_code = str(selected_status.get("session_code") or selected_code)
-            suffix = f" via {session_code}" if session_code != selected_code else ""
-            self.session_status_label.setText(f"Session ready for {selected_code}{suffix} (age: {selected_status['age']})")
-        else:
-            session_code = self._session_code_for_division(selected_code)
-            suffix = f" parent {session_code}" if session_code and session_code != selected_code else selected_code
-            self.session_status_label.setText(f"No active session for {selected_code} ({suffix}). Use Get Session or runner will do fresh login.")
+            self.session_table.setCellWidget(row, 2, button)
 
     def _description_for_record(self, record: ManualAdjustmentRecord) -> str:
         category = self.categories.by_key(record.category_key or str(self.category.currentData() or ""))
