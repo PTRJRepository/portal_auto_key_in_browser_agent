@@ -562,8 +562,24 @@ export async function runLoosefruitMultiTab(
               emit({ event: "loosefruit.multitab.amount.force", tab_index: tabIdx, emp_code: row.emp_code, amount: calculatedAmount });
             }
 
-            // Amount is ready — click Add right now, don't wait
+            // Amount is ready — click Add immediately
             await clickAdd(page, `debug/pre-add-${row.emp_code}.png`);
+
+            // Wait for the row to actually appear in the Plantware grid below the form
+            // Plantware posts back and renders the new row — poll the grid until emp_code shows up
+            const gridAppeared = await page.waitForFunction(
+              (empCode: string) => {
+                const grid = document.querySelector("#MainContent_grvDetail");
+                if (!grid) return false;
+                const cells = grid.querySelectorAll("td");
+                for (const cell of cells) {
+                  if (cell.textContent?.trim() === empCode) return true;
+                }
+                return false;
+              },
+              row.emp_code,
+              { timeout: 20000 }
+            ).then(() => true).catch(() => false);
 
             const gridCheck = await isEmployeeAddedToGrid(page, row.emp_code);
             if (gridCheck.added) {

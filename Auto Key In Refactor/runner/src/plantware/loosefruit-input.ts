@@ -9,6 +9,7 @@
  */
 
 import type { Page } from "playwright";
+import * as fs from "node:fs";
 
 export interface LoosefruitInputRow {
   emp_code: string;
@@ -156,69 +157,112 @@ export async function selectFieldNoCode(page: Page, fieldCode?: string | null): 
 }
 
 export async function setMT(page: Page, mt: number): Promise<void> {
+  const value = String(mt);
+  // Only use .fill() - don't dispatch change events to avoid ASP.NET postback
   const field = page.locator("#MainContent_txtMT");
   await field.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
-  await field.fill(String(mt));
+  await field.fill(value);
+  // Also set Total MT (hidden field that Plantware may use)
+  await page.evaluate((val) => {
+    const total = document.querySelector("#MainContent_txtTotalMT") as HTMLInputElement | null;
+    if (total) {
+      total.value = val;
+      total.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }, value).catch(() => {});
 }
 
 export async function setRate(page: Page, rate: number): Promise<void> {
+  const value = String(rate);
   const field = page.locator("#MainContent_txtRate");
   await field.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
-  await field.fill(String(rate));
+  await field.fill(value);
+  await field.press("Tab").catch(() => {});
+  await page.evaluate((val) => {
+    const input = document.querySelector("#MainContent_txtRate") as HTMLInputElement | null;
+    if (!input) return;
+    input.value = val;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new Event("blur", { bubbles: true }));
+  }, value).catch(() => {});
+  await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(1000);
+}
+
+export async function waitForAmountNonZero(page: Page, timeout = 10000): Promise<number> {
+  const amountSelectors = [
+    "#MainContent_lblTotalAmount",
+    "span[id$='lblTotalAmount']",
+    "#MainContent_txtAmount",
+    "#MainContent_txtAmt",
+    "input[id$='txtAmount']",
+    "input[id$='txtAmt']",
+  ];
+  const readAmount = (selectors: string[]) => {
+    const parseAmount = (value: string) => Number(String(value || "").replace(/,/g, ""));
+    for (const selector of selectors) {
+      const field = document.querySelector(selector) as HTMLInputElement | HTMLElement | null;
+      if (!field) continue;
+      const value = field instanceof HTMLInputElement ? field.value : field.textContent || "";
+      const amount = parseAmount(value);
+      if (Number.isFinite(amount) && amount > 0) return amount;
+    }
+    return 0;
+  };
+  await page.waitForFunction((selectors: string[]) => {
+    const parseAmount = (value: string) => Number(String(value || "").replace(/,/g, ""));
+    for (const selector of selectors) {
+      const field = document.querySelector(selector) as HTMLInputElement | HTMLElement | null;
+      if (!field) continue;
+      const value = field instanceof HTMLInputElement ? field.value : field.textContent || "";
+      const amount = parseAmount(value);
+      if (Number.isFinite(amount) && amount > 0) return true;
+    }
+    return false;
+  }, amountSelectors, { timeout });
+  const amount = await page.evaluate(readAmount, amountSelectors);
+  if (!amount) throw new Error("Amount remains zero after Rate input");
+  return amount;
 }
 
 export async function clickAdd(page: Page, screenshotLabel?: string): Promise<void> {
-  // Wait for postback from previous field selection to fully settle
-  try {
-    await page.waitForLoadState("load", { timeout: 15000 });
-    await safeWait(page, 600);
-  } catch {
-    await safeWait(page, 2000);
-  }
+  // Wait for any previous postback to fully settle before clicking
+  await safeWait(page, 1000);
 
   if (screenshotLabel) {
     await page.screenshot({ path: screenshotLabel });
   }
 
   // Wait for Add button to be enabled (not disabled during postback)
-  try {
-    await page.waitForFunction(
-      () => {
-        const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
-        return btn && !btn.disabled && btn.offsetParent !== null;
-      },
-      { timeout: 8000 }
-    );
-  } catch {
-    // Button might not be found or visible; proceed anyway
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
+      return btn && !btn.disabled && btn.offsetParent !== null;
+    },
+    { timeout: 8000 }
+  ).catch(() => {});
+
+  if (screenshotLabel) {
+    await page.screenshot({ path: screenshotLabel.replace("pre-add", "pre-add-btn-ready") });
   }
 
-  // Use native .click() — more reliable than manual onclick handler injection
-  // which can fail when handler is null or when ASP.NET postback is in progress
-  const btn = page.locator("#MainContent_btnAdd");
-  await btn.click({ force: true, timeout: 5000 });
+  // Click immediately when button is ready
+  await page.click("#MainContent_btnAdd", { timeout: 5000 });
 
-  // Wait for ASP.NET postback to complete and DOM to settle
-  try {
-    await page.waitForLoadState("load", { timeout: 25000 });
-    await safeWait(page, 1000);
-  } catch {
-    // If load state fails (e.g. page navigated), give a fixed buffer
-    await safeWait(page, 3000);
-  }
+  // Wait for ASP.NET postback to fully complete and grid to render
+  // Plantware reloads the grid after Add — give it time to render the new row
+  await page.waitForLoadState("load", { timeout: 25000 }).catch(() => {});
+  await safeWait(page, 5000);
 
-  // Verify Add button is back (not permanently disabled = postback completed)
-  try {
-    await page.waitForFunction(
-      () => {
-        const b = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
-        return b && !b.disabled;
-      },
-      { timeout: 10000 }
-    );
-  } catch {
-    // Button still disabled — may indicate validation error or postback failure
-  }
+  // Verify Add button is back and enabled (confirms postback completed successfully)
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
+      return btn && !btn.disabled;
+    },
+    { timeout: 15000 }
+  ).catch(() => {});
 }
 
 export async function getDocumentId(page: Page): Promise<string | null> {
@@ -232,6 +276,38 @@ export async function getDocumentId(page: Page): Promise<string | null> {
   }
 }
 
+/**
+ * Check if employee was successfully added to the grid.
+ * After clicking Add, the employee code should appear in the grid.
+ */
+export async function isEmployeeAddedToGrid(page: Page, empCode: string): Promise<{ added: boolean; docId: string | null }> {
+  try {
+    const result = await page.evaluate((code) => {
+      const grid = document.querySelector("#MainContent_grvDetail");
+      if (!grid) return { added: false, docId: null };
+      const cells = grid.querySelectorAll("td");
+      let found = false;
+      let docId: string | null = null;
+      // Scan grid cells for emp code
+      for (const cell of cells) {
+        if (cell.textContent?.trim() === code) {
+          found = true;
+          break;
+        }
+      }
+      // Also get docId from input field (if it has a value now)
+      const docIdField = document.querySelector("#MainContent_txtDocID") as HTMLInputElement | null;
+      if (docIdField && !docIdField.disabled && docIdField.value) {
+        docId = docIdField.value;
+      }
+      return { added: found, docId };
+    }, empCode.trim().toUpperCase());
+    return result;
+  } catch {
+    return { added: false, docId: null };
+  }
+}
+
 export function deriveDivisionFromGang(gang: string): string {
   return gang.length >= 2 ? gang.slice(0, 2).toUpperCase() : gang.toUpperCase();
 }
@@ -242,7 +318,7 @@ export function deriveTaskCodeFromLoc(locCode: string): string {
 
 export interface StagingComparisonRow {
   emp_code: string; emp_name: string; gang: string; gang_name: string;
-  divisi: string; estate: string; staging_brondol: number; plantware_brondol: number; selisih: number;
+  divisi: string; estate: string; staging_brondol: number; plantware_brondol: number; selisih: number; status?: string;
 }
 
 export interface StagingComparisonResponse {
@@ -250,6 +326,93 @@ export interface StagingComparisonResponse {
   data: { month: number; year: number; periode: string; count: number;
     totals: { staging_brondol: number; plantware_brondol: number; selisih: number };
     rows: StagingComparisonRow[]; };
+}
+
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index++) {
+    const char = line[index];
+    if (char === '"' && line[index + 1] === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      cells.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function numericCsvValue(value: string | undefined): number {
+  const normalized = String(value ?? "").trim().replace(/,/g, "");
+  if (!normalized) return 0;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function loadStagingComparisonFromCsv(csvPath: string, periode = ""): StagingComparisonResponse {
+  const path = csvPath.trim().replace(/^"|"$/g, "");
+  const content = fs.readFileSync(path, "utf-8").replace(/^﻿/, "");
+  const lines = content.split(/\r?\n/).filter(line => line.trim());
+  if (lines.length === 0) throw new Error(`Loosefruit CSV is empty: ${path}`);
+  const headers = parseCsvLine(lines[0]).map(header => header.trim());
+  const rows: StagingComparisonRow[] = [];
+  for (const line of lines.slice(1)) {
+    const cells = parseCsvLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => { row[header] = cells[index] ?? ""; });
+    const empCode = String(row.EmpCode || row.emp_code || "").trim().toUpperCase();
+    const division = String(row.Div || row.division || row.estate || "").trim().toUpperCase();
+    if (!empCode || !division) continue;
+    const stagingBrondol = numericCsvValue(row.TotalS);
+    const plantwareBrondol = numericCsvValue(row.TotalP);
+    const selisih = Number((stagingBrondol - plantwareBrondol).toFixed(2));
+    rows.push({
+      emp_code: empCode,
+      emp_name: String(row.Nama || row.emp_name || "").trim(),
+      gang: String(row.Gang || row.gang || "").trim().toUpperCase(),
+      gang_name: "",
+      divisi: division,
+      estate: division,
+      staging_brondol: stagingBrondol,
+      plantware_brondol: plantwareBrondol,
+      selisih,
+      status: Math.abs(selisih) <= 0.01 ? "match" : (selisih > 0 ? "diff" : "plantware_more"),
+    });
+  }
+  const totals = rows.reduce((acc, row) => {
+    acc.staging_brondol += row.staging_brondol;
+    acc.plantware_brondol += row.plantware_brondol;
+    acc.selisih += row.selisih;
+    return acc;
+  }, { staging_brondol: 0, plantware_brondol: 0, selisih: 0 });
+  totals.staging_brondol = Number(totals.staging_brondol.toFixed(2));
+  totals.plantware_brondol = Number(totals.plantware_brondol.toFixed(2));
+  totals.selisih = Number(totals.selisih.toFixed(2));
+  const [year, month] = periode.split("-").map(value => Number(value));
+  return {
+    success: true,
+    data: {
+      month: month || 0,
+      year: year || 0,
+      periode,
+      count: rows.length,
+      totals,
+      rows,
+    },
+  };
+}
+
+function isCsvSource(source: string | null | undefined): boolean {
+  return !!source && source.trim().toLowerCase().endsWith(".csv");
 }
 
 function frontendToBackendSource(source: string): string {
@@ -260,7 +423,7 @@ function frontendToBackendSource(source: string): string {
 }
 
 export function buildStagingComparisonUrl(source: string | null | undefined, periode: string, division?: string | null, gang?: string | null): string {
-  let rawSource = frontendToBackendSource((source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "http://10.0.0.128:8002").trim().replace(/\/+$/, ""));
+  let rawSource = frontendToBackendSource((source || process.env.AUTO_KEY_IN_LOOSEFRUIT_STAGING_SOURCE || "C:/Users/nbgmf/Downloads/pivot_loosefruit_5_2026 (1).csv").trim().replace(/\/+$/, ""));
   const params = new URLSearchParams({ periode });
   if (division) params.set("division", division.trim().toUpperCase());
   if (gang) params.set("gang", gang.trim().toUpperCase());
@@ -275,6 +438,7 @@ export function buildStagingComparisonUrl(source: string | null | undefined, per
 
 export async function fetchStagingComparison(periode: string, source?: string | null, division?: string | null, gang?: string | null): Promise<StagingComparisonResponse | null> {
   try {
+    if (isCsvSource(source)) return loadStagingComparisonFromCsv(source || "", periode);
     const response = await fetch(buildStagingComparisonUrl(source, periode, division, gang));
     if (!response.ok) return null;
     return await response.json() as StagingComparisonResponse;
@@ -284,20 +448,34 @@ export async function fetchStagingComparison(periode: string, source?: string | 
 }
 
 export function normalizeStagingComparisonRows(rows: StagingComparisonRow[]): StagingComparisonRow[] {
-  return rows.map(row => ({
-    ...row,
-    emp_code: String(row.emp_code || "").trim().toUpperCase(),
-    gang: String(row.gang || (row as any).gang_code || "").trim().toUpperCase(),
-    estate: String(row.estate || (row as any).loc_code || (row as any).division || "").trim().toUpperCase(),
-    staging_brondol: Number(row.staging_brondol ?? (row as any).staging_bunches ?? 0),
-    plantware_brondol: Number(row.plantware_brondol ?? (row as any).prod_mt ?? 0),
-    selisih: Number(row.selisih ?? (row as any).delta ?? 0),
-  }));
+  return rows.map(row => {
+    const stagingBrondol = Number(row.staging_brondol ?? (row as any).staging_bunches ?? 0);
+    const plantwareBrondol = Number(row.plantware_brondol ?? (row as any).prod_mt ?? 0);
+    const rawDelta = row.selisih ?? (row as any).delta;
+    let selisih = rawDelta === undefined || rawDelta === null ? Number((stagingBrondol - plantwareBrondol).toFixed(2)) : Number(rawDelta || 0);
+    if (Math.abs((stagingBrondol - plantwareBrondol) - selisih) > 0.01) {
+      selisih = Number((stagingBrondol - plantwareBrondol).toFixed(2));
+    }
+    return {
+      ...row,
+      emp_code: String(row.emp_code || "").trim().toUpperCase(),
+      gang: String(row.gang || (row as any).gang_code || "").trim().toUpperCase(),
+      estate: String(row.estate || (row as any).loc_code || (row as any).division || "").trim().toUpperCase(),
+      staging_brondol: stagingBrondol,
+      plantware_brondol: plantwareBrondol,
+      selisih,
+      status: String((row as any).status || "").trim().toLowerCase(),
+    };
+  });
+}
+
+export function isLoosefruitInputNeeded(row: StagingComparisonRow): boolean {
+  return row.selisih > 0.01 && !!row.emp_code && row.status !== "match" && row.staging_brondol > row.plantware_brondol + 0.01;
 }
 
 export function filterLooseFruitRows(rows: StagingComparisonRow[], estate?: string): StagingComparisonRow[] {
   const estateFilter = (estate || "").trim().toUpperCase();
-  return normalizeStagingComparisonRows(rows).filter(row => row.selisih > 0 && !!row.emp_code && (!estateFilter || row.estate === estateFilter));
+  return normalizeStagingComparisonRows(rows).filter(row => isLoosefruitInputNeeded(row) && (!estateFilter || row.estate === estateFilter));
 }
 
 export function groupByGang(rows: StagingComparisonRow[]): Map<string, StagingComparisonRow[]> {
