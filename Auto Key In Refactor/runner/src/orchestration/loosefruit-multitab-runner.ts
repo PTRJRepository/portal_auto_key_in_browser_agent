@@ -460,25 +460,11 @@ export async function runLoosefruitMultiTab(
         let success = false;
         for (let attempt = 0; attempt < 2 && !success; attempt++) {
           try {
-            // Always reload page fresh for each row — Plantware form needs clean state
-            const url = getLoosefruitDetailUrl(loc_code);
-            await page.goto(url, { waitUntil: "load", timeout: 30000 }).catch((e) => {
-              emit({ event: "loosefruit.multitab.tab.goto.failed", tab_index: tabIdx, url, error: String(e) });
-            });
-            await page.waitForSelector("#MainContent_btnAdd", { state: "visible", timeout: 15000 }).catch(() => {});
+            // Page is already loaded from tab open. Do NOT reload between rows.
+            // After each Add, Plantware auto-refreshes. Just wait for it to settle.
 
-            // Check page health
-            const stillAlive = await ensurePageAlive(page, loc_code);
-            if (!stillAlive) {
-              if (attempt === 0) {
-                emit({ event: "loosefruit.multitab.row.page_dead_after_load", tab_index: tabIdx, emp_code: row.emp_code, attempt: attempt + 1 });
-                continue;
-              } else {
-                tabRows.push({ emp_code: row.emp_code, emp_name: row.emp_name, gang: row.gang, selisih: row.selisih, status: "failed", message: "Page context dead", tab_index: tabIdx });
-                tabStats.failed += 1;
-                break;
-              }
-            }
+            // Verify Add button is visible and enabled
+            await page.waitForSelector("#MainContent_btnAdd", { state: "visible", timeout: 15000 }).catch(() => {});
 
             await selectChargeTo(page, loc_code);
             await page.waitForTimeout(500);
