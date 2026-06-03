@@ -558,28 +558,11 @@ export async function runLoosefruitMultiTab(
               emit({ event: "loosefruit.multitab.amount.force", tab_index: tabIdx, emp_code: row.emp_code, amount: calculatedAmount });
             }
 
-            // Amount is ready — click Add immediately
+            // Amount is ready — click Add and wait for Plantware refresh to fully complete
+            // clickAdd() already waits for load state + 3s buffer for grid rendering
             await clickAdd(page, `debug/pre-add-${row.emp_code}.png`);
 
-            // Wait for Plantware to fully refresh and render the grid with the new row
-            // Plantware posts back, then renders grid rows — need ~2s buffer then poll
-            await page.waitForTimeout(2000).catch(() => {});
-
-            // Poll the grid until the emp_code appears in a cell
-            const gridAppeared = await page.waitForFunction(
-              (empCode: string) => {
-                const grid = document.querySelector("#MainContent_grvDetail");
-                if (!grid) return false;
-                const cells = grid.querySelectorAll("td");
-                for (const cell of cells) {
-                  if (cell.textContent?.trim() === empCode) return true;
-                }
-                return false;
-              },
-              row.emp_code,
-              { timeout: 20000 }
-            ).then(() => true).catch(() => false);
-
+            // Verify the row was added to the grid
             const gridCheck = await isEmployeeAddedToGrid(page, row.emp_code);
             if (gridCheck.added) {
               tabRows.push({

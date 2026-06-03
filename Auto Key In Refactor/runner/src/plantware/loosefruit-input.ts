@@ -261,10 +261,10 @@ export async function waitForAmountNonZero(page: Page, timeout = 15000): Promise
 }
 
 export async function clickAdd(page: Page, screenshotLabel?: string): Promise<void> {
-  // Wait for any previous postback to fully settle before clicking
+  // Wait for previous postback to settle
   await safeWait(page, 1000);
 
-  // Wait for Add button to be present and enabled
+  // Wait for Add button to be enabled
   await page.waitForFunction(
     () => {
       const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
@@ -277,21 +277,16 @@ export async function clickAdd(page: Page, screenshotLabel?: string): Promise<vo
     await page.screenshot({ path: screenshotLabel });
   }
 
-  const btnInfo = await page.evaluate(() => {
-    const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
-    return { text: btn?.value || btn?.textContent || "", disabled: btn?.disabled ?? true, visible: btn?.offsetParent !== null };
-  }).catch(() => ({ text: "", disabled: true, visible: false }));
-
-  if (!btnInfo.visible || btnInfo.disabled) {
-    throw new Error(`Add button not clickable: text="${btnInfo.text}", disabled=${btnInfo.disabled}`);
-  }
-
-  // Click the button
+  // Click Add — browser will refresh (ASP.NET postback)
   await page.click("#MainContent_btnAdd", { timeout: 5000 });
 
-  // Wait for ASP.NET postback to complete
-  await page.waitForLoadState("load", { timeout: 20000 }).catch(() => {});
-  await safeWait(page, 2000);
+  // IMPORTANT: DO NOT interrupt the refresh. Wait for page to finish reloading.
+  // Plantware does a full page postback after Add — wait for load state to complete.
+  // This may take several seconds depending on Plantware server.
+  await page.waitForLoadState("load", { timeout: 30000 }).catch(() => {});
+
+  // After page load, wait extra time for Plantware to render the grid rows below Add button
+  await page.waitForTimeout(3000).catch(() => {});
 }
 
 export async function getDocumentId(page: Page): Promise<string | null> {
