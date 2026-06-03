@@ -301,8 +301,8 @@ export async function runLoosefruitMultiTab(
     };
   }
 
-  // Step 3: Determine tab count
-  const requestedTabCount = 1;
+  // Step 3: Determine tab count — default to 3 tabs if not specified
+  const requestedTabCount = payload.max_tabs ?? 3;
   const tabCount = Math.min(Math.max(1, requestedTabCount), PLANTWARE_CONFIG.maxTabs, Math.max(1, filteredRows.length));
   const loc_code = Array.from(mixedEstates)[0] || default_loc_code;
 
