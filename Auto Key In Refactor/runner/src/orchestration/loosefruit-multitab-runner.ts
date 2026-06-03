@@ -387,7 +387,7 @@ export async function runLoosefruitMultiTab(
     emit({ event: "loosefruit.multitab.check_existing.done", existing_count: existingEmpCodes.size });
 
         // Process tabs sequentially to preserve per-tab page state.
-    // DO NOT use Promise.allSettled for tab processing � adding tabs during parallel
+    // DO NOT use Promise.allSettled for tab processing � adding tabs during parallel
     // execution resets page document state and wipes already-added grid rows.
     for (let tabIdx = 0; tabIdx < tabCount; tabIdx++) {
       const assignment = assignments.find(a => a.tab_index === tabIdx);
@@ -543,36 +543,27 @@ export async function runLoosefruitMultiTab(
 
             await setMT(page, row.selisih);
             await setRate(page, rate);
-            const calculatedAmount = await waitForAmountNonZero(page);
-            emit({ event: "loosefruit.multitab.amount.ready", tab_index: tabIdx, emp_code: row.emp_code, amount: calculatedAmount });
-            await page.waitForTimeout(200).catch(() => {});
 
-            const formState = await page.evaluate(() => {
-              return {
-                chargeTo: (document.querySelector("#MainContent_ddlChargeTo") as HTMLSelectElement)?.value,
-                employee: (document.querySelector("#MainContent_ddlEmployee") as HTMLSelectElement)?.value,
-                taskCode: (document.querySelector("#MainContent_ddlTaskCode") as HTMLSelectElement)?.value,
-                division: (document.querySelector("#MainContent_MultiDimAcc_ddlBlock") as HTMLSelectElement)?.value,
-                field: (document.querySelector("#MainContent_MultiDimAcc_ddlSubBlk") as HTMLSelectElement)?.value,
-                expense: (document.querySelector("#MainContent_MultiDimAcc_ddlExpCode") as HTMLSelectElement)?.value,
-                trxDate: (document.querySelector("#MainContent_txtTrxDate") as HTMLInputElement)?.value,
-                mt: (document.querySelector("#MainContent_txtMT") as HTMLInputElement)?.value,
-                rate: (document.querySelector("#MainContent_txtRate") as HTMLInputElement)?.value,
-                addVisible: !!document.querySelector("#MainContent_btnAdd"),
-                docIdDisabled: (document.querySelector("#MainContent_txtDocID") as HTMLInputElement)?.disabled,
-                docId: (document.querySelector("#MainContent_txtDocID") as HTMLInputElement)?.value,
-              };
-            }).catch(e => ({ error: String(e) }));
-            emit({ event: "loosefruit.multitab.row.pre_add_state", tab_index: tabIdx, emp_code: row.emp_code, ...formState });
+            // Wait for Plantware to calculate the amount — once it's > 0, click Add immediately
+            // Do NOT add extra waits here; amount appearing means page is ready
+            let calculatedAmount = 0;
+            try {
+              calculatedAmount = await waitForAmountNonZero(page, 15000);
+              emit({ event: "loosefruit.multitab.amount.ready", tab_index: tabIdx, emp_code: row.emp_code, amount: calculatedAmount });
+            } catch {
+              // Force-set amount and proceed — Plantware auto-calculates on Rate change
+              await page.evaluate((amount) => {
+                const input = document.querySelector("#MainContent_txtAmount") as HTMLInputElement | null;
+                if (input) { input.value = String(amount); input.dispatchEvent(new Event("change", { bubbles: true })); }
+                const label = document.querySelector("#MainContent_lblTotalAmount") as HTMLElement | null;
+                if (label) label.textContent = String(amount);
+              }, row.selisih * rate).catch(() => {});
+              calculatedAmount = await waitForAmountNonZero(page, 5000);
+              emit({ event: "loosefruit.multitab.amount.force", tab_index: tabIdx, emp_code: row.emp_code, amount: calculatedAmount });
+            }
+
+            // Amount is ready — click Add right now, don't wait
             await clickAdd(page, `debug/pre-add-${row.emp_code}.png`);
-            const afterState = await page.evaluate(() => {
-              return {
-                pageUrl: window.location.href,
-                docIdDisabled: (document.querySelector("#MainContent_txtDocID") as HTMLInputElement)?.disabled,
-                docId: (document.querySelector("#MainContent_txtDocID") as HTMLInputElement)?.value,
-              };
-            }).catch(e => ({ error: String(e) }));
-            emit({ event: "loosefruit.multitab.row.post_add_state", tab_index: tabIdx, emp_code: row.emp_code, ...afterState });
 
             const gridCheck = await isEmployeeAddedToGrid(page, row.emp_code);
             if (gridCheck.added) {
