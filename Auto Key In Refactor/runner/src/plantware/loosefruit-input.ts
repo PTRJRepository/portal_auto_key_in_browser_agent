@@ -203,7 +203,9 @@ export async function setRate(page: Page, rate: number): Promise<void> {
   await page.waitForTimeout(1500);
 }
 
-export async function waitForAmountNonZero(page: Page, timeout = 10000): Promise<number> {
+export async function waitForAmountNonZero(page: Page, timeout = 15000): Promise<number> {
+  // Plantware calculates: Amount = MT * Rate when Rate field changes.
+  // Try all known selectors; also try reading the TotalAmount label text.
   const amountSelectors = [
     "#MainContent_lblTotalAmount",
     "span[id$='lblTotalAmount']",
@@ -211,30 +213,49 @@ export async function waitForAmountNonZero(page: Page, timeout = 10000): Promise
     "#MainContent_txtAmt",
     "input[id$='txtAmount']",
     "input[id$='txtAmt']",
+    "#MainContent_lblAmount",
+    "span[id$='lblAmount']",
+    "label[id$='lblTotalAmount']",
+    "#MainContent_lblTotal",
+    "span[id$='lblTotal']",
   ];
-  const readAmount = (selectors: string[]) => {
-    const parseAmount = (value: string) => Number(String(value || "").replace(/,/g, ""));
-    for (const selector of selectors) {
-      const field = document.querySelector(selector) as HTMLInputElement | HTMLElement | null;
-      if (!field) continue;
-      const value = field instanceof HTMLInputElement ? field.value : field.textContent || "";
+  const parseAmount = (value: string): number => {
+    const cleaned = String(value || "").replace(/[^0-9.]/g, "");
+    const num = parseFloat(cleaned);
+    return Number.isFinite(num) && num > 0 ? num : 0;
+  };
+  const readAmount = (): number => {
+    for (const selector of amountSelectors) {
+      const el = document.querySelector(selector) as HTMLInputElement | HTMLElement | null;
+      if (!el) continue;
+      const value = el instanceof HTMLInputElement ? el.value : (el.textContent || "");
       const amount = parseAmount(value);
-      if (Number.isFinite(amount) && amount > 0) return amount;
+      if (amount > 0) return amount;
     }
     return 0;
   };
-  await page.waitForFunction((selectors: string[]) => {
-    const parseAmount = (value: string) => Number(String(value || "").replace(/,/g, ""));
-    for (const selector of selectors) {
-      const field = document.querySelector(selector) as HTMLInputElement | HTMLElement | null;
-      if (!field) continue;
-      const value = field instanceof HTMLInputElement ? field.value : field.textContent || "";
-      const amount = parseAmount(value);
-      if (Number.isFinite(amount) && amount > 0) return true;
-    }
-    return false;
-  }, amountSelectors, { timeout });
-  const amount = await page.evaluate(readAmount, amountSelectors);
+  // Poll until amount > 0 or timeout
+  await page.waitForFunction(
+    () => {
+      const selectors = [
+        "#MainContent_lblTotalAmount","span[id$='lblTotalAmount']",
+        "#MainContent_txtAmount","#MainContent_txtAmt","input[id$='txtAmount']","input[id$='txtAmt']",
+        "#MainContent_lblAmount","span[id$='lblAmount']","label[id$='lblTotalAmount']",
+        "#MainContent_lblTotal","span[id$='lblTotal']",
+      ];
+      const parse = (v: string) => { const c = v.replace(/[^0-9.]/g, ""); const n = parseFloat(c); return Number.isFinite(n) && n > 0 ? n : 0; };
+      for (const s of selectors) {
+        const e = document.querySelector(s) as HTMLInputElement | HTMLElement | null;
+        if (!e) continue;
+        const v = e instanceof HTMLInputElement ? e.value : (e.textContent || "");
+        if (parse(v) > 0) return true;
+      }
+      return false;
+    },
+    undefined,
+    { timeout }
+  );
+  const amount = readAmount();
   if (!amount) throw new Error("Amount remains zero after Rate input");
   return amount;
 }
