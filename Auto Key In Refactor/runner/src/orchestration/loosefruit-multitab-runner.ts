@@ -340,30 +340,32 @@ export async function runLoosefruitMultiTab(
       session_path: session.getSessionPath()
     });
 
-    // Step 6: Create pages (tabs)
+    // Step 6: Create pages (tabs) ONE BY ONE to avoid tab interruption
+    // IMPORTANT: Opening multiple tabs in parallel with Promise.allSettled causes
+    // Playwright to reset/navigate away from the first tab when a new tab finishes loading.
+    // Always open tabs sequentially with delay between each.
     const pages: Page[] = [];
+    const tabReady = new Set<number>();
+
     for (let index = 0; index < tabCount; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000)); // 2s gap between tab creation
+      emit({ event: "loosefruit.multitab.tab.open.started", tab_index: index });
       const page = await session.newPage();
       pages.push(page);
+      await page.goto(getLoosefruitDetailUrl(loc_code), { waitUntil: "domcontentloaded", timeout: 45000 }).catch((e) => {
+        emit({ event: "loosefruit.multitab.tab.goto.failed", tab_index: index, error: String(e) });
+      });
+      const btnVisible = await page.waitForSelector("#MainContent_btnAdd", { state: "visible", timeout: 15000 }).then(() => true).catch(() => false);
+      if (btnVisible) {
+        tabReady.add(index);
+        emit({ event: "loosefruit.multitab.tab.ready", tab_index: index, url: page.url() });
+      } else {
+        emit({ event: "loosefruit.multitab.tab.open.failed", tab_index: index });
+      }
     }
 
-    // Step 7: Navigate each tab to the loosefruit page. Keep other tabs alive if one tab fails.
-    const tabReady = new Set<number>();
-    const openResults = await Promise.allSettled(pages.map(async (page, index) => {
-      if (index > 0) await new Promise((resolve) => setTimeout(resolve, index * 1500));
-      emit({ event: "loosefruit.multitab.tab.open.started", tab_index: index });
-      await page.goto(getLoosefruitDetailUrl(loc_code), { waitUntil: "domcontentloaded", timeout: 45000 });
-      await page.waitForSelector("#MainContent_btnAdd", { state: "visible", timeout: 15000 });
-      tabReady.add(index);
-      emit({ event: "loosefruit.multitab.tab.ready", tab_index: index, url: page.url() });
-    }));
-    openResults.forEach((result, index) => {
-      if (result.status === "rejected") {
-        emit({ event: "loosefruit.multitab.tab.open.failed", tab_index: index, message: result.reason instanceof Error ? result.reason.message : String(result.reason) });
-      }
-    });
-
-    // Step 8: Process rows in parallel across tabs. Each tab owns one page in the same browser window/session.
+    // Step 8: Process tabs one at a time — all tabs already open, no new tabs will be created
+    // Each tab processes its rows independently. Tab state is preserved during processing.
     emit({ event: "loosefruit.multitab.check_existing.start", message: "Checking existing employees in Plantware..." });
     const existingEmpCodes = new Set<string>();
     for (const page of pages) {
