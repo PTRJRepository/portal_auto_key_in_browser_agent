@@ -262,28 +262,21 @@ export async function waitForAmountNonZero(page: Page, timeout = 15000): Promise
 
 export async function clickAdd(page: Page, screenshotLabel?: string): Promise<void> {
   // Wait for any previous postback to fully settle before clicking
-  await safeWait(page, 1500);
+  await safeWait(page, 1000);
 
-  // Take screenshot to see form state before clicking
-  if (screenshotLabel) {
-    await page.screenshot({ path: screenshotLabel.replace("pre-add", "pre-add-form") });
-  }
-
-  // Wait for Add button to be present and enabled (not disabled during ASP.NET postback)
+  // Wait for Add button to be present and enabled
   await page.waitForFunction(
     () => {
       const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
       return btn && !btn.disabled && btn.offsetParent !== null;
     },
-    { timeout: 12000 }
+    { timeout: 10000 }
   ).catch(() => {});
 
-  // Take screenshot just before clicking to confirm button state
   if (screenshotLabel) {
     await page.screenshot({ path: screenshotLabel });
   }
 
-  // Verify button text includes "Add" before clicking
   const btnInfo = await page.evaluate(() => {
     const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
     return { text: btn?.value || btn?.textContent || "", disabled: btn?.disabled ?? true, visible: btn?.offsetParent !== null };
@@ -293,22 +286,12 @@ export async function clickAdd(page: Page, screenshotLabel?: string): Promise<vo
     throw new Error(`Add button not clickable: text="${btnInfo.text}", disabled=${btnInfo.disabled}`);
   }
 
-  // Click using native click for ASP.NET
+  // Click the button
   await page.click("#MainContent_btnAdd", { timeout: 5000 });
 
-  // Wait for ASP.NET postback to complete — Plantware reloads grid after Add
-  // Plantware may do a full page reload (load state) or partial update (networkidle)
-  await page.waitForLoadState("load", { timeout: 25000 }).catch(() => {});
-  await safeWait(page, 3000);
-
-  // Verify Add button is back and enabled — confirms postback finished without error
-  await page.waitForFunction(
-    () => {
-      const btn = document.querySelector("#MainContent_btnAdd") as HTMLInputElement | null;
-      return btn && !btn.disabled;
-    },
-    { timeout: 20000 }
-  ).catch(() => {});
+  // Wait for ASP.NET postback to complete
+  await page.waitForLoadState("load", { timeout: 20000 }).catch(() => {});
+  await safeWait(page, 2000);
 }
 
 export async function getDocumentId(page: Page): Promise<string | null> {

@@ -561,8 +561,11 @@ export async function runLoosefruitMultiTab(
             // Amount is ready — click Add immediately
             await clickAdd(page, `debug/pre-add-${row.emp_code}.png`);
 
-            // Wait for the row to actually appear in the Plantware grid below the form
-            // Plantware posts back and renders the new row — poll the grid until emp_code shows up
+            // Wait for Plantware to fully refresh and render the grid with the new row
+            // Plantware posts back, then renders grid rows — need ~2s buffer then poll
+            await page.waitForTimeout(2000).catch(() => {});
+
+            // Poll the grid until the emp_code appears in a cell
             const gridAppeared = await page.waitForFunction(
               (empCode: string) => {
                 const grid = document.querySelector("#MainContent_grvDetail");
