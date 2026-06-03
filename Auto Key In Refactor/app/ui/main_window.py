@@ -6,12 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -642,11 +643,15 @@ class LoosefruitRunWorker(QObject):
         super().__init__()
         self.payload = payload
         self.process: subprocess.Popen | None = None
+        self._timeout_seconds = 600  # 10 min timeout
 
     def run(self) -> None:
         import subprocess as sub
         import tempfile as tmp
+        import threading
+        import queue
         from pathlib import Path
+        import time
         from app.core.config import PROJECT_ROOT
 
         with tmp.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
@@ -664,18 +669,59 @@ class LoosefruitRunWorker(QObject):
                 encoding="utf-8",
             )
             assert self.process.stdout is not None
-            for line in self.process.stdout:
-                event = self._parse_event(line)
-                if event is None:
+
+            # Read stdout in background thread
+            output_queue: queue.Queue[str] = queue.Queue()
+            def read_stdout():
+                try:
+                    for line in self.process.stdout:
+                        output_queue.put(line)
+                    output_queue.put("__EOF__")
+                except Exception as e:
+                    output_queue.put(f"__ERROR__{e}")
+
+            reader = threading.Thread(target=read_stdout, daemon=True)
+            reader.start()
+
+            # Process output with timeout
+            start_time = time.time()
+            while True:
+                if time.time() - start_time > self._timeout_seconds:
+                    self._append_log(f"TIMEOUT: Runner exceeded {self._timeout_seconds}s - killing")
+                    self.process.kill()
+                    self.failed.emit(f"Runner timed out after {self._timeout_seconds}s")
+                    return
+
+                try:
+                    line = output_queue.get(timeout=1.0)
+                    if line == "__EOF__":
+                        break
+                    if line.startswith("__ERROR__"):
+                        self.failed.emit(line)
+                        return
+                    event = self._parse_event(line)
+                    if event:
+                        self.event_received.emit(event)
+                except queue.Empty:
+                    # Check if process died
+                    if self.process.poll() is not None:
+                        break
                     continue
-                self.event_received.emit(event)
+
+            reader.join(timeout=2)
             exit_code = self.process.wait()
             self.completed.emit({"exit_code": exit_code})
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
             payload_path.unlink(missing_ok=True)
+            if self.process and self.process.poll() is None:
+                self.process.kill()
             self.process = None
+
+    def _append_log(self, msg: str) -> None:
+        """Log message via event system."""
+        self.event_received.emit({"event": "log", "message": msg})
 
     def _parse_event(self, line: str) -> dict | None:
         try:
@@ -965,6 +1011,9 @@ class MainWindow(QMainWindow):
         self._lf_last_success_count = 0
         self._lf_last_failed_count = 0
         self._lf_last_skipped_count = 0
+        self.lf_run_threads: dict[str, QThread] = {}
+        self.lf_run_workers: dict[str, LoosefruitRunWorker] = {}
+        self.lf_run_results: dict[str, dict[str, int]] = {}
         self.setWindowTitle("Auto Key In Refactor")
         # Adaptive size based on screen
         screen = QApplication.primaryScreen()
@@ -1638,6 +1687,16 @@ class MainWindow(QMainWindow):
         self.lf_staging_periode.setToolTip("Periode staging (bulan dan tahun). Contoh: 2026-05")
         form.addRow("Staging Periode", self.lf_staging_periode)
 
+        self.lf_csv_path = QLineEdit(self.config.loosefruit_staging_source)
+        self.lf_csv_path.setPlaceholderText("Pilih CSV pivot loosefruit")
+        self.lf_csv_path.setToolTip("CSV pivot loosefruit dengan kolom EmpCode, Nama, Gang, Div, TotalS, TotalP")
+        browse_csv_btn = QPushButton("Browse...")
+        browse_csv_btn.clicked.connect(self._browse_loosefruit_csv)
+        csv_row = QHBoxLayout()
+        csv_row.addWidget(self.lf_csv_path, 1)
+        csv_row.addWidget(browse_csv_btn)
+        form.addRow("Loosefruit CSV", csv_row)
+
         self.lf_field_code = QLineEdit(" ")
         self.lf_field_code.setPlaceholderText("Spasi = pilih opsi bebas")
         self.lf_field_code.setToolTip("Field No Code. Gunakan spasi untuk pilih opsi 'bebas'.")
@@ -1658,11 +1717,12 @@ class MainWindow(QMainWindow):
         runner_box = QGroupBox("Runner Options")
         runner_form = QFormLayout(runner_box)
         self.lf_runner_mode = QComboBox()
-        self.lf_runner_mode.addItems(["session_reuse_single", "fresh_login_single", "multi_tab_shared_session"])
+        self.lf_runner_mode.addItems(["multi_tab_shared_session", "session_reuse_single", "fresh_login_single"])
+        self.lf_runner_mode.setCurrentText("multi_tab_shared_session")
         self.lf_max_tabs = QSpinBox()
         self.lf_max_tabs.setRange(1, 20)
         self.lf_max_tabs.setValue(3)
-        self.lf_max_tabs.setToolTip("Jumlah tab parallel per estate")
+        self.lf_max_tabs.setToolTip("Jumlah tab parallel per estate (1 = single tab, lebih stabil)")
         self.lf_headless = QCheckBox("Headless")
         self.lf_headless.setChecked(False)
         runner_form.addRow("Mode", self.lf_runner_mode)
@@ -1727,10 +1787,39 @@ class MainWindow(QMainWindow):
         for cb in self.lf_estate_checkboxes.values():
             cb.setChecked(False)
 
+    def _browse_loosefruit_csv(self) -> None:
+        current = self.lf_csv_path.text().strip() if hasattr(self, "lf_csv_path") else ""
+        start_dir = str(Path(current).parent) if current and Path(current).parent.exists() else str(Path.home())
+        file_path, _ = QFileDialog.getOpenFileName(self, "Pilih CSV Loosefruit", start_dir, "CSV Files (*.csv);;All Files (*.*)")
+        if file_path:
+            self.lf_csv_path.setText(file_path)
+
+    def _loosefruit_source(self) -> str:
+        if hasattr(self, "lf_csv_path"):
+            source = self.lf_csv_path.text().strip().strip('"')
+            if source:
+                return source
+        return self.config.loosefruit_staging_source
+
     def _get_selected_estates(self) -> list[str]:
         return [code for code, cb in self.lf_estate_checkboxes.items() if cb.isChecked()]
 
     def _update_loosefruit_progress_table(self, estate: str, status: str, success: int = 0, failed: int = 0, skipped: int = 0, total: int = 0) -> None:
+        # Thread-safe: only use invokeMethod from background threads
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            from PySide6.QtCore import QMetaObject
+            QMetaObject.invokeMethod(
+                self,
+                "_do_update_loosefruit_progress_table",
+                Qt.QueuedConnection,
+                estate, status, success, failed, skipped, total
+            )
+        else:
+            self._do_update_loosefruit_progress_table(estate, status, success, failed, skipped, total)
+
+    @Slot(str, str, int, int, int, int)
+    def _do_update_loosefruit_progress_table(self, estate: str, status: str, success: int, failed: int, skipped: int, total: int) -> None:
         # Find or create row for estate
         for row_idx in range(self.lf_progress_table.rowCount()):
             if self.lf_progress_table.item(row_idx, 0).text() == estate:
@@ -1771,7 +1860,7 @@ class MainWindow(QMainWindow):
             self._update_loosefruit_progress_table(estate, "Fetching...", 0, 0, 0, 0)
             try:
                 staging_periode = self.lf_staging_periode.text().strip()
-                comparison = fetch_loosefruit_staging_comparison(self.config.loosefruit_staging_source, staging_periode, division=estate)
+                comparison = fetch_loosefruit_staging_comparison(self._loosefruit_source(), staging_periode)
                 filtered = eligible_loosefruit_rows(comparison.rows, estate)
                 estate_rows = [row for row in comparison.rows if row.estate == estate]
                 staging_total = sum(row.staging_brondol for row in estate_rows)
@@ -1830,92 +1919,137 @@ class MainWindow(QMainWindow):
                 "rate": rate,
                 "doc_date": doc_date,
                 "estate_filter": estate,
-                "staging_source_url": self.config.loosefruit_staging_source,
+                "staging_source_url": self._loosefruit_source(),
+                "keep_browser_open_on_error": True,
                 "records": [],
             }
             estate_payloads.append((estate, payload_dict))
 
-        self._lf_last_success_count = 0
-        self._lf_last_failed_count = 0
-        self._lf_last_skipped_count = 0
-        self._run_next_lf_estate(estate_payloads, 0, 0, 0)
+        self._start_lf_estates_parallel(estate_payloads)
 
-    def _run_next_lf_estate(self, estate_payloads: list[tuple[str, dict[str, Any]]], idx: int, total_success: int, total_failed: int) -> None:
-        if idx >= len(estate_payloads) or not self._lf_running:
-            self._finish_lf_run(total_success, total_failed)
-            return
-
-        estate, payload = estate_payloads[idx]
-        self._update_loosefruit_progress_table(estate, "Running...", 0, 0, 0, 0)
-        self._append_loosefruit_log(f"\n=== Running estate: {estate} ===")
-        self._lf_last_success_count = 0
-        self._lf_last_failed_count = 0
-        self._lf_last_skipped_count = 0
+    def _start_lf_estates_parallel(self, estate_payloads: list[tuple[str, dict[str, Any]]]) -> None:
+        self.lf_run_threads.clear()
+        self.lf_run_workers.clear()
+        self.lf_run_results = {
+            estate: {"success": 0, "failed": 0, "skipped": 0, "finished": 0}
+            for estate, _ in estate_payloads
+        }
+        self.lf_estate_queue = list(estate_payloads)
+        self._append_loosefruit_log(f"\n=== Running {len(estate_payloads)} estates with {max_tabs} tab(s) ===")
+        for estate, _ in estate_payloads:
+            self._update_loosefruit_progress_table(estate, "Queued", 0, 0, 0, 0)
+        self._start_next_lf_estate()
         QApplication.processEvents()
 
-        self.lf_run_thread = QThread(self)
-        self.lf_run_worker = LoosefruitRunWorker(payload)
-        self.lf_run_worker.moveToThread(self.lf_run_thread)
-        self.lf_run_thread.started.connect(self.lf_run_worker.run)
-        self.lf_run_worker.event_received.connect(self._handle_lf_event)
-        self.lf_run_worker.completed.connect(lambda r: self._handle_lf_estate_completed(estate_payloads, idx, total_success, total_failed))
-        self.lf_run_worker.failed.connect(lambda e: self._handle_lf_estate_failed(e, estate_payloads, idx, total_success, total_failed))
-        self.lf_run_thread.finished.connect(self.lf_run_thread.deleteLater)
-        self.lf_run_thread.start()
-
-    def _handle_lf_event(self, event: dict[str, Any]) -> None:
+    def _start_next_lf_estate(self) -> None:
+        if not self._lf_running:
+            return
+        if self.lf_run_workers:
+            return
+        queue = getattr(self, "lf_estate_queue", [])
+        if not queue:
+            self._finish_lf_run_if_all_done()
+            return
+        estate, payload = queue.pop(0)
+        self.lf_estate_queue = queue
+        self._update_loosefruit_progress_table(estate, "Running window...", 0, 0, 0, 0)
+        self._append_loosefruit_log(f"  {estate}: starting window with 1 tab")
+        thread = QThread(self)
+        worker = LoosefruitRunWorker(payload)
+        self.lf_run_threads[estate] = thread
+        self.lf_run_workers[estate] = worker
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.event_received.connect(lambda event, estate=estate: self._handle_lf_event(estate, event))
+        worker.completed.connect(lambda result, estate=estate: self._handle_lf_estate_completed(estate, result))
+        worker.failed.connect(lambda error, estate=estate: self._handle_lf_estate_failed(estate, error))
+        worker.completed.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda estate=estate: self._cleanup_lf_estate_worker(estate))
+        thread.start()
+    def _handle_lf_event(self, estate: str, event: dict[str, Any]) -> None:
         event_name = event.get("event", "")
         if event_name == "result":
             result = event.get("result", {})
-            self._lf_last_success_count = result.get("inserted_rows", 0)
-            self._lf_last_failed_count = result.get("failed_rows", 0)
-            self._lf_last_skipped_count = result.get("skipped_existing_rows", 0)
+            self.lf_run_results[estate] = {
+                "success": int(result.get("inserted_rows", 0) or 0),
+                "failed": int(result.get("failed_rows", 0) or 0),
+                "skipped": int(result.get("skipped_existing_rows", 0) or 0),
+                "finished": 0,
+            }
         elif "row.success" in event_name or "row.started" in event_name or "tab." in event_name:
-            self._append_loosefruit_log(f"  {event_name}")
+            tab_index = event.get("tab_index", "")
+            suffix = f" tab={tab_index}" if tab_index != "" else ""
+            self._append_loosefruit_log(f"  {estate}{suffix}: {event_name}")
 
-    def _handle_lf_estate_completed(self, estate_payloads: list[tuple[str, dict[str, Any]]], idx: int, total_success: int, total_failed: int) -> None:
-        estate, _ = estate_payloads[idx]
-        self.lf_run_thread = None
-        self.lf_run_worker = None
+    def _handle_lf_estate_completed(self, estate: str, result: object) -> None:
+        counts = self.lf_run_results.setdefault(estate, {"success": 0, "failed": 0, "skipped": 0, "finished": 0})
+        counts["finished"] = 1
+        self._update_loosefruit_progress_table(estate, "Done", counts["success"], counts["failed"], counts["skipped"])
+        self._append_loosefruit_log(f"  {estate}: {counts['success']} inserted, {counts['failed']} failed, {counts['skipped']} skipped")
+        self._finish_lf_run_if_all_done()
 
-        success_count = self._lf_last_success_count
-        failed_count = self._lf_last_failed_count
-        skipped_count = self._lf_last_skipped_count
-
-        self._update_loosefruit_progress_table(estate, "Done", success_count, failed_count, skipped_count)
-        self._append_loosefruit_log(f"  {estate}: {success_count} inserted, {failed_count} failed")
-        QApplication.processEvents()
-
-        next_idx = idx + 1
-        self._run_next_lf_estate(estate_payloads, next_idx, total_success + success_count, total_failed + failed_count)
-
-    def _handle_lf_estate_failed(self, error: str, estate_payloads: list[tuple[str, dict[str, Any]]], idx: int, total_success: int, total_failed: int) -> None:
-        estate, _ = estate_payloads[idx]
-        self.lf_run_thread = None
-        self.lf_run_worker = None
-        self._update_loosefruit_progress_table(estate, f"Error: {error}", 0, 0, 0, 0)
+    def _handle_lf_estate_failed(self, estate: str, error: str) -> None:
+        counts = self.lf_run_results.setdefault(estate, {"success": 0, "failed": 0, "skipped": 0, "finished": 0})
+        counts["failed"] = max(1, counts.get("failed", 0))
+        counts["finished"] = 1
+        self._update_loosefruit_progress_table(estate, f"Error: {error}", counts["success"], counts["failed"], counts["skipped"])
         self._append_loosefruit_log(f"  {estate} ERROR: {error}")
-        next_idx = idx + 1
-        self._run_next_lf_estate(estate_payloads, next_idx, total_success, total_failed + 1)
+        self._finish_lf_run_if_all_done()
 
-    def _finish_lf_run(self, total_success: int, total_failed: int) -> None:
+    def _cleanup_lf_estate_worker(self, estate: str) -> None:
+        self.lf_run_threads.pop(estate, None)
+        self.lf_run_workers.pop(estate, None)
+        if getattr(self, "lf_estate_queue", []):
+            self._start_next_lf_estate()
+            return
+        self._finish_lf_run_if_all_done()
+
+    def _finish_lf_run_if_all_done(self) -> None:
+        if not self._lf_running:
+            return
+        if self.lf_run_workers:
+            return
+        total_success = sum(item.get("success", 0) for item in self.lf_run_results.values())
+        total_failed = sum(item.get("failed", 0) for item in self.lf_run_results.values())
+        total_skipped = sum(item.get("skipped", 0) for item in self.lf_run_results.values())
+        self._finish_lf_run(total_success, total_failed, total_skipped)
+
+    def _finish_lf_run(self, total_success: int, total_failed: int, total_skipped: int = 0) -> None:
         self._lf_running = False
         self.lf_run_all_button.setEnabled(True)
         self.lf_preview_all_button.setEnabled(True)
         self.lf_stop_button.setEnabled(False)
-        self.lf_status_label.setText(f"Complete: {total_success} inserted, {total_failed} failed")
-        self._append_loosefruit_log(f"\n=== ALL COMPLETE: {total_success} inserted, {total_failed} failed ===")
+        self.lf_status_label.setText(f"Complete: {total_success} inserted, {total_failed} failed, {total_skipped} skipped")
+        self._append_loosefruit_log(f"\n=== ALL COMPLETE: {total_success} inserted, {total_failed} failed, {total_skipped} skipped ===")
 
     def _stop_loosefruit_run(self) -> None:
         self._lf_running = False
-        if self.lf_run_worker:
-            self.lf_run_worker.stop()
-        self._append_loosefruit_log("Stop requested.")
+        self.lf_estate_queue = []
+        for worker in list(self.lf_run_workers.values()):
+            worker.stop()
+        self.lf_stop_button.setEnabled(False)
+        self._append_loosefruit_log("Stop requested for all loosefruit windows.")
 
     def _append_loosefruit_log(self, message: str) -> None:
+        # Only use thread-safe invoke from background threads
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            from PySide6.QtCore import Q_ARG, QMetaObject, Qt
+            QMetaObject.invokeMethod(
+                self,
+                "_do_append_loosefruit_log",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, message)
+            )
+        else:
+            self._do_append_loosefruit_log(message)
+
+    @Slot(str)
+    def _do_append_loosefruit_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.lf_log.append(f"[{timestamp}] {message}")
-        # Auto-scroll to bottom
         self.lf_log.verticalScrollBar().setValue(self.lf_log.verticalScrollBar().maximum())
 
     def reset_filters(self) -> None:
