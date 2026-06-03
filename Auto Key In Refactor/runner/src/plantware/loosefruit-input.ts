@@ -277,16 +277,18 @@ export async function clickAdd(page: Page, screenshotLabel?: string): Promise<vo
     await page.screenshot({ path: screenshotLabel });
   }
 
-  // Click Add — browser will refresh (ASP.NET postback)
-  await page.click("#MainContent_btnAdd", { timeout: 5000 });
+  // Click Add — hold button press for 500ms to ensure ASP.NET registers it
+  // Plantware sometimes misses quick clicks; holding ensures postback fires
+  const btn = page.locator("#MainContent_btnAdd");
+  await btn.click({ force: true, delay: 500, timeout: 5000 });
 
   // IMPORTANT: DO NOT interrupt the refresh. Wait for page to finish reloading.
   // Plantware does a full page postback after Add — wait for load state to complete.
   // This may take several seconds depending on Plantware server.
-  await page.waitForLoadState("load", { timeout: 30000 }).catch(() => {});
+  await page.waitForLoadState("load", { timeout: 45000 }).catch(() => {});
 
   // After page load, wait extra time for Plantware to render the grid rows below Add button
-  await page.waitForTimeout(3000).catch(() => {});
+  await page.waitForTimeout(4000).catch(() => {});
 }
 
 export async function getDocumentId(page: Page): Promise<string | null> {
