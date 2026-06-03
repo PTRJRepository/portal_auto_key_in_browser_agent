@@ -176,8 +176,19 @@ export async function setRate(page: Page, rate: number): Promise<void> {
   const value = String(rate);
   const field = page.locator("#MainContent_txtRate");
   await field.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
-  await field.fill(value);
-  await field.press("Tab").catch(() => {});
+
+  // Clear the field first — Plantware calculates on change from empty
+  await field.fill("");
+  await page.waitForTimeout(200);
+
+  // Type the rate value — char-by-char typing triggers ASP.NET onchange better than fill
+  await field.click();
+  await page.keyboard.type(value, { delay: 50 });
+
+  // Tab out to trigger postback/calculation
+  await field.press("Tab");
+
+  // Force calculation via evaluate for extra safety
   await page.evaluate((val) => {
     const input = document.querySelector("#MainContent_txtRate") as HTMLInputElement | null;
     if (!input) return;
@@ -186,8 +197,10 @@ export async function setRate(page: Page, rate: number): Promise<void> {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     input.dispatchEvent(new Event("blur", { bubbles: true }));
   }, value).catch(() => {});
+
+  // Wait for Plantware calculation to complete
   await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1500);
 }
 
 export async function waitForAmountNonZero(page: Page, timeout = 10000): Promise<number> {
